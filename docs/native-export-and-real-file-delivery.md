@@ -265,3 +265,46 @@ new export behavior resides in the separately pinned compatibility modules.
 Verify both bundle and module hashes inside the final VSIX. These offline
 checks do not prove that an existing VS Code host has loaded the candidate or
 that its actual graph/table output passes live acceptance.
+
+
+## Diagnose DOCX package compatibility before repeating Stata
+
+A saved DOCX can pass ZIP integrity and XML parsing while an office application
+still refuses to load it. Preserve that file and compare isolated copies before
+rerunning its Stata producer. In one bounded failure, changing only the content
+types element's namespace serialization let LibreOffice load the document; the
+original prefixed XML was well-formed. This identified a package compatibility
+problem rather than a failed calculation or a generally broken office install.
+
+The image injection helper now serializes `[Content_Types].xml` with the package
+content-types namespace as the default. Python ElementTree's namespace registry
+is process-global: restore the relationships default namespace in `finally`,
+including on failure, so a second injection in the same interpreter preserves
+its relationship serialization. Check consecutive calls, image bytes, unchanged
+package members, and a marker-free call that leaves the file byte-identical.
+
+The regression used the same synthetic table and PNG with the old helper and
+the repaired helper. The old result failed to load in LibreOffice; two repaired
+documents converted to PDF and both one-page renders were visually inspected.
+Their table cells and embedded PNG bytes matched, and only `[Content_Types].xml`
+differed among the unzipped old/new package members. Six helper/adapter controls
+passed. This validates the helper's bounded package and LibreOffice behavior,
+not Microsoft Word, a newly installed runtime, or all document layouts. Preserve
+the original failure and keep helper, package, application and page acceptance
+separate. No Stata rerun or active runtime reload was needed for this diagnosis.
+
+## Bind source checks to the submitted request
+
+A complete source inventory includes the entry DO, every expected nested DO and
+ADO, and actual temporary execution copies. Require every expected pre- and
+post-execution hash; an empty or missing inventory must fail instead of passing
+vacuously. Bind diagnostics to the exact HTTP request and actual submitted code
+hash. A predicted transformed-source hash from an offline replay is not observed
+runtime evidence. Check conflicting IDs or copies as failures, and keep missing
+evidence unknown. These checks do not establish scientific correctness by themselves.
+
+Comment scanners may preserve character offsets while replacing newlines inside
+block comments. Use offsets from the original text when resolving line-based
+citations; splitting the mask into lines can incorrectly mark executable source
+as commented out. Preserve both a reviewer-checker correction and an executor
+erratum when applicable; neither justifies repeating already accepted Stata work.

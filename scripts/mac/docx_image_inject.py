@@ -248,12 +248,21 @@ def inject(docx_path: Path) -> dict[str, object]:
             parent.insert(position, drawing_run(rel_id, media_name, next_doc_pr, cx, cy))
             next_doc_pr += 1
 
+        # LibreOffice can reject a package when Content_Types uses an ns0 prefix.
+        # ElementTree's default namespace is process-global; restore the package
+        # relationships namespace even on failure, including for later injections.
+        ET.register_namespace("", NS["ct"])
+        try:
+            content_types_xml = ET.tostring(content_types, encoding="utf-8", xml_declaration=True)
+        finally:
+            ET.register_namespace("", NS["pr"])
+
         rewritten = {
             "word/document.xml": ET.tostring(document, encoding="utf-8", xml_declaration=True),
             "word/_rels/document.xml.rels": ET.tostring(
                 relationships, encoding="utf-8", xml_declaration=True
             ),
-            "[Content_Types].xml": ET.tostring(content_types, encoding="utf-8", xml_declaration=True),
+            "[Content_Types].xml": content_types_xml,
         }
         temp_fd, temp_name = tempfile.mkstemp(prefix=f".{docx_path.name}.", suffix=".tmp", dir=docx_path.parent)
         os.close(temp_fd)
