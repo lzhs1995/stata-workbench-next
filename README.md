@@ -57,6 +57,12 @@ unconfirmed POST. Keep the bridge on loopback: it is not a remote multi-user ser
 
 ## Development
 
+For macOS/cmux caller-signature errors, interactive-launch failures or permission
+setup, read the [complete desktop recovery record](docs/desktop-auth-terminal-recovery.md)
+and [permission guide](docs/MAC_PERMISSIONS.md) before requesting a restart.
+The record separates actual desktop access from original-profile/backend recovery
+and preserves completed research and original failed requests.
+
 ```sh
 npm ci --ignore-scripts
 npm run check

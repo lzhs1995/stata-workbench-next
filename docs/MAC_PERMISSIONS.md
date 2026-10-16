@@ -1,5 +1,19 @@
 # macOS permissions: Automation is not a window count
 
+## Classify cmux caller trust and helper setup first
+
+Read [the complete 2026-10-17 recovery record](desktop-auth-terminal-recovery.md)
+for `not signed OpenAI Codex (OSStatus -67050)`,
+`stdout is not a terminal`, or cmux Computer Use onboarding failures.
+Those require separate checks of the running caller's publisher signature,
+interactive child descriptors and the helper's Accessibility/Screen Recording.
+They are not diagnosed by an empty Automation list. Follow cmux's installed
+skill and helper-owned permission UI; never edit TCC or bypass broker trust.
+After setup, verify an actual desktop read, then the original Workbench
+profile, current listener owner, loaded extension and Stata generation.
+Do not re-request completed grants or restart a successfully resumed conversation.
+
+The Apple Events tooling and historical observations below have a different scope.
 Applies to the Mac tools in `v0.1.3-rc.7.39-public.2` (tool version `1.1.0`).
 The extension runtime is unchanged. Older tool copies do not gain this fix by
 reinstalling the same VSIX: update the repository tools as well.
