@@ -13,6 +13,7 @@ import sys
 import tempfile
 import zipfile
 from pathlib import Path
+from xml.dom import Node, minidom
 from xml.etree import ElementTree as ET
 
 
@@ -182,21 +183,23 @@ def inject(docx_path: Path) -> dict[str, object]:
         missing = sorted(required.difference(names))
         if missing:
             raise ValueError(f"DOCX_IMAGE_COMPAT_MISSING_PARTS: {','.join(missing)}")
-        document = ET.fromstring(source.read("word/document.xml"))
+        # Prefixes inside mc:Ignorable, mc:Choice/@Requires and other QName
+        # values depend on the original namespace scope. ElementTree drops
+        # declarations used only by those values and can rename/rebind prefixes.
+        # DOM retains the original declarations at their original elements.
+        document = minidom.parseString(source.read("word/document.xml"))
         relationships = ET.fromstring(source.read("word/_rels/document.xml.rels"))
         content_types = ET.fromstring(source.read("[Content_Types].xml"))
-        parent_map = {child: parent for parent in document.iter() for child in parent}
-        markers: list[tuple[ET.Element, re.Match[str]]] = []
-        for text_node in document.iter(q("w", "t")):
-            marker = MARKER_RE.fullmatch(text_node.text or "")
+        markers: list[tuple[minidom.Element, re.Match[str]]] = []
+        unresolved = []
+        for text_node in document.getElementsByTagNameNS(NS["w"], "t"):
+            text = "".join(child.data for child in text_node.childNodes
+                           if child.nodeType in (Node.TEXT_NODE, Node.CDATA_SECTION_NODE))
+            marker = MARKER_RE.fullmatch(text)
             if marker:
                 markers.append((text_node, marker))
-
-        unresolved = [
-            node.text
-            for node in document.iter(q("w", "t"))
-            if node.text and "__CODEX_DOCX_IMAGE_V1__" in node.text and not MARKER_RE.fullmatch(node.text)
-        ]
+            elif "__CODEX_DOCX_IMAGE_V1__" in text:
+                unresolved.append(text)
         if unresolved:
             raise ValueError("DOCX_IMAGE_COMPAT_MALFORMED_MARKER")
         if not markers:
@@ -204,7 +207,8 @@ def inject(docx_path: Path) -> dict[str, object]:
 
         rel_ids = [node.get("Id", "") for node in relationships]
         next_rel = next_numeric_id(rel_ids, "rId")
-        doc_pr_ids = [node.get("id", "") for node in document.iter(q("wp", "docPr"))]
+        doc_pr_ids = [node.getAttribute("id")
+                      for node in document.getElementsByTagNameNS(NS["wp"], "docPr")]
         next_doc_pr = next_numeric_id(doc_pr_ids)
         media_names = {name.rsplit("/", 1)[-1] for name in names if name.startswith("word/media/")}
         additions: dict[str, bytes] = {}
@@ -235,17 +239,24 @@ def inject(docx_path: Path) -> dict[str, object]:
             )
             ensure_content_type(content_types, extension, content_type)
 
-            run = parent_map.get(text_node)
-            while run is not None and run.tag != q("w", "r"):
-                run = parent_map.get(run)
+            run = text_node.parentNode
+            while run is not None and not (
+                run.nodeType == Node.ELEMENT_NODE
+                and run.namespaceURI == NS["w"] and run.localName == "r"
+            ):
+                run = run.parentNode
             if run is None:
                 raise ValueError("DOCX_IMAGE_COMPAT_MARKER_WITHOUT_RUN")
-            parent = parent_map.get(run)
+            parent = run.parentNode
             if parent is None:
                 raise ValueError("DOCX_IMAGE_COMPAT_RUN_WITHOUT_PARENT")
-            position = list(parent).index(run)
-            parent.remove(run)
-            parent.insert(position, drawing_run(rel_id, media_name, next_doc_pr, cx, cy))
+            # The new run carries its own complete namespace declarations,
+            # so even a document that rebinds w/r/a/wp/pic stays well-formed.
+            drawing = minidom.parseString(ET.tostring(
+                drawing_run(rel_id, media_name, next_doc_pr, cx, cy), encoding="utf-8"
+            ))
+            parent.replaceChild(document.importNode(drawing.documentElement, deep=True), run)
+            drawing.unlink()
             next_doc_pr += 1
 
         # LibreOffice can reject a package when Content_Types uses an ns0 prefix.
@@ -258,7 +269,7 @@ def inject(docx_path: Path) -> dict[str, object]:
             ET.register_namespace("", NS["pr"])
 
         rewritten = {
-            "word/document.xml": ET.tostring(document, encoding="utf-8", xml_declaration=True),
+            "word/document.xml": document.toxml(encoding="utf-8"),
             "word/_rels/document.xml.rels": ET.tostring(
                 relationships, encoding="utf-8", xml_declaration=True
             ),

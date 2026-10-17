@@ -175,6 +175,13 @@ check("DOCX helper injects images and preserves package namespaces across calls"
   assert.ok(fs.existsSync(markerPath));
 });
 
+check("DOCX preserves QName namespace values and nested scope", () => {
+  const result = spawnSync(python, ["-B", path.join(__dirname, "test_docx_namespace_unit.py")], {
+    encoding: "utf8",
+  });
+  assert.strictEqual(result.status, 0, result.stderr || result.stdout);
+});
+
 if (failures) {
   console.error(`\n${failures} failure(s)`);
   process.exit(1);

@@ -293,6 +293,40 @@ not Microsoft Word, a newly installed runtime, or all document layouts. Preserve
 the original failure and keep helper, package, application and page acceptance
 separate. No Stata rerun or active runtime reload was needed for this diagnosis.
 
+### Preserve document namespace scope for Microsoft Word
+
+A subsequent Word check found a second, independent compatibility problem:
+ElementTree can remove declarations used only in attribute values such as
+`mc:Ignorable="w14 wp14"`. It can also change the meaning of prefixes rebound
+inside the document. Successful XML parsing and LibreOffice conversion did not
+detect these failures.
+
+The helper now edits `word/document.xml` with the standard-library DOM. It
+retains namespace declarations in their original scope, qualified attribute
+values, comments and processing instructions, locates elements by namespace
+URI, and gives inserted drawing nodes their own complete declarations. The
+content-types and relationships fixes above remain in place. No additional
+runtime dependency is required.
+
+Two regression documents preserve a 3-by-3 numeric table and an existing image
+while inserting a second image. Namespace/QName checks, unchanged package
+members, image bytes and repeat-call idempotence passed; both negative controls
+failed with the previous helper. Seven targeted checks and the complete release
+check (120 commands) passed without changing the sealed runtime bundle.
+Microsoft Word 16.114 exported both repaired documents to one-page PDFs.
+Both pages were inspected: the numeric tables and both complete line graphs
+were present. One export resumed an already-open owned document after a
+preserved failure; it did not repeat the original open operation. The second
+export passed directly. Both source files remained unchanged and cleanup passed.
+
+The repaired helper was subsequently installed as a single-file replacement
+with the previous bytes retained for rollback. All 191 extension and 25 backend
+manifest entries passed; the existing process generation was unchanged and the
+bound client reported ready. Because the transformer invokes the helper for
+each save, this installation required no reload and no Stata POST. These are
+bounded helper, Word and installation results. A new graph-and-document run
+through the active Workbench is still pending and must be accepted separately.
+
 ## Bind source checks to the submitted request
 
 A complete source inventory includes the entry DO, every expected nested DO and
