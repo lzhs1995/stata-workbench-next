@@ -260,8 +260,9 @@ log-tail yielding repairs. Installing it would have reverted those changes.
 The maintenance replay now includes all four installed patch modules and the
 finalizer return-code parser. Their behavioral regressions run in the release
 check, while the candidate retains recursive DO preparation and its isolated
-package dependency tests. The rebuilt bundle matches the installed bundle; the
-new export behavior resides in the separately pinned compatibility modules.
+package dependency tests. At that checkpoint, the rebuilt bundle matched the
+installed bundle; the new export behavior resided in the separately pinned
+compatibility modules.
 Verify both bundle and module hashes inside the final VSIX. These offline
 checks do not prove that an existing VS Code host has loaded the candidate or
 that its actual graph/table output passes live acceptance.
@@ -324,8 +325,40 @@ with the previous bytes retained for rollback. All 191 extension and 25 backend
 manifest entries passed; the existing process generation was unchanged and the
 bound client reported ready. Because the transformer invokes the helper for
 each save, this installation required no reload and no Stata POST. These are
-bounded helper, Word and installation results. A new graph-and-document run
-through the active Workbench is still pending and must be accepted separately.
+bounded helper, Word and installation results.
+
+A subsequent four-point run through the active Workbench produced CSV, PNG,
+GPH and DOCX files. The actual DOCX passed Microsoft Word export and one-page
+visual review: its table and graph agreed, the source bytes were unchanged,
+and owned-document cleanup passed. The request itself failed with HTTP 500:
+its RNG and sort-RNG setters returned 198 and the state-equality check failed.
+Keep that single request failed; artifact acceptance does not make its state
+restoration or completion successful. A separate bounded syntax diagnostic
+confirmed that these saved state values require unquoted setter arguments.
+
+### Keep the complete bridge request when routing saved DO files
+
+The bridge formerly found any embedded `do "file.do"` and routed it through
+the human-file helper. A request containing `capture noisily do "file.do"`
+followed by return-code checks and completion markers consequently became a
+bare file run: both the capture prefix and the following commands disappeared.
+Executing the actual bundle's preparation functions reproduced this offline.
+That reproduction does not supply the unobserved top-level code of an older
+live request.
+
+The human-file shortcut now requires the entire request to be one bare,
+double-quoted DO command. Requests with prefixes, arguments, comments or other
+commands retain the full selection route. Document scanning remains separate
+from this execution decision. The maintained patch replay applies this change
+before finalizing the bundle identity, so the candidate bundle now differs
+from the installed one.
+
+Twenty-three regression cases passed using the actual preparation functions,
+including a complete wrapper passed into the recursive Darwin adapter, two
+temporary DO copies, unchanged originals and preserved trailing markers.
+The full release check passed 122 commands and runtime admission passed 9/9.
+These are offline results; candidate installation and a new live request
+remain separate acceptance steps. The original failed request is not retried.
 
 ## Bind source checks to the submitted request
 
