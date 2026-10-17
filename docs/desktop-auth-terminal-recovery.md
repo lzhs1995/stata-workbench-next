@@ -14,9 +14,10 @@ The observed chain had three separate failures:
    cmux Computer Use still needed its own permission/setup flow completed.
 
 Actual desktop app enumeration and a VS Code screenshot/accessibility read then
-succeeded. The original Workbench profile and port 17525 had **not** yet been
-restored at this record's cutoff. A normal VS Code window was open; it was not
-the research instance. The cause of the earlier Workbench exit remains unknown.
+succeeded. At the first documentation cutoff the original Workbench was still
+pending. The later original-profile bootstrap passed at 23:57 UTC: see section 12
+for new lock/generation binding, the one real display run and its exact limits.
+The cause of the earlier Workbench exit remains unknown.
 
 ## 1. Keep the layers separate
 
@@ -361,9 +362,10 @@ unchanging third-party behavior or immunity from later runtime failures.
 ## 11. Maintenance, validation and publication boundary
 
 The launcher repair was tested locally as listed above. Desktop enumeration
-and one default VS Code read were live-tested. This documentation increment
-does not install/reload an extension, execute Stata, change collaboration
-transport, grant OS permission or prove the original research backend ready.
+and one default VS Code read were live-tested. Section 12 additionally records
+the subsequent original-profile launch and one actual Stata display control.
+Publishing these records does not install/reload an extension, change
+collaboration transport, grant OS permission or rerun research.
 
 Update the operating skill, runtime permission/troubleshooting guides and
 their existing review branches together. Back up user-owned skill entries
@@ -384,3 +386,121 @@ Further contracts:
 - The collaboration skill owns executor identity, dispatch and native receipts.
 - The current user instructions determine authorized recovery and remaining work.
 
+## 12. Original-profile bootstrap actually passed (23:57 UTC)
+
+This later observation supersedes only the earlier pending profile/backend
+status. It does not erase the signature, terminal or onboarding failures, or
+turn the control run into scientific acceptance.
+
+| Observation | Actual result |
+|---|---|
+| Original profile launch | One launch with the persisted user-data/extensions directories and original workspace |
+| Loaded extension | 0.1.3-rc.7.44-dev.1; actual host/listener and complete runtime disk identity checked |
+| Extension activation | 2026-10-16T23:43:49.383Z |
+| First bootstrap attempt | Missing old lock paths; BLOCKED_NO_POST, postCount=0 |
+| Second bootstrap | One plugin POST, retryCount=0, HTTP 200, rc=0 |
+| Code | A single display command with a fresh recovery marker; no research code |
+| Request / run | codex_1792195018017_2cs5clow46d / run_mvbmn292_yql32crb |
+| Completion | Native display output plus per-run completion marker; terminal settlement and ready state passed |
+| Research posts in recovery | 0 |
+| Memory continuity | New backend generation; no claim of old transient memory preservation |
+| Physical window visibility | Not measured: two running Code instances made bundle-name UI addressing ambiguous |
+
+### Lazy backend initialization is not a new authentication failure
+
+The original extension host and shared Terminal were ready before an owned
+backend process existed. The backend is initialized lazily by the first actual
+Stata request. A precondition requiring an already-existing backend would
+deadlock recovery at this point; do not loop on it or invent a connect endpoint.
+
+Instead, after confirming the exact unused original host/profile, zero owned
+backends, idle request state, complete runtime manifest and ready Terminal,
+persist a one-request intent and submit a harmless display through the installed
+plugin's supported run-command route. Allow only that expected zero-to-one
+backend transition. Then verify the new process's executable, parent, birth,
+owner and generation against the unchanged launcher/host/extension activation.
+Do not adopt an unrelated backend or silently accept a second one.
+
+The original-profile bootstrap used GET /status and POST /run-command.
+Routes and behavior must come from the actual installed source. In this
+version, /connect and /session-state were not supported routes. editor-focus
+only focuses an already displayed, uniquely matched file; it does not open a
+missing editor. A guessed endpoint or successful launcher exit proves nothing.
+
+### Missing old lock files: observe, then bind a new generation
+
+The preserved client pinned two lock paths to old device/inode pairs. Both
+paths were absent after recovery, so the first attempt refused before any POST.
+The reason for their disappearance remains UNPROVEN. Do not attribute it to
+a reboot, cleanup program or filesystem change without supporting evidence.
+
+An absent path alone is insufficient: a process can still hold an unlinked
+inode. Before creating replacement paths, inspect deleted-open files with
+lsof +L1, original runner processes, in-flight bridge requests and the original
+host's idle/unused state. Refuse uncertain or active owners; retain their
+original receipt and do not reset the retry budget.
+
+In this bounded recovery, the checks found no deleted-open matching lock,
+no old Stata runner and no active request. The controller saved an intent,
+then used O_CREAT|O_EXCL|O_RDWR|O_NOFOLLOW|O_CLOEXEC and mode 0600 at each
+original path. It held both nonblocking exclusive flocks through bootstrap,
+checked regular-file/owner identity and matching fstat/stat device/inode,
+then persisted a separate LOCK-GENERATION record. No old lock was unlinked
+or overwritten; no historical inode or receipt was edited.
+
+If creation of either path fails, stop before submission. Keep any created
+path and its evidence; re-observe ownership rather than delete it for a retry.
+A zero-submission refusal and an uncertain submitted request are different
+states. Only the former permits a new, independently documented attempt
+after correcting its precondition.
+
+### Client rebinding must preserve execution and source checks
+
+Persist the successful generation and lock-generation bytes with full SHA256.
+A task-local client may bind its observations and lock identities to these new
+records while reusing the already reviewed executor. It must keep:
+
+- Full extension/backend disk manifest and loaded bundle/guard identity checks.
+- Launcher, host and backend PID, parent, birth, executable and command checks.
+- Exact activation, owner, reset generation and ready/idle checks.
+- Shared Terminal panel/script/style readiness and no initialization error.
+- A nonblocking exclusive lock throughout each scientific transaction.
+- Complete source closure, before/after hashes and submitted-code binding.
+- One POST intent, original request/run evidence, native output and restoration
+  checks; no retry of UNKNOWN or failed requests with uncertain settlement.
+
+Do not remove identity checks merely because they refer to the old process.
+Replace only the stale binding in a new file; preserve the original client.
+A top-level exit in submitted code can skip the plugin-appended RUN_DONE line.
+Keep the reviewed wrapper that captures the DO return code and prints it,
+letting the appended marker execute. Report plugin rc, wrapper rc, business rc
+and restoration rc separately; plugin rc=0 cannot turn a failed DO into PASS.
+
+### Two Code processes and two independent authentication domains
+
+The normal Code process and the original research profile both remained open.
+A bundle-name desktop error about ambiguity is different from -67050 or
+onboarding. Do not close unrelated windows or discard their unsaved buffers.
+Use an unambiguous supported UI target when available; never claim an observed
+screenshot belongs to the original profile merely because it says Code.
+
+For this task the user explicitly allowed covering/hiding. Original-profile
+identity and shared Terminal readiness were checked; physical unobscured
+visibility remained NOT_MEASURED. That narrower claim does not certify an
+unseen editor or authorize arbitrary UI actions.
+
+Separately, cmux-agent self still reported native_caller_verified=false.
+Desktop Computer Use success does not establish authenticated collaboration
+control. Preserve designated executor sessions and pending attempts, report
+maintenance through the authorized channel when it becomes available, and
+continue already-authorized solo work from the verified scientific baseline.
+
+### Resume the remaining stages, without repeating the control
+
+The one display run established the new original backend and runtime
+settlement. It did not run chapter data, retest all graph/DOCX behavior, restore
+unbacked state, settle Claude callbacks or establish historical data agreement.
+Do not rerun that successful display on every handoff. Refresh current identity
+and readiness, then execute the first genuinely unsubmitted scientific stage.
+Keep documentation publication, loaded runtime, control acceptance and
+scientific acceptance as separate records.
