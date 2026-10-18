@@ -10,6 +10,11 @@ with visible output, graphs, execution serialization and recovery diagnostics.
 同一 backend 内人机串行提交。用户允许时，现有共享窗口可遮挡、隐藏或最小化；
 这不改变执行所属会话。多实例并发需各自隔离和验证，当前公共客户端不提供通用多实例调度。
 
+Read [shared-session execution and delivery lessons](docs/shared-session-delivery-lessons.md)
+for preserving author DO files, inventorying actual saved data, reconciling the
+original request, and distinguishing task budgets from user requirements.
+Graph recovery and candidate release evidence retain their stated limits.
+
 ## Current Release
 
 [Download v0.1.3-rc.7.39-public.2](https://github.com/lzhs1995/stata-workbench-shared-session/releases/tag/v0.1.3-rc.7.39-public.2)

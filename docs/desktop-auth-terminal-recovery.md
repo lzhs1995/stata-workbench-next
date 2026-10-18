@@ -306,10 +306,15 @@ Use isolated outputs, read actual DTA/CSV/log artifacts, and compare with the
 historical chapter entry files. Keep upstream reproducibility, historical
 agreement, explained corrections and unproven source relationships separate.
 
-Honor the current task's disk reserve and projected peak; this task required
-at least 23000000000 free bytes before scientific submission and a
-20000000000-byte reserve. Earlier smaller thresholds in historical notes do not
-override later user instructions. Do not delete original data or evidence.
+Correction (2026-10-18): the incident controller used a task-local budget of
+23000000000 free bytes before scientific submission and a 20000000000-byte
+reserve. These were implementation assumptions, not explicit user requirements
+or universal Workbench thresholds. The earlier wording incorrectly attributed
+them to later user instructions; retain the historical values with this corrected
+provenance. Reassess the budget against current storage and remaining output
+size, recording its source and projected peak. This documentation correction
+does not change a live controller or authorize deleting original data or evidence.
+See [shared-session execution and delivery lessons](shared-session-delivery-lessons.md).
 
 One backend remains serial. Frozen-file analysis can proceed in parallel when
 the original executors are reachable. Desktop success does not repair native
