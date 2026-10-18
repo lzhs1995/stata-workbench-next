@@ -20,7 +20,7 @@ EXTENSION = PROFILE / "extensions/lzhs1995.stata-workbench-shared-session-0.1.3-
 PORT = int(os.environ.get("STATA_WORKBENCH_PORT", "17485"))
 CODE_CLI = os.environ.get("STATA_WORKBENCH_CODE", "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code")
 VERSION = "0.1.3-rc.7.44-dev.1"
-BUNDLE_SHA256 = "6bee7029d2c0405e80ebf9cd91fac8d855dcfffef78d90e87ca137f16ad01fd5"
+BUNDLE_SHA256 = "5519c6f04a0ca6a46ea81d8f2e6e2c293a006b7d620214eec6bef7bfff63fbea"
 PINS = {
     WORK / "dist/extension.js": BUNDLE_SHA256,
 }
