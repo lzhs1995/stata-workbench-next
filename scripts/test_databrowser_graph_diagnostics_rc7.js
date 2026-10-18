@@ -12,7 +12,10 @@ const distDataBrowser = fs.readFileSync(path.join(__dirname, "..", "dist", "ui-s
 assert.ok(extension.includes("codex patch rc.7: Data Browser observable readiness"));
 assert.ok(extension.includes("codex patch rc.7: debug Data Browser readiness"));
 assert.ok(extension.includes("codex patch rc.7: mcp-stata Data Browser listener-loop patch"));
-assert.ok(extension.includes("__runtimePatcher.patchRuntime({uvCommand:JI,command:E&&E.command})"));
+// Activation now forwards the configured environment and explicit runtime root.
+// Its execution and refusal behavior are covered by test_activation_isolation.js.
+assert.ok(extension.includes("__runtimePatcher.runtimeOptionsFromConfig(E,uM())"));
+assert.ok(extension.includes("__runtimePatcher.patchRuntime(__runtimeOptions)"));
 assert.ok(extension.includes("codex patch rc.7.10.27: patch live uvx runtime"));
 assert.ok(extension.includes("codex patch rc.7.10.11: Data Browser channel recovery"));
 assert.ok(extension.includes("codex patch rc.7.10.12: exact Data Browser readiness"));

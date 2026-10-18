@@ -35,6 +35,33 @@ function writeSnapshotReady(target) {
   );
 }
 
+// Inspect the generated DO's control scopes, not just the presence of nobreak.
+// Cleanup must remain outside every break scope and inside the outer nobreak.
+// Native Stata validation is separate from this code-generation contract.
+function assertCleanupScopes(code, cleanupLines) {
+  const scopes = [];
+  const found = new Set();
+  for (const raw of code.split("\n")) {
+    const line = raw.trim();
+    if (line === "}") {
+      assert.ok(scopes.length, "unexpected closing block in generated DO");
+      scopes.pop();
+    } else if (line.endsWith(" {")) {
+      scopes.push(line);
+    }
+    for (const cleanup of cleanupLines) {
+      if (line === cleanup) {
+        found.add(cleanup);
+        assert.strictEqual(scopes[0], "nobreak {", `${cleanup}: missing outer Break guard`);
+        assert.ok(!scopes.some((scope) => /(?:^| )break \{$/.test(scope)),
+          `${cleanup}: cleanup is interruptible`);
+      }
+    }
+  }
+  assert.deepStrictEqual(scopes, [], "unclosed generated Stata block");
+  assert.deepStrictEqual([...found].sort(), [...cleanupLines].sort());
+}
+
 try {
   snapshot.checkpointNonce = "1".repeat(32);
   fs.writeFileSync(snapshot.path, Buffer.alloc(1024, 1));
@@ -169,12 +196,30 @@ try {
       return { success: true, rc: 0, logPath: "/tmp/checkpoint.log" };
     },
   }).then(async () => {
-    assert.ok(observedCode.includes('st_dir("global", "macro", "*")'));
-    assert.ok(observedCode.includes("base64encode(st_global(__codex_name))"));
+    assert.ok(observedCode.includes("local __codex_names : all globals"));
+    assert.ok(observedCode.includes('base64encode(st_global(st_local("__codex_name")))'));
     assert.ok(observedCode.includes("estimates save"));
     assert.ok(observedCode.includes("graph save"));
     assert.ok(observedCode.includes("classutil describe Graph"));
     assert.ok(observedCode.includes(snapshot.defaultGraphObjectPath));
+    assert.ok(observedCode.includes("    break {"), "expensive checkpoint work must allow Break");
+    assert.ok(observedCode.indexOf("_estimates hold") < observedCode.indexOf("    break {"),
+      "hold and held flag must be established without a Break window");
+    const cleanupSteps = [
+      "capture _estimates unhold `__codex_cp_e'",
+      'capture mata: st_global("estimates_save_cleanup", st_local("__codex_cp_estcleanup"))',
+      'capture mata: st_updata(strtoreal(st_local("__codex_cp_changed")))',
+      "capture _return restore `__codex_cp_r'",
+    ];
+    assertCleanupScopes(observedCode, cleanupSteps);
+    const changedCleanup = observedCode.indexOf(cleanupSteps[2]);
+    const returnCleanup = observedCode.indexOf(cleanupSteps[3]);
+    assert.ok(changedCleanup < returnCleanup);
+    assert.ok(observedCode.indexOf("local __codex_cp_d_rc = _rc", changedCleanup) < returnCleanup);
+    for (const state of ["e", "g", "s", "d", "r"]) {
+      assert.ok(observedCode.indexOf(`if \`__codex_cp_${state}_rc' != 0 exit`) > returnCleanup,
+        `${state} failure must be checked only after all cleanup has run`);
+    }
     const generatedIdentifiers = Array.from(
       observedCode.matchAll(/\b__codex_[A-Za-z0-9_]+\b/g),
       (match) => match[0]
@@ -239,7 +284,9 @@ try {
     drainedClient._cancellationSourcesByRunId.clear();
 
     const restore = checkpoint.restoreCode(snapshot, (value) => String(value).replace(/\\/g, "/"));
-    assert.ok(restore.startsWith(`use "${snapshot.path}", clear`));
+    assert.ok(restore.includes(`use "${snapshot.path}", clear`));
+    assert.ok(restore.indexOf("st_isname(") < restore.indexOf(`use "${snapshot.path}", clear`),
+      "native name validation must precede every destructive restore operation");
     assert.ok(restore.includes("base64decode"));
     assert.ok(restore.includes("estimates store good_est"));
     assert.ok(!restore.includes("../bad"));
@@ -265,13 +312,52 @@ try {
     // R16J113: the real selection transport returned r(198) after losing the
     // closing lines of Stata if-blocks. Mata blocks survive that transport, but
     // generated Stata restoration must use self-contained conditional lines.
-    const stataRestore = restore.slice(restore.indexOf("\nend\n") + 5);
+    const stataRestore = restore;
     assert.ok(!/[{}]/.test(stataRestore),
       "checkpoint Stata restore must not depend on multiline brace replay");
     assert.ok(stataRestore.includes("if `__codex_step_rc' == 0 capture estimates store good_est"));
     assert.ok(stataRestore.includes("if `__codex_step_rc' == 0 local __codex_step_rc = _rc"),
       "a failed estimates use must not be replaced with the store result");
     assert.ok(stataRestore.includes("if !_rc capture quietly classutil drop .good_graph"));
+
+    const globalsFile = checkpoint.checkpointPaths(snapshot).globalsPath;
+    const savedGlobals = fs.readFileSync(globalsFile);
+    const trickyGlobals = new Map([
+      ["模型", "中文\n\t\" ${unchanged} `literal' \\ tail"],
+      ["mode\u0301le", "combining character: Stata validates without JS normalization"],
+      ["emptyValue", ""],
+      ["longValue", "a".repeat(100000)],
+    ]);
+    fs.writeFileSync(globalsFile, [...trickyGlobals].map(([name, value]) =>
+      `${name}\t${Buffer.from(value).toString("base64")}\n`).join(""));
+    const globalRestore = checkpoint.restoreCode(snapshot);
+    const decodedGlobals = new Map();
+    for (const line of globalRestore.split("\n").filter((line) => line.startsWith("mata: st_global("))) {
+      const match = /^mata: st_global\(base64decode\("([A-Za-z0-9+/=]+)"\), base64decode\("([A-Za-z0-9+/=]*)"\)\)$/.exec(line);
+      assert.ok(match, "globals use only literal base64 expressions, with no Mata assignments");
+      decodedGlobals.set(Buffer.from(match[1], "base64").toString(), Buffer.from(match[2], "base64").toString());
+    }
+    assert.deepStrictEqual(decodedGlobals, trickyGlobals,
+      "Unicode, whitespace, macro syntax and long values must round-trip without source interpolation");
+    const nativeChecks = [...globalRestore.matchAll(/st_isname\(base64decode\("([A-Za-z0-9+/=]+)"\)\)/g)];
+    assert.deepStrictEqual(nativeChecks.map((m) => Buffer.from(m[1], "base64").toString()),
+      [...trickyGlobals.keys()], "every exported name uses the same native predicate before restoration");
+    assert.ok(nativeChecks.every((m) => m.index < globalRestore.indexOf(`use "${snapshot.path}"`)));
+    assert.ok(!/[{}]/.test(globalRestore), "Unicode preflight must preserve brace-free replay");
+    for (const invalid of [
+      "bad name\tdmFsdWU=\n", "!1fe\tdmFsdWU=\n", "r(result)\tdmFsdWU=\n",
+      "A\tnot-base64\n", "A\tYQ\n", "A\tYQ==\textra\n", "A\tYQ==\nA\tYg==\n",
+      `${"名".repeat(33)}\tYQ==\n`, Buffer.from([0xff, 0x09, 0x59, 0x51, 0x3d, 0x3d, 0x0a]),
+    ]) {
+      fs.writeFileSync(globalsFile, invalid);
+      assert.strictEqual(checkpoint.restoreCode(snapshot), "exit 459\n",
+        "invalid globals must fail before changing the live dataset");
+      assert.strictEqual(checkpoint.restoreCode(snapshot, null, { datasetOnly: true }), "exit 459\n");
+    }
+    fs.unlinkSync(globalsFile);
+    assert.strictEqual(checkpoint.restoreCode(snapshot, null, { datasetOnly: true }), "exit 459\n",
+      "a missing global inventory is not a successful degraded restore");
+    fs.writeFileSync(globalsFile, savedGlobals);
 
     fs.writeFileSync(snapshot.defaultGraphObjectPath, "1\n", "utf8");
     const preexistingObjectRestore = checkpoint.restoreCode(
@@ -321,7 +407,7 @@ try {
       stataString: (value) => String(value).replace(/\\/g, "/").replace(/"/g, '""'),
       runSelection: async (code, options) => {
         atomicCalls += 1;
-        assert.ok(code.indexOf('save "') < code.indexOf('st_dir("global", "macro", "*")'));
+        assert.ok(code.indexOf('save "') < code.indexOf("local __codex_names : all globals"));
         assert.strictEqual(options.runId, "pre-run-full-state-atomic-run");
         fs.writeFileSync(atomicSnapshot.path, Buffer.alloc(1024, 2));
         atomicSnapshot.snapshotKind = "data";
@@ -367,6 +453,19 @@ try {
     const expectedReadyWrite =
       `file write \`__codex_sfh' "ready" _tab "${emptySnapshot.checkpointNonce}" _tab "\`__codex_snapshot_kind'" _n`;
     assert.ok(emptyCode.includes(expectedReadyWrite));
+    const snapshotOnlyCode = checkpoint.snapshotCode(emptySnapshot);
+    assert.ok(snapshotOnlyCode.includes("capture noisily break {"));
+    assertCleanupScopes(snapshotOnlyCode, [
+      "_return hold `__codex_snap_r'",
+      "capture frame drop `__codex_snap_frame'",
+      "capture _return restore `__codex_snap_r'",
+      expectedReadyWrite,
+    ]);
+    assert.ok(snapshotOnlyCode.indexOf(expectedReadyWrite) <
+      snapshotOnlyCode.indexOf("capture _return restore"),
+    "ready-file commands, including errors, must run before restoring caller r()");
+    assert.ok(!/^\s*(?:clear|preserve|restore|frame change)\b/m.test(snapshotOnlyCode),
+      "snapshot must not change the original frame or its preserve stack");
     assert.strictEqual(
       emptyCode.includes(`ready\t${emptySnapshot.checkpointNonce}\t`),
       false,
@@ -391,7 +490,9 @@ try {
       },
       "the bytes emitted by Stata _tab tokens must satisfy the strict parser"
     );
-    assert.strictEqual(checkpoint.restoreCode(emptySnapshot).split("\n")[0], "clear");
+    const emptyRestore = checkpoint.restoreCode(emptySnapshot);
+    assert.ok(emptyRestore.split("\n").includes("clear"));
+    assert.ok(emptyRestore.indexOf("st_isname(") < emptyRestore.indexOf("\nclear\n"));
     assert.ok(!checkpoint.restoreCode(emptySnapshot).includes(`use "${emptySnapshot.path}"`));
 
     const fallbackSnapshot = {

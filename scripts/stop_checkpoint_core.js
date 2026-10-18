@@ -5,6 +5,39 @@ const path = require("path");
 const crypto = require("crypto");
 
 const STATA_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,31}$/;
+// Only a transport sanity check. Stata, not JavaScript's Unicode categories,
+// decides whether a non-ASCII name is valid before restoration changes data.
+const STATA_MACRO_WIRE_NAME = /^[A-Za-z_\P{ASCII}][A-Za-z0-9_\P{ASCII}]{0,31}$/u;
+
+function globalRestoreLines(file) {
+  const preflight = [];
+  const restore = [];
+  const seen = new Set();
+  const bytes = fs.readFileSync(file);
+  const text = bytes.toString("utf8");
+  if (!Buffer.from(text, "utf8").equals(bytes)) {
+    throw new Error("invalid checkpoint global encoding");
+  }
+  for (const row of text.split(/\r?\n/)) {
+    if (!row) continue;
+    const fields = row.split("\t");
+    const [name, encoded] = fields;
+    if (fields.length !== 2 || !STATA_MACRO_WIRE_NAME.test(name) || seen.has(name) ||
+        Buffer.from(encoded, "base64").toString("base64") !== encoded) {
+      throw new Error("invalid checkpoint global record");
+    }
+    seen.add(name);
+    // Decode only inside Mata. Macro contents must never become Stata source,
+    // and one expression per record survives the visible selection transport.
+    const encodedName = Buffer.from(name, "utf8").toString("base64");
+    preflight.push(
+      `mata: st_local("__codex_global_valid", strofreal(st_isname(base64decode("${encodedName}"))))`,
+      "if `__codex_global_valid' != 1 exit 459"
+    );
+    restore.push(`mata: st_global(base64decode("${encodedName}"), base64decode("${encoded}"))`);
+  }
+  return { preflight, restore };
+}
 
 function safeStataPath(value, stataString) {
   const text = typeof stataString === "function"
@@ -68,37 +101,32 @@ function snapshotReadyRecord(snapshot) {
 function checkpointCode(snapshot, stataString) {
   const paths = checkpointPaths(snapshot);
   const q = (value) => safeStataPath(value, stataString);
-  return [
-    "mata:",
-    `__codex_fh = fopen("${q(paths.globalsPath)}", "w")`,
-    '__codex_names = st_dir("global", "macro", "*")',
-    "for (__codex_i=1; __codex_i<=rows(__codex_names); __codex_i++) {",
-    "    __codex_name = __codex_names[__codex_i]",
-    '    if (substr(__codex_name,1,2)=="S_" | substr(__codex_name,1,1)=="_" | substr(__codex_name,1,3)=="mcp" | substr(__codex_name,1,2)=="T_" | regexm(__codex_name,"^F[0-9]+$")) continue',
-    "    fput(__codex_fh, __codex_name + char(9) + base64encode(st_global(__codex_name)))",
+  const body = [
+    // Base64 encoding is an expression, not a Mata top-level assignment:
+    // existing Mata externals (including identically named objects) stay intact.
+    "tempname __codex_gbl_fh",
+    `file open \`__codex_gbl_fh' using "${q(paths.globalsPath)}", write text replace`,
+    "local __codex_names : all globals",
+    "foreach __codex_name of local __codex_names {",
+    '    mata: st_local("__codex_global_valid", strofreal(st_isname(st_local("__codex_name"))))',
+    "    if `__codex_global_valid' != 1 exit 459",
+    `    if substr("\`__codex_name'",1,2)=="S_" | substr("\`__codex_name'",1,1)=="_" | substr("\`__codex_name'",1,3)=="mcp" | substr("\`__codex_name'",1,2)=="T_" | regexm("\`__codex_name'","^F[0-9]+$") continue`,
+    '    mata: st_local("__codex_encoded", base64encode(st_global(st_local("__codex_name"))))',
+    `    file write \`__codex_gbl_fh' "\`__codex_name'" _tab "\`__codex_encoded'" _n`,
     "}",
-    "fclose(__codex_fh)",
-    "end",
-    "capture estimates store __codex_checkpoint_current",
-    "local __codex_has_current = (_rc == 0)",
-    "quietly estimates dir",
+    "file close `__codex_gbl_fh'",
+    // est_expand enumerates only registered estimates without the display
+    // command's temporary activation of every model.
+    "quietly est_expand _all",
     'local __codex_estimates `"`r(names)\'"\'',
     "tempname __codex_efh",
     `file open \`__codex_efh\' using "${q(paths.estimatesPath)}", write text replace`,
     "foreach __codex_name of local __codex_estimates {",
-    '    if "`__codex_name\'" != "__codex_checkpoint_current" {',
-    "        capture quietly estimates restore `__codex_name'",
-    "        if !_rc {",
-    `            capture quietly estimates save "${q(paths.stateDir)}/estimate_\`__codex_name\'.ster", replace`,
-    "            if !_rc file write `__codex_efh' \"`__codex_name'\" _n",
-    "        }",
-    "    }",
+    "    quietly estimates restore `__codex_name'",
+    `    quietly estimates save "${q(paths.stateDir)}/estimate_\`__codex_name\'.ster", replace`,
+    "    file write `__codex_efh' \"`__codex_name'\" _n",
     "}",
     "file close `__codex_efh'",
-    "if `__codex_has_current' {",
-    "    capture quietly estimates restore __codex_checkpoint_current",
-    "    capture estimates drop __codex_checkpoint_current",
-    "}",
     "capture quietly classutil describe Graph",
     "local __codex_had_graph_obj = (_rc == 0)",
     "tempname __codex_dfh",
@@ -107,18 +135,77 @@ function checkpointCode(snapshot, stataString) {
     "file close `__codex_dfh'",
     "quietly graph dir, memory",
     'local __codex_graphs `"`r(list)\'"\'',
-    'local __codex_current_graph `"`c(curgraph)\'"\'',
+    'local __codex_current_graph ""',
+    "capture local __codex_current_graph = c(curgraph)",
     "tempname __codex_gfh __codex_cfh",
     `file open \`__codex_gfh\' using "${q(paths.graphsPath)}", write text replace`,
     `file open \`__codex_cfh\' using "${q(paths.currentGraphPath)}", write text replace`,
     "file write `__codex_cfh' \"`__codex_current_graph'\" _n",
     "file close `__codex_cfh'",
     "foreach __codex_name of local __codex_graphs {",
-    `    capture quietly graph save \`__codex_name\' "${q(paths.stateDir)}/graph_\`__codex_name\'.gph", replace`,
-    "    if !_rc file write `__codex_gfh' \"`__codex_name'\" _n",
+    `    quietly graph save \`__codex_name\' "${q(paths.stateDir)}/graph_\`__codex_name\'.gph", replace`,
+    "    file write `__codex_gfh' \"`__codex_name'\" _n",
     "}",
     "file close `__codex_gfh'",
-    "display as text \"___CODEX_CHECKPOINT_DONE___\"",
+  ];
+  return [
+    // Keep holds, body-to-cleanup transitions and cleanup uninterruptible.
+    // Only the expensive body below temporarily re-enables Break.
+    "nobreak {",
+    "tempname __codex_cp_r __codex_cp_e",
+    "tempvar __codex_cp_esample",
+    "local __codex_cp_changed = c(changed)",
+    // Locals belong to this checkpoint DO, never to Mata's external namespace.
+    'mata: st_local("__codex_cp_snames", invtokens(st_dir("s", "macro", "*")\'))',
+    "local __codex_cp_si = 0",
+    "foreach __codex_cp_sname of local __codex_cp_snames {",
+    "    local ++__codex_cp_si",
+    '    mata: st_local("__codex_cp_s" + st_local("__codex_cp_si"), st_global("s(" + st_local("__codex_cp_sname") + ")"))',
+    "}",
+    'mata: st_local("__codex_cp_estcleanup", st_global("estimates_save_cleanup"))',
+    "_return hold `__codex_cp_r'",
+    "local __codex_cp_eheld = 0",
+    "capture noisily {",
+    // The sample holder is in the original frame. atomicCheckpointCode takes
+    // its dataset snapshot BEFORE this block and never clears that frame.
+    "    _estimates hold `__codex_cp_e', copy restore nullok varname(`__codex_cp_esample')",
+    "    local __codex_cp_eheld = 1",
+    "    break {",
+    ...body.map((line) => `        ${line}`),
+    "    }",
+    "}",
+    "local __codex_cp_rc = _rc",
+    "local __codex_cp_e_rc = 0",
+    "    if `__codex_cp_eheld' {",
+    "        capture _estimates unhold `__codex_cp_e'",
+    "        local __codex_cp_e_rc = _rc",
+    "    }",
+    '    capture mata: st_global("estimates_save_cleanup", st_local("__codex_cp_estcleanup"))',
+    "    local __codex_cp_g_rc = _rc",
+    "    capture noisily {",
+    "        sreturn clear",
+    "        local __codex_cp_si = 0",
+    "        foreach __codex_cp_sname of local __codex_cp_snames {",
+    "            local ++__codex_cp_si",
+    '            mata: st_global("s(" + st_local("__codex_cp_sname") + ")", st_local("__codex_cp_s" + st_local("__codex_cp_si")))',
+    "        }",
+    "    }",
+    "    local __codex_cp_s_rc = _rc",
+    "    local __codex_cp_d_rc = 0",
+    "    if `__codex_cp_e_rc' == 0 {",
+    '        capture mata: st_updata(strtoreal(st_local("__codex_cp_changed")))',
+    "        local __codex_cp_d_rc = _rc",
+    "    }",
+    "    capture _return restore `__codex_cp_r'",
+    "    local __codex_cp_r_rc = _rc",
+    "}",
+    "if `__codex_cp_e_rc' != 0 exit `__codex_cp_e_rc'",
+    "if `__codex_cp_g_rc' != 0 exit `__codex_cp_g_rc'",
+    "if `__codex_cp_s_rc' != 0 exit `__codex_cp_s_rc'",
+    "if `__codex_cp_d_rc' != 0 exit `__codex_cp_d_rc'",
+    "if `__codex_cp_r_rc' != 0 exit `__codex_cp_r_rc'",
+    "if `__codex_cp_rc' != 0 exit `__codex_cp_rc'",
+    'display as text "___CODEX_CHECKPOINT_DONE___"',
     "",
   ].join("\n");
 }
@@ -129,29 +216,42 @@ function snapshotCode(snapshot, stataString) {
   if (!nonce) throw new Error("checkpoint nonce missing or malformed");
   const q = (value) => safeStataPath(value, stataString);
   return [
+    // Saving in a copied frame leaves the caller's data, preserve stack,
+    // active frame, and e(sample) alone, including a zero-variable dataset.
+    "nobreak {",
+    "tempname __codex_snap_frame __codex_snap_r __codex_sfh",
+    "_return hold `__codex_snap_r'",
     'local __codex_snapshot_kind "data"',
-    "if c(k) == 0 {",
-    "    quietly set obs 1",
-    "    generate byte __codex_empty_state = .",
-    `    capture quietly save "${q(snapshot.path)}", replace`,
-    "    local __codex_snapshot_rc = _rc",
-    "    clear",
-    '    local __codex_snapshot_kind "empty"',
+    "capture noisily break {",
+    "    frame copy `c(frame)' `__codex_snap_frame'",
+    "    if c(k) == 0 {",
+    "        frame `__codex_snap_frame': quietly set obs 1",
+    "        frame `__codex_snap_frame': generate byte __codex_empty_state = .",
+    '        local __codex_snapshot_kind "empty"',
+    "    }",
+    `    frame \`__codex_snap_frame': quietly save "${q(snapshot.path)}", replace`,
     "}",
-    "else {",
-    "    capture preserve",
-    `    capture quietly save "${q(snapshot.path)}", replace`,
-    "    local __codex_snapshot_rc = _rc",
-    "    capture restore",
-    "}",
-    "if `__codex_snapshot_rc' == 0 {",
-    "    tempname __codex_sfh",
-    `    capture file open \`__codex_sfh' using "${q(paths.snapshotReadyPath)}", write text replace`,
-    "    if !_rc {",
+    "local __codex_snapshot_rc = _rc",
+    "capture frame drop `__codex_snap_frame'",
+    "local __codex_snap_drop_rc = _rc",
+    "local __codex_snap_ready_rc = 0",
+    // Publish only after the data copy is saved and its temporary frame gone.
+    // File commands remain inside the r() guard, including failed writes.
+    "if `__codex_snapshot_rc' == 0 & `__codex_snap_drop_rc' == 0 {",
+    "    capture noisily {",
+    `        file open \`__codex_sfh' using "${q(paths.snapshotReadyPath)}", write text replace`,
     `        file write \`__codex_sfh' "ready" _tab "${nonce}" _tab "\`__codex_snapshot_kind'" _n`,
     "        file close `__codex_sfh'",
     "    }",
+    "    local __codex_snap_ready_rc = _rc",
     "}",
+    "capture _return restore `__codex_snap_r'",
+    "local __codex_snap_r_rc = _rc",
+    "}",
+    "if `__codex_snapshot_rc' != 0 exit `__codex_snapshot_rc'",
+    "if `__codex_snap_drop_rc' != 0 exit `__codex_snap_drop_rc'",
+    "if `__codex_snap_r_rc' != 0 exit `__codex_snap_r_rc'",
+    "if `__codex_snap_ready_rc' != 0 exit `__codex_snap_ready_rc'",
     "",
   ].join("\n");
 }
@@ -445,6 +545,13 @@ function restoreCode(snapshot, stataString, options = {}) {
   const datasetOnly = options && options.datasetOnly === true;
   const estimateNames = readNames(paths.estimatesPath);
   const graphNames = readNames(paths.graphsPath);
+  let globalLines;
+  try {
+    globalLines = globalRestoreLines(paths.globalsPath);
+  } catch {
+    // Validate even degraded restores before emitting clear/use/discard.
+    return "exit 459\n";
+  }
   if (!datasetOnly) {
     // Do not reset live state unless every declared saved component remains
     // available. A missing file is not an empty inventory or a successful restore.
@@ -456,9 +563,9 @@ function restoreCode(snapshot, stataString, options = {}) {
       return "exit 459\n";
     }
   }
-  const lines = ready.kind === "empty"
-    ? ["clear"]
-    : [`use "${q(snapshot.path)}", clear`];
+  const lines = [...globalLines.preflight, ready.kind === "empty"
+    ? "clear"
+    : `use "${q(snapshot.path)}", clear`];
   // R16J116: a drained cancellation in native graphics left a broken axis/view
   // class cache (Super invalid member variable identifier). Dropping graph names
   // cannot reset that cache. Stata's supported discard resets it, but also clears
@@ -468,18 +575,7 @@ function restoreCode(snapshot, stataString, options = {}) {
     lines.push("discard");
   }
   lines.push("local __codex_restore_rc = 0");
-  if (fs.existsSync(paths.globalsPath)) {
-    lines.push(
-      "mata:",
-      `__codex_fh = fopen("${q(paths.globalsPath)}", "r")`,
-      'while ((__codex_line=fget(__codex_fh)) != J(0,0,"")) {',
-      "    __codex_tab = strpos(__codex_line, char(9))",
-      "    if (__codex_tab>1) st_global(substr(__codex_line,1,__codex_tab-1), base64decode(substr(__codex_line,__codex_tab+1,.)))",
-      "}",
-      "fclose(__codex_fh)",
-      "end"
-    );
-  }
+  lines.push(...globalLines.restore);
   // An interrupted unnamed graph can leave a non-graph top-level `.Graph`
   // object behind. Remove it only when the checkpoint proves it did not exist
   // before the payload; a preexisting user object must remain untouched.

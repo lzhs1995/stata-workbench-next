@@ -1,0 +1,38 @@
+{
+  "sourcePath": "mcp_stata/stata_client.py",
+  "sourceSha256": "967ef1d669efbde2242d717e9784217e7372b42be7e1a61b18ee80bb71ee5de8",
+  "blocks": [
+    {
+      "name": "_exec_with_capture",
+      "errorVar": "sys_error",
+      "start": "        # If RC looks wrong",
+      "sha256": "35d9e2027e4c85c118670dad947c97723d34d4be91b2c5bcbf9857b4ddbc9ed0",
+      "source": "        # If RC looks wrong but SMCL shows no error markers, treat as success.\n        if rc != 0 and smcl_content:\n            has_err_tag = \"{err}\" in smcl_content\n            rc_match = _STANDALONE_RC_RE.search(smcl_content)\n            if rc_match:\n                try:\n                    rc = int(rc_match.group(1))\n                except Exception:\n                    pass\n            else:\n                text_rc = None\n                try:\n                    text_rc = self._parse_rc_from_text(self._smcl_to_text(smcl_content))\n                except Exception:\n                    text_rc = None\n                if not has_err_tag and text_rc is None:\n                    rc = 0\n        elif rc != 0 and not smcl_content and stdout:\n            text_rc = self._parse_rc_from_text(stdout + (\"\\n\" + stderr if stderr else \"\"))\n            if text_rc is None:\n                rc = 0\n\n",
+      "success": "        success = rc == 0 and sys_error is None\n"
+    },
+    {
+      "name": "run_command_streaming",
+      "errorVar": "exc",
+      "start": "        # Use SMCL content as primary source",
+      "sha256": "29709b5f6b6b1242195c8213cbe887c3519711f43ad642948c7152e501871490",
+      "source": "        # Use SMCL content as primary source for RC detection only when RC is ambiguous\n        if exc is not None or rc in (-1, 1):\n            parsed_rc = self._parse_rc_from_smcl(smcl_content)\n            if parsed_rc is not None and parsed_rc != 0:\n                rc = parsed_rc\n            elif rc in (-1, 1):  # Also check text if rc is generic 1 or unset\n                parsed_rc_text = self._parse_rc_from_text(combined)\n                if parsed_rc_text is not None:\n                    rc = parsed_rc_text\n                elif rc == -1:\n                    rc = 0  # Default to success if no error trace found\n\n        # If RC looks wrong but SMCL shows no error markers, treat as success.\n        if rc != 0 and smcl_content:\n            has_err_tag = \"{err}\" in smcl_content\n            rc_match = _STANDALONE_RC_RE.search(smcl_content)\n            if rc_match:\n                try:\n                    rc = int(rc_match.group(1))\n                except Exception:\n                    pass\n            else:\n                text_rc = None\n                try:\n                    text_rc = self._parse_rc_from_text(self._smcl_to_text(smcl_content))\n                except Exception:\n                    text_rc = None\n                if not has_err_tag and text_rc is None:\n                    rc = 0\n\n",
+      "success": "        success = (rc == 0 and exc is None)\n"
+    },
+    {
+      "name": "run_do_file_streaming",
+      "errorVar": "exc",
+      "start": "        # Use SMCL content as primary source",
+      "sha256": "49213aa5de7755569dc59bbc70d4424523e4cab6cf2f017f0792807c708efcc4",
+      "source": "        # Use SMCL content as primary source for RC detection only when RC is ambiguous\n        if exc is not None or rc in (-1, 1):\n            parsed_rc = self._parse_rc_from_smcl(smcl_content)\n            if parsed_rc is not None and parsed_rc != 0:\n                rc = parsed_rc\n            elif rc in (-1, 1):\n                parsed_rc_text = self._parse_rc_from_text(combined)\n                if parsed_rc_text is not None:\n                    rc = parsed_rc_text\n                elif rc == -1:\n                    rc = 0  # Default to success if no error found\n\n        # If RC looks wrong but SMCL shows no error markers, treat as success.\n        if rc != 0 and smcl_content:\n            has_err_tag = \"{err}\" in smcl_content\n            rc_match = _STANDALONE_RC_RE.search(smcl_content)\n            if rc_match:\n                try:\n                    rc = int(rc_match.group(1))\n                except Exception:\n                    pass\n            else:\n                text_rc = None\n                try:\n                    text_rc = self._parse_rc_from_text(self._smcl_to_text(smcl_content))\n                except Exception:\n                    text_rc = None\n                if not has_err_tag and text_rc is None:\n                    rc = 0\n\n",
+      "success": "        success = (rc == 0 and exc is None)\n"
+    },
+    {
+      "name": "run_do_file",
+      "errorVar": "exc",
+      "start": "        # Use SMCL content as primary source",
+      "sha256": "bc02a6d419485e85c1872a0dfc11c7b4aafe27ba6348e1dc27a4bd55951c4e0b",
+      "source": "        # Use SMCL content as primary source for RC detection if not already captured\n        if rc == -1 and not exc:\n            parsed_rc = self._parse_rc_from_smcl(smcl_content)\n            if parsed_rc is not None:\n                rc = parsed_rc\n            else:\n                # Fallback to text parsing\n                parsed_rc = self._parse_rc_from_text(combined)\n                rc = parsed_rc if parsed_rc is not None else 0\n        elif exc and rc == 1:\n            # Try to parse more specific RC from exception message\n            parsed_rc = self._parse_rc_from_text(str(exc))\n            if parsed_rc is not None:\n                rc = parsed_rc\n\n        # If RC looks wrong but SMCL shows no error markers, treat as success.\n        if rc != 0 and smcl_content:\n            has_err_tag = \"{err}\" in smcl_content\n            rc_match = _STANDALONE_RC_RE.search(smcl_content)\n            if rc_match:\n                try:\n                    rc = int(rc_match.group(1))\n                except Exception:\n                    pass\n            else:\n                text_rc = None\n                try:\n                    text_rc = self._parse_rc_from_text(self._smcl_to_text(smcl_content))\n                except Exception:\n                    text_rc = None\n                if not has_err_tag and text_rc is None:\n                    rc = 0\n\n",
+      "success": "        success = (rc == 0 and exc is None)\n"
+    }
+  ]
+}

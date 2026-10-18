@@ -10,6 +10,8 @@ Show the source and shared Stata Terminal together by default. When the user exp
 
 Keep original filenames, variable names, comments, section structure, calculation order, and explanatory style. Make the smallest necessary correction and explain its cause near the changed line. Preserve the original and bind the actually executed revision to complete source hashes. Keep review-only annotations distinct from executable revisions. Do not remove meaningful author code merely to obtain a successful return code. If an adapter needs a transformed execution copy, retain the original and a source map.
 
+Use ordinary Stata comments (`***`, `//`, or `/* ... */`) beside a revision to state the original behavior, the reason for changing it, and the expected effect. Preserve the author's block boundaries and readable command style. Unresolved historical differences remain annotated findings; do not change a calculation solely to force equality with an old export.
+
 ## Serialize one backend
 
 Human and AI execution share one serialized Stata backend. Offline review of frozen files may proceed in parallel; multiple agents or editor windows do not establish independent execution backends. Check the actual session binding and original request settlement before the next submission. Continue the first unfinished dependent stage and reuse accepted data and outputs.
@@ -39,3 +41,19 @@ In the documented continuation, the original user instruction explicitly require
 If data are already accepted and only a graph export failed, reuse the data and generate only missing outputs. Record the actual rendering route. A successful SVG-to-PNG conversion does not prove native bitmap export is repaired or every pixel equals a historical image. Decode images and review an appropriate visual preview. Keep native GPH save acceptance distinct from a separate GPH reload check and from scientific interpretation.
 
 Do not reproduce a suspected native bitmap hang in a live research backend merely to reconfirm it. For a new candidate, preserve the existing error finalizer, bounded Terminal history, source/graph column routing, and log-tail fairness behavior. Check the actual modules and bundle inside the final package, not only the version string. Record source revision, offline checks, package hash, installed files, loaded host identity, and bounded native acceptance separately. Reuse completed checks while their inputs remain unchanged; test a changed boundary at the narrowest meaningful scope.
+
+## Isolate the candidate runtime and configuration
+
+A separate editor profile alone does not prove isolation: activation may still resolve shared configuration or patch a shared runtime. Bind the selected config, command, runtime root and loaded host to the same candidate. Explicit configuration must not silently fall back to another runtime. Keep unrelated Claude/Codex configuration untouched unless that integration is explicitly enabled, and compare scoped configuration/runtime sentinels before and after the run. These are acceptance requirements; verify that the selected version supports them before use.
+
+Retain the existing execution agreement: source and shared Stata Terminal are shown by default; explicit permission to cover or hide the window carries forward, with physical visibility reported separately. Serialize all submissions to one backend. Parallel offline review is useful; multiple agents or windows alone do not establish separate Stata instances. An unknown submitted request is reconciled under its original identity, never resent to obtain a cleaner receipt.
+
+## Accept the complete graph run, including cleanup
+
+Use one small synthetic fixture in a fresh output directory through the bound Workbench Run Current File command. Bind the displayed/executed DO hash, requestId/runId, final return code and actual renderer route. Inspect the original request after a timeout; keep partial files and failures. Reuse accepted data if only an export needs recovery.
+
+Fully decode each PNG after a file-integrity check and inspect the rendered image. A signature, IHDR or nonzero dimensions alone do not establish readability. Save a native GPH, reload it with drawing enabled, and export/inspect the reloaded graph; a nonempty GPH alone does not establish a successful reload. Bind these artifacts to the same request's log and return codes. PNG output produced through an SVG fallback must be labelled as that route, not native bitmap recovery.
+
+Record the body return code separately from each private-graph deletion, original-frame restoration and private-frame deletion. Attempt subsequent cleanup even after an earlier cleanup error. Verify the restored frame identity and propagate failures: preserve the body error first, otherwise the first cleanup error, then a log-close error. Markers printed after closing a file log belong to the same request's Terminal evidence. Match displayed output rather than echoed source commands. Successful cleanup proves only its declared state scope; it is not complete shared-session equivalence.
+
+Report candidate source checks, final-package contents, installed files, the actually loaded host/runtime, and native acceptance as separate states. A source fix is not necessarily in an earlier package; a package or launch receipt does not prove the new runtime executed the fixture. Keep unrun checks explicitly unrun. A successful bounded graph test does not establish permanent recovery for every graphics route or scientific validity.

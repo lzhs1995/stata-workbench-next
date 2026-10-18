@@ -288,6 +288,21 @@ const throws = (fn, re, msg) => assert.throws(fn, re, msg);
       "PROGRESS 名单变了：" + prog.join(","));
   });
 
+  t("D.7 final graph probe verifies its unique owner without changing runtime bytes", () => {
+    const src = fs.readFileSync(path.join(__dirname, "..", "dist", "extension.js"), "utf8");
+    const result = G.apply(src);
+    assert.strictEqual(result.text, src);
+    assert.strictEqual(result.report.verifiedWrapped.find((e) => e.ord === 15).runId, "probeRunId");
+    G.assertAnchorUniqueness(src, "final");
+    const owner = "POLICY.SHORT_INTERNAL,probeRunId,()=>zg.runSelection(probeCode";
+    assert.ok(src.includes(owner));
+    throws(() => G.apply(src.replace(owner, "POLICY.SHORT_INTERNAL,null,()=>zg.runSelection(probeCode")),
+      /does not match declared policy byte-for-byte/);
+    throws(() => G.apply(src.replace("runId: probeRunId,", "runId: null,")), /runId mismatch/);
+    const entry = G.POLICY_TABLE.find((e) => e.ord === 15);
+    throws(() => G.apply(src + "\n/*\n" + entry.finalAnchor + "\n*/"), /missing rc\.7\.13 anchor|non-unique/);
+  });
+
   console.log("\n[E] 【P1-2】台账死分支区间：必须是真实数字偏移，畸形即 fail-closed");
   const GEN = require("./gen_callsite_manifest_v4.js");
   const AST_E = require("./ast_reachability_gate.js");

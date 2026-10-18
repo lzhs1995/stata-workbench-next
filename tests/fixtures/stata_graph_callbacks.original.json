@@ -1,0 +1,5 @@
+{
+  "sourceSha256": "a0656b20e92eaf70f6815acd2bbd27af4760d958eccc823ae81b2850903a4892",
+  "originalSha256": "0cbb3b59507fca8974ea0a6ec6aed2814997f866181e4d59fbeec8ce3bebf9e8",
+  "original": "    async def _notify_cache_callbacks(self, graph_name: str, success: bool) -> None:\n        for callback in self._cache_callbacks:\n            try:\n                result = callback(graph_name, success)\n                if inspect.isawaitable(result):\n                    await result\n            except Exception as e:\n                logger.warning(f\"Cache callback failed for {graph_name}: {e}\")\n"
+}
