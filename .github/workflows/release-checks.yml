@@ -12,8 +12,16 @@ jobs:
           node-version: '22'
           cache: npm
       - uses: actions/setup-python@v5
+        id: python
         with:
           python-version: '3.14'
+      - name: Install offline Python test dependencies
+        env:
+          STATA_CI_PYTHON: ${{ steps.python.outputs.python-path }}
+        run: |
+          "$STATA_CI_PYTHON" -m pip install anyio==4.15.1 idna==3.19 typing_extensions==4.16.0
+          echo "STATA_PATCH_TEST_PYTHON=$STATA_CI_PYTHON" >> "$GITHUB_ENV"
+          echo "PYTHON=$STATA_CI_PYTHON" >> "$GITHUB_ENV"
       - run: npm ci --ignore-scripts
       - run: npm audit
       - run: npm run check
