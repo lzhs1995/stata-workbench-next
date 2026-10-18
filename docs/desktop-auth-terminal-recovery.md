@@ -306,14 +306,18 @@ Use isolated outputs, read actual DTA/CSV/log artifacts, and compare with the
 historical chapter entry files. Keep upstream reproducibility, historical
 agreement, explained corrections and unproven source relationships separate.
 
-Correction (2026-10-18): the incident controller used a task-local budget of
-23000000000 free bytes before scientific submission and a 20000000000-byte
-reserve. These were implementation assumptions, not explicit user requirements
-or universal Workbench thresholds. The earlier wording incorrectly attributed
-them to later user instructions; retain the historical values with this corrected
-provenance. Reassess the budget against current storage and remaining output
-size, recording its source and projected peak. This documentation correction
-does not change a live controller or authorize deleting original data or evidence.
+Correction (2026-10-18): the user's original instruction explicitly requires
+at least 20 GB (20,000,000,000 bytes) of free space for this task. The earlier
+correction incorrectly called that reserve an agent assumption. The controller's
+23 GB (23,000,000,000 bytes) scientific-submission budget is a historical
+implementation budget, not the user's stated reserve or a universal skill
+installation threshold. The new plugin acceptance plan budgets the 20 GB reserve
+plus 500 MB, totaling 20,500,000,000 bytes. Record each budget's source and
+projected peak separately. Below 20 GB, actively back up eligible task files to
+the authorized Baidu folder, verify them before authorized reclamation, and
+continue independent work; do not halt the whole task. Uploading alone frees no
+local space. This documentation correction does not change a live controller or
+authorize deleting original data or evidence.
 See [shared-session execution and delivery lessons](shared-session-delivery-lessons.md).
 
 One backend remains serial. Frozen-file analysis can proceed in parallel when
