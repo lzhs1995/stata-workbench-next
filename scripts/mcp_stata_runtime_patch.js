@@ -1560,6 +1560,13 @@ function patchRuntime(options = {}) {
     return { ok: false, status: "unsupported-source", component: "client",
       anchor: "graph-name-boundary", error: error.message, ...located };
   }
+  // Check the final composition, after every subsidiary transform. A later
+  // patch must not leave the completion drain without its local state.
+  if (patchedClient.split(PATCHED_POST_DONE_DRAIN).length - 1 !== 1 ||
+      patchedClient.split(PATCHED_STREAM_HELPER).length - 1 !== 1) {
+    return { ok: false, status: "unsupported-source", component: "client",
+      anchor: "final-completion-tail-composition", ...located };
+  }
   clientStatus = patchedClient === clientSource ? "already-applied"
     : (options.dryRun ? "would-apply" : "applied");
 

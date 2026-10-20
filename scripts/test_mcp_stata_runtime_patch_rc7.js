@@ -764,6 +764,9 @@ try {
   {
   const legacyStream = fs.readFileSync(path.join(__dirname,
     "../tests/fixtures/stata_stream_smcl.legacy.py"), "utf8");
+  assert.equal(require("crypto").createHash("sha256").update(legacyStream).digest("hex"),
+    "e79638d2616a56873b3f07aee17b60159e7d50fd1ea047a2d2b7d8f1b07c0db5",
+    "deployed legacy method fixture must retain its original bytes");
   const streamFragments = [runtimePatch.PATCHED_STREAM_HELPER,
     runtimePatch.PATCHED_STREAM_NOTIFY, runtimePatch.PATCHED_FINAL_STREAM_NOTIFY,
     runtimePatch.PATCHED_STREAM_TAIL_SIGNATURE, runtimePatch.PATCHED_POST_DONE_DRAIN].join("\n");

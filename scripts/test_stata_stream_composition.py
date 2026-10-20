@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import re
 import sys
+import symtable
 import tempfile
 import types
 
@@ -54,6 +55,11 @@ async def exercise(method, initial, appends, marker, *, fail_notify=False):
 
 async def main():
     payload = json.load(sys.stdin)
+    for name, expected in (("legacy", False), ("candidate", True)):
+        table = symtable.symtable("class Client:\n" + payload[name], "composed.py", "exec")
+        method_scope = table.get_children()[0].get_children()[0]
+        symbol = method_scope.lookup("saw_required_tail")
+        assert symbol.is_assigned() is expected and symbol.is_local() is expected
     marker = "___CODEX_RUN_DONE_composed___"
     old = await exercise(payload["legacy"], "", [marker + "\n"], marker)
     assert any("saw_required_tail" in warning for warning in old[2]), old
