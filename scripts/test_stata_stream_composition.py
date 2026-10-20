@@ -56,8 +56,16 @@ async def exercise(method, initial, appends, marker, *, fail_notify=False):
 async def main():
     payload = json.load(sys.stdin)
     for name, expected in (("legacy", False), ("candidate", True)):
-        table = symtable.symtable("class Client:\n" + payload[name], "composed.py", "exec")
-        method_scope = table.get_children()[0].get_children()[0]
+        table = symtable.symtable("from __future__ import annotations\nclass Client:\n" + payload[name], "composed.py", "exec")
+        scopes = list(table.get_children())
+        methods = []
+        while scopes:
+            scope = scopes.pop()
+            if scope.get_name() == "_stream_smcl_log" and scope.get_type() == "function":
+                methods.append(scope)
+            scopes.extend(scope.get_children())
+        assert len(methods) == 1
+        method_scope = methods[0]
         symbol = method_scope.lookup("saw_required_tail")
         assert symbol.is_assigned() is expected and symbol.is_local() is expected
     marker = "___CODEX_RUN_DONE_composed___"
