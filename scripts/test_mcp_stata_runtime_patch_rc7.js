@@ -1,12 +1,16 @@
 #!/usr/bin/env node
 "use strict";
 
+const sessionHealth = require("./stata_session_health_patch");
 const assert = require("assert");
 const childProcess = require("child_process");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+const sessionOriginal = fs.readFileSync(path.join(__dirname, "../tests/fixtures/stata_sessions.original.py"), "utf8");
 const runtimePatch = require("./mcp_stata_runtime_patch");
+const graphNameBoundary = require("./stata_graph_name_boundary_patch");
+require("./test_stata_graph_name_boundary_patch");
 const graphTaskDrain = require("./stata_graph_task_drain_patch");
 const graphErrors = require("./stata_graph_error_patch");
 const graphCallbacks = require("./stata_graph_callback_patch");
@@ -151,6 +155,7 @@ try {
       "# fixture",
       runtimePatch.ORIGINAL_CALL_SYNC,
       runtimePatch.ORIGINAL_TASK_DONE_NOTIFY,
+      sessionHealth.SERVER_ORIGINAL,
       backgroundNotifyFixture,
       backgroundNotifyFixture,
       backgroundSignaturesFixture,
@@ -161,7 +166,7 @@ try {
   );
   fs.writeFileSync(sessionPath, [
     "# fixture",
-    runtimePatch.ORIGINAL_SESSION_CALL,
+    sessionOriginal.replace(runtimePatch.PATCHED_SESSION_CALL, runtimePatch.ORIGINAL_SESSION_CALL),
     "# end",
   ].join("\n"), "utf8");
   fs.writeFileSync(
@@ -169,6 +174,7 @@ try {
     [
       "# fixture",
       runtimePatch.ORIGINAL_STATA_BREAK_REQUEST,
+      ...graphNameBoundary.BLOCKS.map(block => block.original),
       streamStateFixture,
       graphTaskDrain.ORIGINAL_POLL,
       graphTaskDrain.ORIGINAL_EXIT,
@@ -259,7 +265,14 @@ try {
     );
   }
   const firstClientBytes = fs.readFileSync(clientPath);
-  const firstClientText = firstClientBytes.toString("utf8");
+  const logQuery = require("./stata_log_query_patch");
+  const firstClientRawText = firstClientBytes.toString("utf8");
+  for (const block of logQuery.BLOCKS) {
+    assert.equal(firstClientRawText.split(block.replacement).length - 1, block.count);
+    assert.equal(firstClientRawText.split(block.old).length - 1, 0);
+  }
+  // Check earlier source transforms in their canonical pre-query form.
+  const firstClientText = logQuery.normalizeClient(firstClientRawText);
   assert.ok(firstClientText.includes(runtimePatch.STATA_SET_BREAK_PATCH_MARKER));
   assert.ok(firstClientText.includes('getattr(pystata_config.stlib, "StataSO_SetBreak", None)'));
   assert.ok(firstClientText.includes("self._set_stata_break()"));
@@ -328,7 +341,7 @@ try {
   const firstSessionBytes = fs.readFileSync(sessionPath);
   const firstSessionText = firstSessionBytes.toString("utf8");
   assert.ok(firstSessionText.includes(runtimePatch.SESSION_BREAK_DRAIN_PATCH_MARKER));
-  assert.ok(firstSessionText.includes("return await asyncio.shield(future)"));
+  assert.ok(firstSessionText.includes(sessionHealth.REPLACEMENT));
   assert.ok(firstSessionText.includes("while not future.done():"));
   assert.ok(!firstSessionText.includes("timeout=3.0"));
   assert.ok(!firstSessionText.includes("did not acknowledge break within timeout"));
@@ -520,6 +533,7 @@ try {
       "# fixture",
       runtimePatch.PATCHED_CALL_SYNC,
       runtimePatch.ORIGINAL_TASK_DONE_NOTIFY,
+      sessionHealth.SERVER_ORIGINAL,
       backgroundNotifyFixture,
       backgroundNotifyFixture,
       backgroundSignaturesFixture,
@@ -550,6 +564,7 @@ try {
       "# fixture",
       runtimePatch.PATCHED_CALL_SYNC,
       runtimePatch.PATCHED_TASK_DONE_NOTIFY,
+      sessionHealth.SERVER_ORIGINAL,
       legacyBackgroundNotifyFixture,
       legacyBackgroundNotifyFixture,
       backgroundSignaturesFixture,
@@ -573,6 +588,7 @@ try {
     [
       "# fixture",
       runtimePatch.PATCHED_STATA_BREAK_REQUEST,
+      ...graphNameBoundary.BLOCKS.map(block => block.original),
       streamStateFixture,
       graphTaskDrain.ORIGINAL_POLL,
       graphTaskDrain.ORIGINAL_EXIT,
@@ -604,6 +620,7 @@ try {
     [
       "# fixture",
       runtimePatch.PATCHED_STATA_BREAK_REQUEST,
+      ...graphNameBoundary.BLOCKS.map(block => block.original),
       streamStateFixture,
       graphTaskDrain.ORIGINAL_POLL,
       graphTaskDrain.ORIGINAL_EXIT,
@@ -635,6 +652,7 @@ try {
     [
       "# fixture",
       runtimePatch.PATCHED_STATA_BREAK_REQUEST,
+      ...graphNameBoundary.BLOCKS.map(block => block.original),
       streamStateFixture,
       graphTaskDrain.ORIGINAL_POLL,
       graphTaskDrain.ORIGINAL_EXIT,
@@ -740,6 +758,45 @@ try {
       return probe && probe.status === 0;
     });
   assert.ok(hostPython, "a host Python interpreter is required for syntax-gate tests");
+  // Reproduce the deployed partial upgrade using its complete real method.
+  // Running isolated drain fragments with hand-written local variables missed
+  // the NameError when the notification marker caused initialization to skip.
+  {
+  const legacyStream = fs.readFileSync(path.join(__dirname,
+    "../tests/fixtures/stata_stream_smcl.legacy.py"), "utf8");
+  const streamFragments = [runtimePatch.PATCHED_STREAM_HELPER,
+    runtimePatch.PATCHED_STREAM_NOTIFY, runtimePatch.PATCHED_FINAL_STREAM_NOTIFY,
+    runtimePatch.PATCHED_STREAM_TAIL_SIGNATURE, runtimePatch.PATCHED_POST_DONE_DRAIN].join("\n");
+  assert.equal(firstClientRawText.split(streamFragments).length - 1, 1);
+  const deployedComposition = firstClientRawText.replace(streamFragments, () => legacyStream);
+  fs.writeFileSync(serverPath, firstServerText);
+  fs.writeFileSync(graphDetectorPath, firstGraphDetectorText);
+  fs.writeFileSync(sessionPath, firstSessionText);
+  fs.writeFileSync(clientPath, deployedComposition);
+  const migrated = runtimePatch.patchRuntime(patchOptions);
+  assert.equal(migrated.ok, true, JSON.stringify(migrated));
+  assert.equal(migrated.clientStatus, "applied");
+  const composed = fs.readFileSync(clientPath, "utf8");
+  assert.equal(runtimePatch.patchRuntime(patchOptions).status, "already-applied");
+  const methodStart = "    async def _stream_smcl_log(";
+  const methodEnd = "            logger.warning(f\"Log streaming failed: {e}\")";
+  const method = text => text.slice(text.indexOf(methodStart), text.indexOf(methodEnd) + methodEnd.length) + "\n";
+  const composedBehavior = childProcess.spawnSync(hostPython,
+    ["-I", "-B", path.join(__dirname, "test_stata_stream_composition.py")],
+    { input: JSON.stringify({ legacy: method(legacyStream), candidate: method(composed) }),
+      encoding: "utf8", timeout: 10000 });
+  assert.equal(composedBehavior.status, 0, composedBehavior.stderr || composedBehavior.stdout);
+  // Unknown edits and duplicate helpers must be rejected before any write.
+  for (const bad of [deployedComposition.replace("has_written = False", "has_written = None"),
+    deployedComposition + runtimePatch.LEGACY_STREAM_HELPER_WITHOUT_TAIL]) {
+    fs.writeFileSync(clientPath, bad);
+    const rejected = runtimePatch.patchRuntime(patchOptions);
+    assert.equal(rejected.ok, false);
+    assert.equal(rejected.anchor, "completion-tail-helper");
+    assert.equal(fs.readFileSync(clientPath, "utf8"), bad);
+  }
+  fs.writeFileSync(clientPath, firstClientRawText);
+  }
   const breakBehaviorSource = `
 import logging
 import sys
@@ -965,7 +1022,7 @@ asyncio.run(main())
     ].join("\n"),
     "utf8"
   );
-  fs.writeFileSync(sessionPath, runtimePatch.ORIGINAL_SESSION_CALL, "utf8");
+  fs.writeFileSync(sessionPath, sessionOriginal.replace(runtimePatch.PATCHED_SESSION_CALL, runtimePatch.ORIGINAL_SESSION_CALL), "utf8");
   const transactionBefore = [serverPath, clientPath, graphDetectorPath, sessionPath].map(
     (file) => fs.readFileSync(file)
   );

@@ -46,7 +46,9 @@ const replacement = String.raw`    def _with_graph_probe_state(self, query):
             def read_s():
                 # Only generated identifiers enter Stata code. SFI moves values
                 # literally, preserving quotes, newlines, backticks and dollars.
-                run('global ' + scratch + ' : s(macros)')
+                # s(macros) is not an extended macro function. st_dir requires
+                # the documented s() category, including both parentheses.
+                run(f"mata: st_global(\"{scratch}\", invtokens(st_dir(\"s()\", \"macro\", \"*\")'))")
                 names = read_macro(scratch).split()
                 if (len(set(names)) != len(names) or any(
                         re.fullmatch(r'[A-Za-z_][A-Za-z_0-9]{0,31}', name) is None
@@ -112,6 +114,12 @@ const replacement = String.raw`    def _with_graph_probe_state(self, query):
 
 `;
 const end = "    def _get_graph_timestamp(";
+const legacyReplacement = replacement.replace(
+  '                # s(macros) is not an extended macro function. st_dir requires\n'
+    + '                # the documented s() category, including both parentheses.\n'
+    + '                run(f"mata: st_global(\\"{scratch}\\", invtokens(st_dir(\\"s()\\", \\"macro\\", \\"*\\")\'))")',
+  "                run('global ' + scratch + ' : s(macros)')"
+);
 
 function transform(source, normalize) {
   const count = source.split(start).length - 1;
@@ -121,10 +129,10 @@ function transform(source, normalize) {
   const offset = source.indexOf(start), finish = source.indexOf(end, offset);
   if (finish <= offset) throw new Error("missing detector sreturn boundary");
   const body = source.slice(offset, finish);
-  if (body !== previous && body !== replacement) throw new Error("unsupported detector sreturn source");
+  if (body !== previous && body !== replacement && body !== legacyReplacement) throw new Error("unsupported detector sreturn source");
   return source.slice(0, offset) + (normalize ? previous : replacement) + source.slice(finish);
 }
 
-module.exports = { start, previous, replacement,
+module.exports = { start, previous, replacement, legacyReplacement,
   patchDetector: source => transform(source, false),
   normalizeDetector: source => transform(source, true) };

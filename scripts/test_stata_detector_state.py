@@ -110,8 +110,10 @@ class Backend:
                 phase = "assign-rc" if statement.endswith(" = _rc") else "prepare-scalar"
             elif statement.startswith("graph "):
                 phase = statement
-            elif statement.startswith("global ") and statement.endswith(" : s(macros)"):
+            elif re.fullmatch(r'''mata: st_global\("[A-Za-z_0-9]+", invtokens\(st_dir\("s\(\)", "macro", "\*"\)'\)\)''', statement):
                 phase = "enumerate-s"
+            elif statement.startswith("global ") and statement.endswith(" : s(macros)"):
+                phase = "invalid-s-macro-function"
             elif statement == "sreturn clear":
                 phase = "clear-s"
             elif statement.startswith("error "):
@@ -157,8 +159,10 @@ class Backend:
             elif phase == "restore-rc":
                 self.rc = int(statement.split()[-1])
             elif phase == "enumerate-s":
-                self.globals[statement.split()[1]] = " ".join(self.s)
+                self.globals[statement.split('"')[1]] = " ".join(self.s)
                 self.rc = self.native_errors.get(phase, 0)
+            elif phase == "invalid-s-macro-function":
+                self.rc = 198
             elif phase == "clear-s":
                 self.s = {}
                 self.rc = self.native_errors.get(phase, 0)

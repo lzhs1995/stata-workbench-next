@@ -24,6 +24,9 @@ const bulkCachePatch = require("./stata_bulk_cache_patch");
 const graphInventoryPatch = require("./stata_graph_inventory_patch");
 const streamLifecyclePatch = require("./stata_stream_lifecycle_patch");
 const helpStatePatch = require("./stata_help_state_patch");
+const sessionHealthPatch = require("./stata_session_health_patch");
+const logQueryPatch = require("./stata_log_query_patch");
+const graphNameBoundaryPatch = require("./stata_graph_name_boundary_patch");
 
 const PATCH_MARKER = "UI/DataBrowser HTTP threads must not create a second asyncio loop";
 const TASK_DONE_PATCH_MARKER = "Workbench task_done notification must not retain the MCP transport";
@@ -453,7 +456,7 @@ const PATCHED_STREAM_HELPER_V18 = `        has_written = False
         # Wait for Stata to create the SMCL file
 `;
 
-const PATCHED_STREAM_HELPER = `        has_written = False
+const PATCHED_STREAM_HELPER_WITH_SEPARATORS = `        has_written = False
         notifications_enabled = True
         notify_budget_remaining = 4000
         tail_marker_buffer = ""
@@ -518,6 +521,9 @@ const PATCHED_STREAM_HELPER = `        has_written = False
         # Wait for Stata to create the SMCL file
 `;
 
+const PATCHED_STREAM_HELPER = PATCHED_STREAM_HELPER_WITH_SEPARATORS.replace(
+  'tail_marker_buffer + "\\n" + cleaned_chunk', 'tail_marker_buffer + cleaned_chunk');
+
 const PATCHED_STREAM_HELPER_V19 = PATCHED_STREAM_HELPER
   .replace(STREAM_PATCH_MARKER, STREAM_PATCH_MARKER_V19)
   .replace(
@@ -526,6 +532,20 @@ const PATCHED_STREAM_HELPER_V19 = PATCHED_STREAM_HELPER
 [Stata Workbench: further progress available in log_path]
 "`
   );
+
+// Deployed notification-budget builds shared STREAM_PATCH_MARKER with newer
+// builds but did not yet track the completion tail. Match their exact body:
+// a comment marker alone cannot establish that the helper was upgraded.
+const LEGACY_STREAM_HELPER_WITHOUT_TAIL = PATCHED_STREAM_HELPER
+  .replace(PATCHED_STREAM_HELPER.slice(
+    PATCHED_STREAM_HELPER.indexOf('        tail_marker_buffer = ""'),
+    PATCHED_STREAM_HELPER.indexOf('\n        async def _write_and_notify')
+  ), '')
+  .replace('            nonlocal tail_marker_buffer, saw_required_tail\n', '')
+  .replace(PATCHED_STREAM_HELPER.slice(
+    PATCHED_STREAM_HELPER.indexOf('            if tail_marker_line and not saw_required_tail:'),
+    PATCHED_STREAM_HELPER.indexOf('            if not notifications_enabled or notify_budget_remaining <= 0:')
+  ), '');
 
 const ORIGINAL_STREAM_NOTIFY = `                    if cleaned_chunk:
                         try:
@@ -1025,10 +1045,25 @@ function patchRuntime(options = {}) {
     sessionStatus = options.dryRun ? "would-apply" : "applied";
   }
 
+  try {
+    const next = sessionHealthPatch.patchSessions(patchedSession);
+    if (next !== patchedSession) sessionStatus = options.dryRun ? "would-apply" : "applied";
+    patchedSession = next;
+  } catch (error) {
+    return { ok: false, status: "unsupported-source", component: "session-health", error: error.message, ...located };
+  }
+
   const serverBytes = fs.readFileSync(located.serverPath);
   const serverSource = serverBytes.toString("utf8");
   let patchedServer = serverSource;
   let serverStatus = "already-applied";
+  try {
+    const next = sessionHealthPatch.patchServer(patchedServer);
+    if (next !== patchedServer) serverStatus = options.dryRun ? "would-apply" : "applied";
+    patchedServer = next;
+  } catch (error) {
+    return { ok: false, status: "unsupported-source", component: "server-event-loop", error: error.message, ...located };
+  }
   if (!serverSource.includes(PATCH_MARKER)) {
     const count = patchedServer.split(ORIGINAL_CALL_SYNC).length - 1;
     if (count !== 1) {
@@ -1167,6 +1202,12 @@ function patchRuntime(options = {}) {
   const clientSource = clientBytes.toString("utf8");
   let patchedClient = clientSource;
   let clientStatus = "already-applied";
+  try {
+    patchedClient = logQueryPatch.normalizeClient(patchedClient);
+  } catch (error) {
+    return { ok: false, status: "unsupported-source", component: "client",
+      anchor: "owned-log-query", error: error.message, ...located };
+  }
   if (!patchedClient.includes(STATA_SET_BREAK_PATCH_MARKER)) {
     const count = patchedClient.split(ORIGINAL_STATA_BREAK_REQUEST).length - 1;
     if (count !== 1) {
@@ -1212,6 +1253,17 @@ function patchRuntime(options = {}) {
       patchedClient = patchedClient.replace(original, replacement);
     }
     clientStatus = options.dryRun ? "would-apply" : "applied";
+  }
+  const tailHelperCount = patchedClient.split(PATCHED_STREAM_HELPER).length - 1;
+  const legacyTailHelperCount = patchedClient.split(LEGACY_STREAM_HELPER_WITHOUT_TAIL).length - 1;
+  const separatorHelperCount = patchedClient.split(PATCHED_STREAM_HELPER_WITH_SEPARATORS).length - 1;
+  if (tailHelperCount === 0 && legacyTailHelperCount === 1 && separatorHelperCount === 0) {
+    patchedClient = patchedClient.replace(LEGACY_STREAM_HELPER_WITHOUT_TAIL, () => PATCHED_STREAM_HELPER);
+  } else if (tailHelperCount === 0 && legacyTailHelperCount === 0 && separatorHelperCount === 1) {
+    patchedClient = patchedClient.replace(PATCHED_STREAM_HELPER_WITH_SEPARATORS, () => PATCHED_STREAM_HELPER);
+  } else if (tailHelperCount !== 1 || legacyTailHelperCount !== 0 || separatorHelperCount !== 0) {
+    return { ok: false, status: "unsupported-source", component: "client",
+      anchor: "completion-tail-helper", tailHelperCount, legacyTailHelperCount, ...located };
   }
   if (!patchedClient.includes(STREAM_TAIL_PATCH_MARKER)) {
     const signatureCount = patchedClient.split(ORIGINAL_STREAM_TAIL_SIGNATURE).length - 1;
@@ -1496,6 +1548,18 @@ function patchRuntime(options = {}) {
     return { ok: false, status: "unsupported-source", component: "client",
       anchor: "bulk-cache", error: error.message, ...located };
   }
+  try {
+    patchedClient = logQueryPatch.patchClient(patchedClient);
+  } catch (error) {
+    return { ok: false, status: "unsupported-source", component: "client",
+      anchor: "owned-log-query", error: error.message, ...located };
+  }
+  try {
+    patchedClient = graphNameBoundaryPatch.patchClient(patchedClient);
+  } catch (error) {
+    return { ok: false, status: "unsupported-source", component: "client",
+      anchor: "graph-name-boundary", error: error.message, ...located };
+  }
   clientStatus = patchedClient === clientSource ? "already-applied"
     : (options.dryRun ? "would-apply" : "applied");
 
@@ -1764,6 +1828,8 @@ module.exports = {
   PATCHED_STREAM_CALL_TAIL_COMMAND,
   PATCHED_STREAM_CALL_TAIL_DOFILE,
   PATCHED_STREAM_HELPER,
+  PATCHED_STREAM_HELPER_WITH_SEPARATORS,
+  LEGACY_STREAM_HELPER_WITHOUT_TAIL,
   PATCHED_STREAM_HELPER_V17,
   PATCHED_STREAM_HELPER_V18,
   PATCHED_STREAM_HELPER_V19,

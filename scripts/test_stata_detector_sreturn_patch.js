@@ -12,6 +12,10 @@ const original = "class Detector:\n" + fixture.initialization + fixture.blocks.m
   "    def should_cache_graph(self, name):\n        pass\n";
 const previous = state.patchDetector(errors.patchDetector(original));
 const candidate = patch.patchDetector(previous);
+const legacy = candidate.replace(patch.replacement, patch.legacyReplacement);
+assert.notEqual(legacy, candidate);
+assert.equal(patch.patchDetector(legacy), candidate);
+assert.equal(patch.normalizeDetector(legacy), previous);
 assert.equal(patch.patchDetector(candidate), candidate);
 assert.equal(patch.normalizeDetector(candidate), previous);
 assert.equal(patch.normalizeDetector(previous), previous);
@@ -29,7 +33,7 @@ assert.notEqual(equivalent, candidate);
 const python = process.env.STATA_PATCH_TEST_PYTHON || (process.platform === "darwin"
   ? "/opt/homebrew/opt/python@3.14/bin/python3.14" : "python3");
 const result = cp.spawnSync(python, ["-B", path.join(__dirname, "test_stata_detector_sreturn.py")], {
-  input: JSON.stringify({ candidate, previous, excised, equivalent }), encoding: "utf8", timeout: 30000,
+  input: JSON.stringify({ candidate, previous, excised, equivalent, legacy }), encoding: "utf8", timeout: 30000,
 });
 assert.equal(result.status, 0, result.stderr || result.error?.message);
 const report = JSON.parse(result.stdout);

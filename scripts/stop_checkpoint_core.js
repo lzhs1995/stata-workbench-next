@@ -156,7 +156,7 @@ function checkpointCode(snapshot, stataString) {
     "tempvar __codex_cp_esample",
     "local __codex_cp_changed = c(changed)",
     // Locals belong to this checkpoint DO, never to Mata's external namespace.
-    'mata: st_local("__codex_cp_snames", invtokens(st_dir("s", "macro", "*")\'))',
+    'mata: st_local("__codex_cp_snames", invtokens(st_dir("s()", "macro", "*")\'))',
     "local __codex_cp_si = 0",
     "foreach __codex_cp_sname of local __codex_cp_snames {",
     "    local ++__codex_cp_si",

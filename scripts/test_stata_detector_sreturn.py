@@ -52,6 +52,10 @@ def restored(b):
 
 
 cases, controls = [], []
+b, d, _ = fresh('legacy')
+assert error(d._get_graph_inventory).stata_rc == 198
+assert not any('graph ' in code for code in b.calls)
+controls.append('legacy-s-macros-rejected-with-r198')
 entries = [('_get_graph_inventory', ()), ('_get_graph_timestamps', (['g1', 'g2'],)),
            ('_get_current_graphs_from_pystata', ()), ('_get_graph_state_from_pystata', ()),
            ('_detect_graphs_via_pystata', ()), ('detect_graph_modifications', ())]
