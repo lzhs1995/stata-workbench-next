@@ -111,8 +111,8 @@
       "bytes": 5178
     },
     "scripts/apply_rc7_shared_execution_patch.js": {
-      "sha256": "31aa8fa69984847686ad0fd619a4cf3eafde9d72a294fb87514c3fbc129dbc13",
-      "bytes": 336573
+      "sha256": "b108f7fb88abd4fedf6be8ba242c9f197a213ceea58ba340f6ae90e026551863",
+      "bytes": 336666
     },
     "scripts/apply_rc64_routes_patch.js": {
       "sha256": "b01e1225f5844b632e24d616957fb9e565541345a10d6f4fbc640a4b034070b2",
@@ -301,6 +301,10 @@
     "scripts/stata_graph_name_boundary_patch.js": {
       "sha256": "86de475cd0fc3a33d72804a0685625f780839a6bbd6b34d4b1f9beaccd444793",
       "bytes": 1821
+    },
+    "scripts/apply_manual_graph_preview_patch.js": {
+      "sha256": "282a353b4927802c0fea4ff0bd4113a1bc30196b055f3533684fa6201b6dc1e6",
+      "bytes": 3041
     }
   },
   "acceptanceStatus": "PENDING_LICENSED_MAC_FULL_ACCEPTANCE",

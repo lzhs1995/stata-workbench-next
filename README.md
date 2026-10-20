@@ -17,6 +17,8 @@ Graph recovery and candidate release evidence retain their stated limits.
 
 In this candidate, click an existing image artifact in Stata Terminal to open it
 in Stata Graphs. This previews the saved file without running Stata again.
+The panel shows that image alone; other exported files remain available from
+their Terminal links and on disk.
 Automatic graph batches continue to leave Terminal visible when no Graphs panel
 is open. Native acceptance of the new click route is still pending.
 

@@ -4,6 +4,19 @@
 // __codexResolveArtifactPath 与 __codexHandleArtifact 运行，而不是复写其逻辑。
 const fs = require('node:fs'), vm = require('node:vm'), assert = require('node:assert/strict'), path = require('node:path');
 const source = fs.readFileSync(path.join(__dirname, '../dist/extension.js'), 'utf8');
+// The maintenance replay must preserve the same bytes, with strict anchors.
+const patch = require('./apply_manual_graph_preview_patch');
+const fingerprint = require('./finalize_bundle_identity');
+const crypto = require('node:crypto');
+const previous = fingerprint.finalize(source.replace(patch.HELPER, '').replace(patch.AFTER, patch.BEFORE)).text;
+assert.equal(crypto.createHash('sha256').update(previous).digest('hex'),
+  '5519c6f04a0ca6a46ea81d8f2e6e2c293a006b7d620214eec6bef7bfff63fbea', 'previous bundle fixture must be exact');
+assert.equal(patch.patchBundle(previous), source, 'maintenance replay must reproduce sealed bundle');
+assert.equal(patch.patchBundle(source), source, 'patch must be idempotent');
+assert.throws(() => patch.patchBundle(previous.replace(patch.BEFORE, 'missingRoute')), /anchor/);
+assert.throws(() => patch.patchBundle(previous + patch.BEFORE), /anchor/);
+assert.throws(() => patch.patchBundle(source.replace(patch.AFTER, patch.BEFORE)), /anchor|mixed/);
+assert.throws(() => patch.patchBundle(source.replace('manual-terminal-click', 'changed-click')), /modified/);
 function extract(start, end) {
   const a = source.indexOf(start), b = source.indexOf(end, a + start.length);
   assert(a >= 0 && b > a, 'bundle segment not found: ' + start);
@@ -22,7 +35,7 @@ const context = {
   zg: stataTrap,
   __codexGraphPanel: null,
   __codexGraphPanelDiag: { revealCount: 0 },
-  __codexGraphState: { runId: 'run_original', graphs: [], version: 3 },
+  __codexGraphState: { runId: 'run_original', graphs: [{absPath: '/runs/old/a.svg'}, {absPath: '/runs/old/b.svg'}], version: 3 },
   __codexUriFile: (p) => p,
   __codexGraphLog() {},
   __codexGraphTargetColumn: () => 2,
@@ -46,7 +59,7 @@ const send = (m) => context.__dispatch(terminal, Object.assign({ type: 'openArti
 send({ path: '/runs/r8/graph_001.svg', label: 'graph_001' });
 assert.equal(calls.ensure, 1); assert.equal(calls.reveal, 1); assert.equal(calls.pag.length, 0);
 assert.match(context.__codexGraphState.runId, /^manual-preview-\d+-1$/);
-assert.equal(context.__codexGraphState.graphs.length, 1);
+assert.equal(context.__codexGraphState.graphs.length, 1, 'manual click replaces the displayed batch with a single preview');
 assert.equal(context.__codexGraphState.graphs[0].absPath, '/runs/r8/graph_001.svg');
 assert.equal(context.__codexGraphPanelDiag.lastBatchSource, 'manual-terminal-click');
 // 2. 相对路径 + baseDir 的 PNG：面板已存在，复用并解析绝对路径。
