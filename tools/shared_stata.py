@@ -41,6 +41,49 @@ def ready(instance):
             and _valid_backend_pids(s.get("ownedBackendPids")))
 
 
+def response_diagnostics(body):
+    """Expose error-envelope identities without certifying completion or retry safety.
+
+    Some HTTP helpers retain a failed response as a JSON string in _httperror.
+    Keep the original response intact; never feed this diagnostic view into the
+    success checks. In particular, a missing runId does not prove zero execution.
+    """
+    result = {"source": "response", "fields": {}, "issues": []}
+    if not isinstance(body, dict):
+        result["issues"].append("RESPONSE_NOT_OBJECT")
+        return result
+    fields = ("runId", "requestId", "rc", "logPath")
+    top = {key: body[key] for key in fields if key in body}
+    result["fields"] = top.copy()
+    if "_httperror" not in body:
+        return result
+    result["source"] = "response._httperror"
+    raw = body["_httperror"]
+    if not isinstance(raw, str):
+        result["issues"].append("HTTP_ERROR_PAYLOAD_NOT_STRING")
+        return result
+    try:
+        nested = json.loads(raw)
+    except (ValueError, RecursionError):
+        result["issues"].append("HTTP_ERROR_PAYLOAD_INVALID_JSON")
+        return result
+    if not isinstance(nested, dict):
+        result["issues"].append("HTTP_ERROR_PAYLOAD_NOT_OBJECT")
+        return result
+    inner = {key: nested[key] for key in fields if key in nested}
+    result["topLevelFields"] = top
+    result["httpErrorFields"] = inner
+    conflicts = [key for key in fields if key in top and key in inner
+                 and (type(top[key]) is not type(inner[key]) or top[key] != inner[key])]
+    if conflicts:
+        result["issues"].append("HTTP_ERROR_FIELD_CONFLICT")
+        result["conflictingFields"] = conflicts
+        result["fields"] = {}  # Do not synthesize an identity from conflicting envelopes.
+    else:
+        result["fields"].update(inner)
+    return result
+
+
 def completion_checks(request, http, body, before, after):
     body = body if isinstance(body, dict) else {}
     s = after.get("status") or {}
@@ -57,6 +100,7 @@ def completion_checks(request, http, body, before, after):
         and request_id != (before["status"].get("lastCompletedRun") or {}).get("requestId")) if client_token else (request_id == request.get("runId"))
     return {
         "http200": type(http) is int and http == 200,
+        "noHttpErrorEnvelope": "_httperror" not in body,
         "responseOk": body.get("ok") is True,
         "requestBound": request_bound,
         "newRunId": isinstance(rid, str) and bool(rid) and rid != before["status"].get("runId"),
@@ -106,6 +150,8 @@ def execute_once(d, request, receipt, timeout=3600, observe=entry.observe, sleep
         http, body = d.w.http_post("/run-command", payload, timeout=timeout)
         result.update(http=http, response=body)
         write_once(receipt / "response.json", {"http": http, "body": body})
+        result["responseDiagnostics"] = response_diagnostics(body)
+        write_once(receipt / "response-diagnostics.json", result["responseDiagnostics"])
         after = observe(d)
         # Only observe completion settlement. Never repeat the POST.
         for _ in range(30):
@@ -174,8 +220,11 @@ def main():
             handle = stack.enter_context(open(lock_path, "a+"))
             fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
         result = execute_once(d, request, receipt, args.timeout)
+    diagnostics = result.get("responseDiagnostics") or response_diagnostics(result.get("response"))
     print(json.dumps({"verdict": result["verdict"], "postCount": result["postCount"], "retryCount": 0,
-                      "runId": (result.get("response") or {}).get("runId"), "receipt": str(receipt),
+                      "runId": diagnostics["fields"].get("runId"),
+                      "requestId": diagnostics["fields"].get("requestId"),
+                      "responseDiagnostics": diagnostics, "receipt": str(receipt),
                       "error": result["error"], "failedChecks": result.get("failedChecks"),
                       "windowObservation": result.get("windowObservation")}, ensure_ascii=False))
     return 0 if result["verdict"] == "PASS_VISIBLE_SHARED_RUN" else 2

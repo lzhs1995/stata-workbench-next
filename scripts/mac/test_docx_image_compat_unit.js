@@ -10,6 +10,7 @@ const {
   transformDoSource,
   defaultDocxHelperScript,
 } = require("./png_compat_transform");
+const python = process.env.PYTHON || "/usr/bin/python3";
 
 let failures = 0;
 function check(name, fn) {
@@ -77,11 +78,13 @@ check("DOCX helper exists and compiles", () => {
   const helper = defaultDocxHelperScript();
   assert.ok(fs.existsSync(helper), helper);
   if (process.platform !== "darwin") return;
-  const result = spawnSync("/usr/bin/python3", ["-m", "py_compile", helper], { encoding: "utf8" });
+  const result = spawnSync(python, ["-B", "-c",
+    "import pathlib, sys; compile(pathlib.Path(sys.argv[1]).read_bytes(), sys.argv[1], 'exec')", helper],
+  { encoding: "utf8" });
   assert.strictEqual(result.status, 0, result.stderr || result.stdout);
 });
 
-check("DOCX helper injects one image and removes the marker", () => {
+check("DOCX helper injects images and preserves package namespaces across calls", () => {
   if (process.platform !== "darwin") return;
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "docx-image-compat-"));
   const word = path.join(root, "word");
@@ -118,7 +121,9 @@ check("DOCX helper injects one image and removes the marker", () => {
     { cwd: root, encoding: "utf8" }
   );
   assert.strictEqual(zipped.status, 0, zipped.stderr || zipped.stdout);
-  const injected = spawnSync("/usr/bin/python3", [defaultDocxHelperScript(), "--docx", docx], {
+  const batch = [path.join(root, "batch1.docx"), path.join(root, "batch2.docx")];
+  for (const file of batch) fs.copyFileSync(docx, file);
+  const injected = spawnSync(python, ["-B", defaultDocxHelperScript(), "--docx", docx], {
     encoding: "utf8",
   });
   assert.strictEqual(injected.status, 0, injected.stderr || injected.stdout);
@@ -128,20 +133,53 @@ check("DOCX helper injects one image and removes the marker", () => {
   assert.ok(fs.existsSync(markerPath));
   const result = JSON.parse(fs.readFileSync(markerPath, "utf8"));
   assert.strictEqual(result.injected, 1);
-  const documentXml = spawnSync("/usr/bin/unzip", ["-p", docx, "word/document.xml"], {
-    encoding: "utf8",
-  }).stdout;
-  const rels = spawnSync("/usr/bin/unzip", ["-p", docx, "word/_rels/document.xml.rels"], {
-    encoding: "utf8",
-  }).stdout;
-  const entries = spawnSync("/usr/bin/unzip", ["-Z1", docx], { encoding: "utf8" }).stdout;
-  assert.ok(documentXml.includes("wp:extent"), documentXml);
-  assert.ok(documentXml.includes('cx="3657600"'));
-  assert.ok(documentXml.includes('cy="2743200"'));
-  assert.ok(!documentXml.includes("__CODEX_DOCX_IMAGE_V1__"));
-  assert.ok(rels.includes("relationships/image"));
-  assert.ok(entries.includes("word/media/imageCodex1.png"), entries);
+  // One interpreter exercises ElementTree's shared namespace registry. A
+  // content-types fix must not prefix relationships on the next document.
+  const repeated = spawnSync(python, ["-B", "-c", [
+    "import pathlib, runpy, sys",
+    "inject = runpy.run_path(sys.argv[1])['inject']",
+    "for name in sys.argv[2:]:",
+    "    file = pathlib.Path(name)",
+    "    assert inject(file)['injected'] == 1",
+    "    before = file.read_bytes()",
+    "    assert inject(file)['unchanged'] is True",
+    "    assert file.read_bytes() == before",
+  ].join("\n"), defaultDocxHelperScript(), ...batch], { encoding: "utf8" });
+  assert.strictEqual(repeated.status, 0, repeated.stderr || repeated.stdout);
+  for (const file of [docx, ...batch]) {
+    const documentXml = spawnSync("/usr/bin/unzip", ["-p", file, "word/document.xml"], {
+      encoding: "utf8",
+    }).stdout;
+    const rels = spawnSync("/usr/bin/unzip", ["-p", file, "word/_rels/document.xml.rels"], {
+      encoding: "utf8",
+    }).stdout;
+    // unzip treats brackets as a glob; use Python's exact ZIP member lookup.
+    const exactTypes = spawnSync(python, ["-B", "-c",
+      "import sys, zipfile; sys.stdout.buffer.write(zipfile.ZipFile(sys.argv[1]).read('[Content_Types].xml'))",
+      file], { encoding: "utf8" });
+    assert.strictEqual(exactTypes.status, 0, exactTypes.stderr);
+    assert.match(exactTypes.stdout, /<Types xmlns="http:\/\/schemas.openxmlformats.org\/package\/2006\/content-types"/);
+    assert.match(rels, /<Relationships xmlns="http:\/\/schemas.openxmlformats.org\/package\/2006\/relationships"/);
+    const entries = spawnSync("/usr/bin/unzip", ["-Z1", file], { encoding: "utf8" }).stdout;
+    assert.ok(documentXml.includes("wp:extent"), documentXml);
+    assert.ok(documentXml.includes('cx="3657600"'));
+    assert.ok(documentXml.includes('cy="2743200"'));
+    assert.ok(!documentXml.includes("__CODEX_DOCX_IMAGE_V1__"));
+    assert.ok(rels.includes("relationships/image"));
+    assert.ok(entries.includes("word/media/imageCodex1.png"), entries);
+    const embedded = spawnSync("/usr/bin/unzip", ["-p", file, "word/media/imageCodex1.png"]).stdout;
+    assert.deepStrictEqual(embedded, fs.readFileSync(imagePath));
+    const packageRels = spawnSync("/usr/bin/unzip", ["-p", file, "_rels/.rels"]).stdout;
+    assert.deepStrictEqual(packageRels, fs.readFileSync(path.join(root, "_rels", ".rels")));
+  }
   assert.ok(fs.existsSync(markerPath));
+});
+
+check("DOCX preserves QName namespace values and nested scope", () => {
+  const result = spawnSync(python, ["-B", path.join(__dirname, "test_docx_namespace_unit.py")], {
+    encoding: "utf8",
+  });
+  assert.strictEqual(result.status, 0, result.stderr || result.stdout);
 });
 
 if (failures) {

@@ -18,6 +18,7 @@ const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
 const { execFileSync } = require("child_process");
+const { createRequire } = require("module");
 
 const ROOT = path.resolve(__dirname, "..");
 const VSCE = path.join(ROOT, "node_modules", ".bin", "vsce");
@@ -152,7 +153,10 @@ t("L1.6 分类器不是恒假：至少一条规则对至少一个样例生效，
 });
 
 t("L1.7 .vscodeignore 必须真的覆盖 R1 文件名类（用 vsce 自带 minimatch 实测，非字符串比对）", () => {
-  const mm = require(path.join(ROOT, "node_modules", "minimatch"));
+  // Resolve from vsce so this check uses its actual matcher, including nested installs.
+  const vsceRequire = createRequire(require.resolve("@vscode/vsce/package.json"));
+  const { minimatch: mm } = vsceRequire("minimatch");
+  assert.strictEqual(typeof mm, "function", "vsce minimatch export must be callable");
   const igPath = path.join(ROOT, ".vscodeignore");
   const raw = fs.readFileSync(igPath, "utf8");
   const pats = raw
@@ -161,7 +165,7 @@ t("L1.7 .vscodeignore 必须真的覆盖 R1 文件名类（用 vsce 自带 minim
     .filter((s) => !!s)
     .filter((s) => !/^\s*#/.test(s))
     .filter((s) => !/^\s*!/.test(s));
-  // vsce 用的就是 minimatch + {dot:true}（node_modules/@vscode/vsce/out/package.js:53）
+  // vsce 4 用 minimatch 的具名导出 + {dot:true}（out/package.js）。
   const hits = pats.filter((p) => mm(R1_EXACT, p, { dot: true }));
   assert.ok(hits.length > 0, ".vscodeignore 没有任何模式能打中 " + R1_EXACT);
   // 反向：这些模式绝不能同时打中正典 bundle
@@ -290,4 +294,3 @@ if (failures.length) {
 console.log("PACKAGE_CONTENTS_RC715_OK  PASS=" + pass + " FAIL=0");
 
 module.exports = { classify, bundleCandidates, CANONICAL_BUNDLE, FORBIDDEN_RULES, R1_EXACT, vsceLs };
-

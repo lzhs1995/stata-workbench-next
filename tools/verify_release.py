@@ -1,4 +1,4 @@
-"""Verify public source/VSIX runtime against the accepted runtime manifest."""
+"""Verify source/VSIX runtime against its versioned identity manifest."""
 import argparse
 import hashlib
 import json

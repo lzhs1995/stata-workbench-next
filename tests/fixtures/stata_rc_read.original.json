@@ -1,0 +1,6 @@
+{
+  "sourcePath": "mcp_stata/stata_client.py",
+  "sourceSha256": "967ef1d669efbde2242d717e9784217e7372b42be7e1a61b18ee80bb71ee5de8",
+  "sha256": "2927279d9795867b95ecd2f2181ed656933a1e36030a50043fb98450541ddecc",
+  "source": "    def _get_rc_from_scalar(self, Scalar=None) -> int:\n        \"\"\"Safely get return code using sfi.Scalar access to c(rc).\"\"\"\n        if Scalar is None:\n            from sfi import Scalar\n        try:\n            # c(rc) is the built-in system constant for the last return code.\n            # Accessing it via Scalar.getValue is direct and does not reset it.\n            rc_val = Scalar.getValue(\"c(rc)\")\n            if rc_val is None:\n                return 0\n            return int(float(rc_val))\n        except Exception:\n            # Fallback to macro if Scalar fails\n            try:\n                from sfi import Macro\n                self.stata.run(\"global _mcp_last_rc = _rc\", echo=False)\n                rc_str = Macro.getGlobal(\"_mcp_last_rc\")\n                return int(float(rc_str)) if rc_str else 0\n            except Exception:\n                return -1\n\n"
+}

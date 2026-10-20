@@ -132,6 +132,9 @@ const POLICY_TABLE = [
     ord: 15, id: "graph-inventory-probe", mode: "wrap", policy: "SHORT_INTERNAL", runId: "null",
     anchor:
       "e close __codex_graph_meta\",\n    \"}\"\n  ].join(\"\\n\");\n  const inventoryPromise = ",
+    finalAnchor:
+      "    // Await the guard itself, including its cancellation and drain deadline.\n    const result = await ",
+    finalRunId: "probeRunId",
   },
   {
     ord: 16, id: "graph-export-batch", mode: "wrap", policy: "SHORT_INTERNAL", runId: "null",
@@ -210,6 +213,10 @@ function assertTableWellFormed() {
     }
     if (e.mode === "wrap" && typeof e.runId !== "string") {
       throw new Error("rc.7.13 wrap entry missing runId expression: #" + e.ord);
+    }
+    if (e.finalRunId !== undefined &&
+        (!e.finalAnchor || e.mode !== "wrap" || typeof e.finalRunId !== "string" || !e.finalRunId.trim())) {
+      throw new Error("rc.7.13 invalid final runId variant: #" + e.ord);
     }
     if (e.mode === "wrap" && e.policy === "PROGRESS"
         && (typeof e.structuralLong !== "string" || !e.structuralLong.trim())) {
@@ -400,7 +407,11 @@ function apply(text) {
       ? entry.finalAnchor
       : entry.anchor;
     const at = findUniqueAnchor(out, anchor, "#" + entry.ord + " " + entry.id);
-    return { entry, anchorEnd: at + anchor.length };
+    // Historical replay still uses its original null owner. The final probe
+    // binds cancellation to the same unique runId supplied to runSelection.
+    const resolved = anchor === entry.finalAnchor && entry.finalRunId !== undefined
+      ? { ...entry, runId: entry.finalRunId } : entry;
+    return { entry: resolved, anchorEnd: at + anchor.length };
   }).sort((a, b) => b.anchorEnd - a.anchorEnd);
 
   const report = {

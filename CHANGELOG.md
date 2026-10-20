@@ -1,3 +1,12 @@
+## Recovery guide 2026-10-17
+
+Document the cmux caller-signature, RTK terminal-descriptor and helper-permission
+incident, including failed user attempts, the tested launcher repair and corrected
+codesign syntax. Add original-session preservation, current-generation binding,
+live desktop/profile/backend acceptance and no-duplicate research rules. Replace
+the troubleshooting guide's unconditional reset/retry advice. Documentation only;
+no extension installation, runtime reset or new Stata execution is implied.
+
 ## Toolchain guide 2026-10-01
 
 Document explicit shared execution with user-permitted covering, hiding or minimization;

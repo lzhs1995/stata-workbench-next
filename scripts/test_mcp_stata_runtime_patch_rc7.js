@@ -1,12 +1,104 @@
 #!/usr/bin/env node
 "use strict";
 
+const sessionHealth = require("./stata_session_health_patch");
 const assert = require("assert");
 const childProcess = require("child_process");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+const sessionOriginal = fs.readFileSync(path.join(__dirname, "../tests/fixtures/stata_sessions.original.py"), "utf8");
 const runtimePatch = require("./mcp_stata_runtime_patch");
+const graphNameBoundary = require("./stata_graph_name_boundary_patch");
+require("./test_stata_graph_name_boundary_patch");
+const graphTaskDrain = require("./stata_graph_task_drain_patch");
+const graphErrors = require("./stata_graph_error_patch");
+const graphCallbacks = require("./stata_graph_callback_patch");
+const detectorErrors = require("./stata_detector_error_patch");
+const detectorState = require("./stata_detector_state_patch");
+const detectorSreturn = require("./stata_detector_sreturn_patch");
+const cacheTransaction = require("./stata_cache_transaction_patch");
+const cacheFixture = require("../tests/fixtures/stata_cache_transaction.original.json");
+const finalDetectorBlock = body => {
+  let result = body.replace(detectorSreturn.previous, () => detectorSreturn.replacement);
+  for (const block of cacheTransaction.BLOCKS) result = result.replace(block.previous, () => block.replacement);
+  return result;
+};
+const graphInventory = require("./stata_graph_inventory_patch");
+const streamLifecycle = require("./stata_stream_lifecycle_patch");
+const helpState = require("./stata_help_state_patch");
+const exportState = require("./stata_export_state_patch");
+const storedResults = require("./stata_stored_results_patch");
+const storedFixture = require("../tests/fixtures/stata_stored_results.original.json");
+const startupState = require("./stata_startup_state_patch");
+const startupFixture = require("../tests/fixtures/stata_startup_state.original.json");
+const bulkCache = require("./stata_bulk_cache_patch");
+const bulkOriginal = name => bulkCache.BLOCKS.find(b => b.name === name).original;
+const startupMethods = startupState.INIT_ORIGINAL + startupState.BLOCKS[0].end + "\n        pass\n\n"
+  + startupFixture.blocks.map(block => block.original + block.end
+    + (block.name === "load" ? "\n" : "self):\n        pass\n\n")).join("");
+const exportMethods = require("../tests/fixtures/stata_export.original.json").original
+  + require("../tests/fixtures/stata_help.original.json").original
+  + storedFixture.original + bulkOriginal("manage")
+  + "    def _get_content_hash(self, content):\n        return content.hex()\n\n"
+  + startupMethods;
+const lifecycleBoundary = streamLifecycle.BLOCKS.find(b => b.name === "execution-error-and-close");
+const finalLifecycleBoundary = source =>
+  source.replace(lifecycleBoundary.original, lifecycleBoundary.replacement);
+const inventoryFixture = require("../tests/fixtures/stata_graph_inventory.original.json");
+const inventoryMethods = inventoryFixture.blocks.map(block => block.original +
+  (block.name === "list_graphs" ? exportMethods :
+    block.name === "_capture_graph_state" ? "    async def _cache_new_graphs(self):\n        pass\n\n" :
+      "    @staticmethod\n    def _inventory_end():\n        pass\n\n")).join("");
+const originalInventoryMethods = inventoryMethods.replace(
+  runtimePatch.PATCHED_CLIENT_GRAPH_INVENTORY, runtimePatch.ORIGINAL_CLIENT_GRAPH_INVENTORY);
+const detectorFixture = require("../tests/fixtures/stata_detector_errors.original.json");
+const detectorMethods = detectorFixture.blocks.map(block => block.original +
+  (block.name === "_get_graph_inventory" ? "    def _get_graph_timestamp(self, name):\n        return self._get_graph_timestamps([name]).get(name, '')\n\n" : "")).join("") +
+  "    def should_cache_graph(self, name):\n        raise NotImplementedError\n" +
+  cacheFixture.blocks.find(b => b.name === "lifecycle").original + "class StreamingGraphCache:\n";
+// These frozen blocks already contain the deployed quiet-probe patch. Undo only
+// those substitutions here so the integration covers migration from raw source.
+const originalDetectorMethods = detectorMethods
+  .replaceAll(runtimePatch.PATCHED_DETECTOR_GRAPH_DIR, runtimePatch.ORIGINAL_DETECTOR_GRAPH_DIR)
+  .replace(runtimePatch.PATCHED_DETECTOR_GRAPH_DESCRIBE, runtimePatch.ORIGINAL_DETECTOR_GRAPH_DESCRIBE);
+// A malformed dry-run invocation must not discover or touch any live runtime.
+const ioMethods = ["existsSync", "statSync", "readdirSync", "readFileSync", "writeFileSync", "renameSync"];
+const originalIo = Object.fromEntries(ioMethods.map(name => [name, fs[name]]));
+let invalidOptionIo = 0;
+try {
+  for (const name of ioMethods) fs[name] = () => { invalidOptionIo++; throw new Error("unexpected runtime IO"); };
+  for (const args of [
+    ["/a/runtime", { dryRun: true }], ["/a/runtime"], [null], [[]], [false], [1],
+    [{ dryRun: "false" }], [{ dryRun: null }], [{ dryRun: 0 }],
+    [{ dryRun: true }, { runtimeRoot: "/a/runtime" }],
+  ]) {
+    const result = runtimePatch.patchRuntime(...args);
+    assert.strictEqual(result.ok, false);
+    assert.strictEqual(result.status, "invalid-options");
+  }
+  assert.strictEqual(invalidOptionIo, 0);
+} finally {
+  for (const name of ioMethods) fs[name] = originalIo[name];
+}
+const streamStateFixture = fs.readFileSync(path.join(__dirname,
+  "../tests/fixtures/stata_streaming_blocking.original.py"), "utf8")
+  + "    def _resolve_do_file_path(self):\n        pass\n"
+  // The two graph patches below already supply both execution/close boundaries.
+  + streamLifecycle.BLOCKS.filter(block => block.name !== "execution-error-and-close")
+    .map(block => block.original.repeat(block.count)).join("\n")
+  + require("../tests/fixtures/stata_smcl_logs.original.json").source
+  + "    def _restore_results_from_hold(self):\n        pass\n"
+  + require("../tests/fixtures/stata_response_rc.original.json").blocks.map(block =>
+    block.name === "_exec_with_capture"
+      ? require("../tests/fixtures/stata_capture_state.original.json").source
+      : (block.name === "run_do_file" ? bulkOriginal("exports") : "")
+        + `    def ${block.name}(self):\n` + block.source + block.success + "        return rc, success\n\n").join("")
+  + require("../tests/fixtures/stata_rc_read.original.json").source
+  + "    def _parse_rc_from_text(self):\n        pass\n"
+  + require("../tests/fixtures/stata_silent_state.original.json").blocks.map(block =>
+    block.source.replace(runtimePatch.PATCHED_INTERNAL_SILENT_EXEC, runtimePatch.ORIGINAL_INTERNAL_SILENT_EXEC)
+      + block.end + "self):\n        pass\n\n").join("");
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "mcp-stata-runtime-patch-"));
 try {
@@ -21,10 +113,12 @@ try {
     "            payload_to_send = text",
     runtimePatch.ORIGINAL_BACKGROUND_NOTIFY_SEND,
   ].join("\n");
-  const graphCacheFixture = [
-    runtimePatch.ORIGINAL_BACKGROUND_GRAPH_CACHE_COMMAND,
-    runtimePatch.ORIGINAL_BACKGROUND_GRAPH_CACHE_DOFILE,
-  ].join("\n");
+  // The frozen graph finalizers contain the existing cache anchors exactly once.
+  const graphCacheFixture = graphErrors.BLOCKS.map(block =>
+    (block.name === "emission" ? cacheFixture.notification.original + bulkOriginal("get") : "") + block.original
+    + (block.name === "emission" ? "    @staticmethod\n    def _extract_named_graphs(text):\n        return []\n\n" : "")).join("\n")
+    .replace(runtimePatch.PATCHED_BACKGROUND_GRAPH_CACHE_COMMAND, runtimePatch.ORIGINAL_BACKGROUND_GRAPH_CACHE_COMMAND)
+    .replace(runtimePatch.PATCHED_BACKGROUND_GRAPH_CACHE_DOFILE, runtimePatch.ORIGINAL_BACKGROUND_GRAPH_CACHE_DOFILE);
   const streamTailFixture = [
     runtimePatch.ORIGINAL_STREAM_TAIL_SIGNATURE,
     runtimePatch.ORIGINAL_POST_DONE_DRAIN,
@@ -61,6 +155,7 @@ try {
       "# fixture",
       runtimePatch.ORIGINAL_CALL_SYNC,
       runtimePatch.ORIGINAL_TASK_DONE_NOTIFY,
+      sessionHealth.SERVER_ORIGINAL,
       backgroundNotifyFixture,
       backgroundNotifyFixture,
       backgroundSignaturesFixture,
@@ -71,7 +166,7 @@ try {
   );
   fs.writeFileSync(sessionPath, [
     "# fixture",
-    runtimePatch.ORIGINAL_SESSION_CALL,
+    sessionOriginal.replace(runtimePatch.PATCHED_SESSION_CALL, runtimePatch.ORIGINAL_SESSION_CALL),
     "# end",
   ].join("\n"), "utf8");
   fs.writeFileSync(
@@ -79,6 +174,10 @@ try {
     [
       "# fixture",
       runtimePatch.ORIGINAL_STATA_BREAK_REQUEST,
+      ...graphNameBoundary.BLOCKS.map(block => block.original),
+      streamStateFixture,
+      graphTaskDrain.ORIGINAL_POLL,
+      graphTaskDrain.ORIGINAL_EXIT,
       runtimePatch.ORIGINAL_STREAM_HELPER,
       runtimePatch.ORIGINAL_STREAM_NOTIFY,
       runtimePatch.ORIGINAL_FINAL_STREAM_NOTIFY,
@@ -86,8 +185,7 @@ try {
       runtimePatch.ORIGINAL_POST_DONE_DRAIN,
       runtimePatch.ORIGINAL_STREAM_CALL_TAIL,
       runtimePatch.ORIGINAL_STREAM_CALL_TAIL,
-      runtimePatch.ORIGINAL_CLIENT_GRAPH_INVENTORY,
-      runtimePatch.ORIGINAL_INTERNAL_SILENT_EXEC,
+      originalInventoryMethods,
       graphCacheFixture,
       "# end",
     ].join("\n"),
@@ -98,16 +196,16 @@ try {
     [
       "# fixture",
       "class GraphCreationDetector:",
-      runtimePatch.ORIGINAL_DETECTOR_GRAPH_DIR,
-      runtimePatch.ORIGINAL_DETECTOR_GRAPH_DIR,
-      runtimePatch.ORIGINAL_DETECTOR_GRAPH_DESCRIBE,
+      originalDetectorMethods,
+      graphCallbacks.ORIGINAL,
+      graphTaskDrain.ORIGINAL_DETECTOR + cacheFixture.scaffold.cacheTail.source,
       "# end",
     ].join("\n"),
     "utf8"
   );
 
   const first = runtimePatch.patchRuntime(patchOptions);
-  assert.strictEqual(first.ok, true);
+  assert.strictEqual(first.ok, true, JSON.stringify(first));
   assert.strictEqual(first.status, "applied");
   const firstBytes = fs.readFileSync(serverPath);
   assert.ok(firstBytes.toString("utf8").includes(runtimePatch.PATCH_MARKER));
@@ -167,7 +265,14 @@ try {
     );
   }
   const firstClientBytes = fs.readFileSync(clientPath);
-  const firstClientText = firstClientBytes.toString("utf8");
+  const logQuery = require("./stata_log_query_patch");
+  const firstClientRawText = firstClientBytes.toString("utf8");
+  for (const block of logQuery.BLOCKS) {
+    assert.equal(firstClientRawText.split(block.replacement).length - 1, block.count);
+    assert.equal(firstClientRawText.split(block.old).length - 1, 0);
+  }
+  // Check earlier source transforms in their canonical pre-query form.
+  const firstClientText = logQuery.normalizeClient(firstClientRawText);
   assert.ok(firstClientText.includes(runtimePatch.STATA_SET_BREAK_PATCH_MARKER));
   assert.ok(firstClientText.includes('getattr(pystata_config.stlib, "StataSO_SetBreak", None)'));
   assert.ok(firstClientText.includes("self._set_stata_break()"));
@@ -199,14 +304,25 @@ try {
     firstClientText.split(runtimePatch.GRAPH_CACHE_DRAIN_PATCH_MARKER).length - 1,
     2
   );
-  assert.ok(firstClientText.includes(runtimePatch.PATCHED_BACKGROUND_GRAPH_CACHE_COMMAND));
-  assert.ok(firstClientText.includes(runtimePatch.PATCHED_BACKGROUND_GRAPH_CACHE_DOFILE));
+  for (const block of graphErrors.BLOCKS.filter(b => b.name !== "emission")) {
+    assert.ok(firstClientText.includes(finalLifecycleBoundary(block.replacement)), block.name);
+  }
   assert.ok(!firstClientText.includes(runtimePatch.ORIGINAL_BACKGROUND_GRAPH_CACHE_COMMAND));
   assert.ok(!firstClientText.includes(runtimePatch.ORIGINAL_BACKGROUND_GRAPH_CACHE_DOFILE));
   assert.ok(!firstClientText.includes("asyncio.create_task(\n                self._cache_new_graphs("));
-  assert.ok(firstClientText.includes("capture quietly graph dir, memory"));
-  assert.ok(firstClientText.includes("capture quietly graph describe `g'"));
-  assert.ok(firstClientText.includes('f"capture quietly {inner_code}\\n"'));
+  for (const block of streamLifecycle.BLOCKS) {
+    assert.strictEqual(firstClientText.split(block.replacement).length - 1, block.count);
+  }
+  for (const block of graphInventory.BLOCKS) {
+    assert.ok(firstClientText.includes(block.replacement), block.name);
+  }
+  assert.ok(firstClientText.includes(helpState.BLOCK.replacement));
+  assert.ok(firstClientText.includes(exportState.BLOCK.replacement));
+  assert.ok(firstClientText.includes(storedResults.BLOCK.replacement));
+  for (const block of startupState.BLOCKS) assert.ok(firstClientText.includes(block.replacement), block.name);
+  for (const block of bulkCache.BLOCKS) assert.ok(firstClientText.includes(block.replacement), block.name);
+  assert.ok(!firstClientText.includes(runtimePatch.PATCHED_CLIENT_GRAPH_INVENTORY));
+  assert.ok(firstClientText.includes('self.stata.run("capture quietly " + inner_code'));
   assert.ok(!firstClientText.includes('f"capture noisily {inner_code}\\n"'));
   assert.ok(firstClientText.indexOf("tee.write(cleaned_chunk)") <
     firstClientText.indexOf("await asyncio.wait_for("),
@@ -215,25 +331,201 @@ try {
   const firstGraphDetectorText = firstGraphDetectorBytes.toString("utf8");
   assert.ok(firstGraphDetectorText.includes(runtimePatch.GRAPH_PROBE_PATCH_MARKER));
   assert.strictEqual(
-    firstGraphDetectorText.split(runtimePatch.PATCHED_DETECTOR_GRAPH_DIR).length - 1,
-    2
+    firstGraphDetectorText.split("run('graph dir, memory')").length - 1,
+    1
   );
-  assert.ok(firstGraphDetectorText.includes(runtimePatch.PATCHED_DETECTOR_GRAPH_DESCRIBE));
+  for (const block of [...detectorState.BLOCKS, ...detectorErrors.BLOCKS.slice(2)]) {
+    assert.ok(firstGraphDetectorText.includes(finalDetectorBlock(block.replacement)), block.name);
+  }
+  assert.ok(!firstGraphDetectorText.includes(runtimePatch.PATCHED_DETECTOR_GRAPH_DESCRIBE));
   const firstSessionBytes = fs.readFileSync(sessionPath);
   const firstSessionText = firstSessionBytes.toString("utf8");
   assert.ok(firstSessionText.includes(runtimePatch.SESSION_BREAK_DRAIN_PATCH_MARKER));
-  assert.ok(firstSessionText.includes("return await asyncio.shield(future)"));
+  assert.ok(firstSessionText.includes(sessionHealth.REPLACEMENT));
   assert.ok(firstSessionText.includes("while not future.done():"));
   assert.ok(!firstSessionText.includes("timeout=3.0"));
   assert.ok(!firstSessionText.includes("did not acknowledge break within timeout"));
 
   const second = runtimePatch.patchRuntime(patchOptions);
-  assert.strictEqual(second.ok, true);
+  assert.strictEqual(second.ok, true, JSON.stringify(second));
   assert.strictEqual(second.status, "already-applied");
   assert.deepStrictEqual(fs.readFileSync(serverPath), firstBytes);
   assert.deepStrictEqual(fs.readFileSync(clientPath), firstClientBytes);
   assert.deepStrictEqual(fs.readFileSync(graphDetectorPath), firstGraphDetectorBytes);
   assert.deepStrictEqual(fs.readFileSync(sessionPath), firstSessionBytes);
+
+  // The last released state candidate migrates without changing the other files.
+  fs.writeFileSync(graphDetectorPath, detectorSreturn.normalizeDetector(firstGraphDetectorText));
+  const sreturnUpgrade = runtimePatch.patchRuntime(patchOptions);
+  assert.strictEqual(sreturnUpgrade.ok, true, JSON.stringify(sreturnUpgrade));
+  assert.deepStrictEqual(fs.readFileSync(graphDetectorPath), firstGraphDetectorBytes);
+  assert.deepStrictEqual(fs.readFileSync(clientPath), firstClientBytes);
+  assert.deepStrictEqual(fs.readFileSync(serverPath), firstBytes);
+  assert.deepStrictEqual(fs.readFileSync(sessionPath), firstSessionBytes);
+
+  fs.writeFileSync(clientPath, firstClientText.replace(storedResults.BLOCK.replacement, () => storedFixture.original));
+  const storedUpgrade = runtimePatch.patchRuntime(patchOptions);
+  assert.strictEqual(storedUpgrade.ok, true, JSON.stringify(storedUpgrade));
+  assert.deepStrictEqual(fs.readFileSync(clientPath), firstClientBytes);
+  assert.deepStrictEqual(fs.readFileSync(graphDetectorPath), firstGraphDetectorBytes);
+  assert.deepStrictEqual(fs.readFileSync(serverPath), firstBytes);
+  assert.deepStrictEqual(fs.readFileSync(sessionPath), firstSessionBytes);
+
+  let beforeStartup = firstClientText.replace(startupState.BLOCKS[0].replacement, () => startupState.INIT_ORIGINAL);
+  for (const block of startupFixture.blocks) {
+    beforeStartup = beforeStartup.replace(startupState.BLOCKS.find(b => b.name === block.name).replacement, () => block.original);
+  }
+  fs.writeFileSync(clientPath, beforeStartup);
+  const startupUpgrade = runtimePatch.patchRuntime(patchOptions);
+  assert.strictEqual(startupUpgrade.ok, true, JSON.stringify(startupUpgrade));
+  assert.deepStrictEqual(fs.readFileSync(clientPath), firstClientBytes);
+  assert.deepStrictEqual(fs.readFileSync(graphDetectorPath), firstGraphDetectorBytes);
+  assert.deepStrictEqual(fs.readFileSync(serverPath), firstBytes);
+  assert.deepStrictEqual(fs.readFileSync(sessionPath), firstSessionBytes);
+
+  let beforeBulk = firstClientText;
+  for (const block of bulkCache.BLOCKS) beforeBulk = beforeBulk.replace(block.replacement, () => block.original);
+  fs.writeFileSync(clientPath, beforeBulk);
+  const bulkUpgrade = runtimePatch.patchRuntime(patchOptions);
+  assert.strictEqual(bulkUpgrade.ok, true, JSON.stringify(bulkUpgrade));
+  assert.deepStrictEqual(fs.readFileSync(clientPath), firstClientBytes);
+  assert.deepStrictEqual(fs.readFileSync(graphDetectorPath), firstGraphDetectorBytes);
+  assert.deepStrictEqual(fs.readFileSync(serverPath), firstBytes);
+  assert.deepStrictEqual(fs.readFileSync(sessionPath), firstSessionBytes);
+
+  // An altered response decision rejects the entire transaction before any write.
+  const rcPatch = require("./stata_response_rc_patch");
+  assert.strictEqual(firstClientText.split(rcPatch.MARKER).length - 1, 4);
+  const alteredClient = firstClientText.replace(rcPatch.replacement(rcPatch.BLOCKS[0]),
+    rcPatch.replacement(rcPatch.BLOCKS[0]).replace("rc = 1", "rc = 0"));
+  fs.writeFileSync(clientPath, alteredClient);
+  const alteredResult = runtimePatch.patchRuntime(patchOptions);
+  assert.strictEqual(alteredResult.ok, false);
+  assert.strictEqual(alteredResult.anchor, "execution-response-rc");
+  assert.strictEqual(fs.readFileSync(clientPath, "utf8"), alteredClient);
+  assert.deepStrictEqual(fs.readFileSync(serverPath), firstBytes);
+  assert.deepStrictEqual(fs.readFileSync(graphDetectorPath), firstGraphDetectorBytes);
+  assert.deepStrictEqual(fs.readFileSync(sessionPath), firstSessionBytes);
+  fs.writeFileSync(clientPath, firstClientBytes);
+
+  // Graph ownership and thread shields are also all-or-nothing runtime members.
+  for (const [file, original, changed, anchor] of [
+    ...bulkCache.BLOCKS.flatMap(block => [
+      [clientPath, firstClientText,
+        firstClientText.replace(block.replacement, () => block.replacement + "    # tampered bulk cache\n"), "bulk-cache"],
+      [clientPath, firstClientText,
+        firstClientText.replace(block.replacement, () => block.original), "bulk-cache"],
+    ]),
+    ...startupState.BLOCKS.map(block => [clientPath, firstClientText,
+      firstClientText.replace(block.replacement, () => block.replacement + "    # tampered startup\n"),
+      "startup-state"]),
+    [clientPath, firstClientText,
+      firstClientText.replace(storedResults.BLOCK.replacement,
+        () => storedResults.BLOCK.replacement.replace('raise errors[0]', 'return {}')),
+      "stored-results"],
+    [clientPath, firstClientText,
+      firstClientText.replace(exportState.BLOCK.replacement,
+        () => exportState.BLOCK.replacement.replace('os.replace(staged, target)', 'staged.unlink()')),
+      "export-state"],
+    [clientPath, firstClientText,
+      firstClientText.replace(cacheTransaction.NOTIFICATION_BLOCK.replacement,
+        cacheTransaction.NOTIFICATION_BLOCK.replacement.replace('errors.append(error)', 'pass')),
+      "cache-transaction"],
+    ...[...cacheTransaction.BLOCKS, cacheTransaction.LIFECYCLE_BLOCK].map(block =>
+      [graphDetectorPath, firstGraphDetectorText,
+        firstGraphDetectorText.replace(block.replacement, block.replacement.replace(/\S/, "#tamper#")),
+        "cache-transaction"]),
+    [clientPath, firstClientText,
+      firstClientText.replace(helpState.BLOCK.replacement,
+        helpState.BLOCK.replacement.replace("== 601", "== 602")), "help-state"],
+    ...streamLifecycle.BLOCKS.map(block => [clientPath, firstClientText,
+      firstClientText.replace(block.replacement, block.replacement.replace(/\S/, "#tamper#")),
+      "streaming-lifecycle"]),
+    ...graphInventory.BLOCKS.map(block => [clientPath, firstClientText,
+      firstClientText.replace(block.replacement, block.replacement.replace(/\S/, "#changed#")),
+      "graph-inventory-state"]),
+    ...graphErrors.BLOCKS.filter(b => b.name !== "emission").map(block => [clientPath, firstClientText,
+      firstClientText.replace(finalLifecycleBoundary(block.replacement),
+        block.name === "dofile-task-errors"
+          ? finalLifecycleBoundary(block.replacement).replace("Do-file streaming maintenance failed", "corrupted")
+          : finalLifecycleBoundary(block.replacement).replace(/\S/, "#changed#")),
+      "graph-error-propagation"]),
+    ...[...detectorState.BLOCKS, ...detectorErrors.BLOCKS.slice(2)].map(block => [graphDetectorPath, firstGraphDetectorText,
+      firstGraphDetectorText.replace(finalDetectorBlock(block.replacement),
+        finalDetectorBlock(block.replacement).replace(/\S/, "#changed#")),
+      cacheTransaction.BLOCKS.some(b => b.previous === block.replacement || b.end === block.start)
+        ? "cache-transaction" : "detector-error-propagation"]),
+    [graphDetectorPath, firstGraphDetectorText,
+      firstGraphDetectorText.replace('saved_s = read_s()', 'saved_s = {}'),
+      "detector-error-propagation"],
+    [clientPath, firstClientText, firstClientText.replace(graphTaskDrain.POLL,
+      graphTaskDrain.POLL.replace("tg.start_soon(owned_graph_check)",
+        "asyncio.create_task(owned_graph_check())")), "graph-task-drain"],
+    [clientPath, firstClientText, firstClientText.replace(finalLifecycleBoundary(graphTaskDrain.EXIT),
+      finalLifecycleBoundary(graphTaskDrain.EXIT).replace("+ graph_poll_errors", "+ []")),
+      "graph-task-drain"],
+    [graphDetectorPath, firstGraphDetectorBytes.toString("utf8"),
+      firstGraphDetectorBytes.toString("utf8").replace("await asyncio.wait({worker})",
+        "await worker"), "cache-transaction"],
+    [graphDetectorPath, firstGraphDetectorBytes.toString("utf8"),
+      firstGraphDetectorBytes.toString("utf8").replace(graphCallbacks.CANDIDATE,
+        graphCallbacks.CANDIDATE.replace("errors.append(error)", "pass")), "graph-callback-errors"],
+  ]) {
+    assert.notStrictEqual(changed, original);
+    fs.writeFileSync(file, changed);
+    const files = [serverPath, clientPath, graphDetectorPath, sessionPath];
+    const before = files.map(name => fs.readFileSync(name));
+    const refused = runtimePatch.patchRuntime(patchOptions);
+    assert.strictEqual(refused.ok, false);
+    assert.strictEqual(refused.anchor, anchor, JSON.stringify(refused));
+    files.forEach((name, index) => assert.deepStrictEqual(fs.readFileSync(name), before[index]));
+    fs.writeFileSync(file, original);
+  }
+
+  // Tampering with the readonly getter also refuses all runtime writes.
+  const rcReadPatch = require("./stata_rc_read_patch");
+  assert.ok(firstClientText.includes(rcReadPatch.REPLACEMENT));
+  const alteredReader = firstClientText.replace(rcReadPatch.REPLACEMENT,
+    rcReadPatch.REPLACEMENT.replace("return -1", "return 0"));
+  fs.writeFileSync(clientPath, alteredReader);
+  const readerResult = runtimePatch.patchRuntime(patchOptions);
+  assert.strictEqual(readerResult.ok, false);
+  assert.strictEqual(readerResult.anchor, "readonly-rc-reader");
+  assert.strictEqual(fs.readFileSync(clientPath, "utf8"), alteredReader);
+  assert.deepStrictEqual(fs.readFileSync(serverPath), firstBytes);
+  assert.deepStrictEqual(fs.readFileSync(graphDetectorPath), firstGraphDetectorBytes);
+  assert.deepStrictEqual(fs.readFileSync(sessionPath), firstSessionBytes);
+  fs.writeFileSync(clientPath, firstClientBytes);
+
+  // Altered maintenance guards must never lead to partially patched runtimes.
+  const silentPatch = require("./stata_silent_state_patch");
+  const silentBlock = silentPatch.BLOCKS[1].replacement;
+  assert.ok(firstClientText.includes(silentBlock));
+  const alteredSilent = firstClientText.replace(silentBlock,
+    silentBlock.replace("held = True", "held = False"));
+  fs.writeFileSync(clientPath, alteredSilent);
+  const silentResult = runtimePatch.patchRuntime(patchOptions);
+  assert.strictEqual(silentResult.ok, false);
+  assert.strictEqual(silentResult.anchor, "silent-maintenance-state");
+  assert.strictEqual(fs.readFileSync(clientPath, "utf8"), alteredSilent);
+  assert.deepStrictEqual(fs.readFileSync(serverPath), firstBytes);
+  assert.deepStrictEqual(fs.readFileSync(graphDetectorPath), firstGraphDetectorBytes);
+  assert.deepStrictEqual(fs.readFileSync(sessionPath), firstSessionBytes);
+  fs.writeFileSync(clientPath, firstClientBytes);
+
+  const capturePatch = require("./stata_capture_state_patch");
+  assert.ok(firstClientText.includes(capturePatch.REPLACEMENT));
+  const alteredCapture = firstClientText.replace(capturePatch.REPLACEMENT,
+    capturePatch.REPLACEMENT.replace("set more off", "set more on"));
+  fs.writeFileSync(clientPath, alteredCapture);
+  const captureResult = runtimePatch.patchRuntime(patchOptions);
+  assert.strictEqual(captureResult.ok, false);
+  assert.strictEqual(captureResult.anchor, "capture-request-state");
+  assert.strictEqual(fs.readFileSync(clientPath, "utf8"), alteredCapture);
+  assert.deepStrictEqual(fs.readFileSync(serverPath), firstBytes);
+  assert.deepStrictEqual(fs.readFileSync(graphDetectorPath), firstGraphDetectorBytes);
+  assert.deepStrictEqual(fs.readFileSync(sessionPath), firstSessionBytes);
+  fs.writeFileSync(clientPath, firstClientBytes);
 
   fs.writeFileSync(
     serverPath,
@@ -241,6 +533,7 @@ try {
       "# fixture",
       runtimePatch.PATCHED_CALL_SYNC,
       runtimePatch.ORIGINAL_TASK_DONE_NOTIFY,
+      sessionHealth.SERVER_ORIGINAL,
       backgroundNotifyFixture,
       backgroundNotifyFixture,
       backgroundSignaturesFixture,
@@ -271,6 +564,7 @@ try {
       "# fixture",
       runtimePatch.PATCHED_CALL_SYNC,
       runtimePatch.PATCHED_TASK_DONE_NOTIFY,
+      sessionHealth.SERVER_ORIGINAL,
       legacyBackgroundNotifyFixture,
       legacyBackgroundNotifyFixture,
       backgroundSignaturesFixture,
@@ -294,12 +588,15 @@ try {
     [
       "# fixture",
       runtimePatch.PATCHED_STATA_BREAK_REQUEST,
+      ...graphNameBoundary.BLOCKS.map(block => block.original),
+      streamStateFixture,
+      graphTaskDrain.ORIGINAL_POLL,
+      graphTaskDrain.ORIGINAL_EXIT,
       runtimePatch.PATCHED_STREAM_HELPER_V18,
       runtimePatch.PATCHED_STREAM_NOTIFY,
       runtimePatch.PATCHED_FINAL_STREAM_NOTIFY,
       streamTailFixture,
-      runtimePatch.ORIGINAL_CLIENT_GRAPH_INVENTORY,
-      runtimePatch.ORIGINAL_INTERNAL_SILENT_EXEC,
+      originalInventoryMethods,
       graphCacheFixture,
       "# end",
     ].join("\n"),
@@ -323,12 +620,15 @@ try {
     [
       "# fixture",
       runtimePatch.PATCHED_STATA_BREAK_REQUEST,
+      ...graphNameBoundary.BLOCKS.map(block => block.original),
+      streamStateFixture,
+      graphTaskDrain.ORIGINAL_POLL,
+      graphTaskDrain.ORIGINAL_EXIT,
       runtimePatch.PATCHED_STREAM_HELPER_V17,
       runtimePatch.PATCHED_STREAM_NOTIFY,
       runtimePatch.PATCHED_FINAL_STREAM_NOTIFY,
       streamTailFixture,
-      runtimePatch.ORIGINAL_CLIENT_GRAPH_INVENTORY,
-      runtimePatch.ORIGINAL_INTERNAL_SILENT_EXEC,
+      originalInventoryMethods,
       graphCacheFixture,
       "# end",
     ].join("\n"),
@@ -352,12 +652,15 @@ try {
     [
       "# fixture",
       runtimePatch.PATCHED_STATA_BREAK_REQUEST,
+      ...graphNameBoundary.BLOCKS.map(block => block.original),
+      streamStateFixture,
+      graphTaskDrain.ORIGINAL_POLL,
+      graphTaskDrain.ORIGINAL_EXIT,
       runtimePatch.PATCHED_STREAM_HELPER_V19,
       runtimePatch.PATCHED_STREAM_NOTIFY,
       runtimePatch.PATCHED_FINAL_STREAM_NOTIFY,
       streamTailFixture,
-      runtimePatch.ORIGINAL_CLIENT_GRAPH_INVENTORY,
-      runtimePatch.ORIGINAL_INTERNAL_SILENT_EXEC,
+      originalInventoryMethods,
       graphCacheFixture,
       "# end",
     ].join("\n"),
@@ -431,14 +734,15 @@ try {
       stderr: "",
     }),
   });
-  assert.deepStrictEqual(ordered.slice(0, 5), [
-    path.join(precedenceHome, "explicit"),
-    configuredRoot,
-    envRoot,
-    fixedRoot,
+  assert.deepStrictEqual(ordered, [path.join(precedenceHome, "explicit")]);
+  const defaultRoots = runtimePatch.candidateRuntimeRoots({
+    env: {}, homedir: precedenceHome, uvRuntimeRoot,
+    command: "/opt/homebrew/bin/uvx", uvCommand: "uvx",
+    spawnSync: () => ({ status: 0, stdout: `${path.join(precedenceHome, "uv-discovered")}\n` }),
+  });
+  assert.deepStrictEqual(defaultRoots, [fixedRoot,
     path.join(precedenceHome, "AppData", "Local", "stata-workbench", "mcp-stata-1.26.1"),
-  ].map((entry) => path.resolve(entry)));
-  assert.ok(ordered.indexOf(path.resolve(fixedRoot)) < ordered.indexOf(path.resolve(uvRuntimeRoot)));
+    uvRuntimeRoot, path.join(precedenceHome, "uv-discovered")]);
 
   const realPython = process.execPath;
   const validCompile = runtimePatch.compilePythonSources(root, [
@@ -454,6 +758,48 @@ try {
       return probe && probe.status === 0;
     });
   assert.ok(hostPython, "a host Python interpreter is required for syntax-gate tests");
+  // Reproduce the deployed partial upgrade using its complete real method.
+  // Running isolated drain fragments with hand-written local variables missed
+  // the NameError when the notification marker caused initialization to skip.
+  {
+  const legacyStream = fs.readFileSync(path.join(__dirname,
+    "../tests/fixtures/stata_stream_smcl.legacy.py"), "utf8");
+  assert.equal(require("crypto").createHash("sha256").update(legacyStream).digest("hex"),
+    "e79638d2616a56873b3f07aee17b60159e7d50fd1ea047a2d2b7d8f1b07c0db5",
+    "deployed legacy method fixture must retain its original bytes");
+  const streamFragments = [runtimePatch.PATCHED_STREAM_HELPER,
+    runtimePatch.PATCHED_STREAM_NOTIFY, runtimePatch.PATCHED_FINAL_STREAM_NOTIFY,
+    runtimePatch.PATCHED_STREAM_TAIL_SIGNATURE, runtimePatch.PATCHED_POST_DONE_DRAIN].join("\n");
+  assert.equal(firstClientRawText.split(streamFragments).length - 1, 1);
+  const deployedComposition = firstClientRawText.replace(streamFragments, () => legacyStream);
+  fs.writeFileSync(serverPath, firstServerText);
+  fs.writeFileSync(graphDetectorPath, firstGraphDetectorText);
+  fs.writeFileSync(sessionPath, firstSessionText);
+  fs.writeFileSync(clientPath, deployedComposition);
+  const migrated = runtimePatch.patchRuntime(patchOptions);
+  assert.equal(migrated.ok, true, JSON.stringify(migrated));
+  assert.equal(migrated.clientStatus, "applied");
+  const composed = fs.readFileSync(clientPath, "utf8");
+  assert.equal(runtimePatch.patchRuntime(patchOptions).status, "already-applied");
+  const methodStart = "    async def _stream_smcl_log(";
+  const methodEnd = "            logger.warning(f\"Log streaming failed: {e}\")";
+  const method = text => text.slice(text.indexOf(methodStart), text.indexOf(methodEnd) + methodEnd.length) + "\n";
+  const composedBehavior = childProcess.spawnSync(hostPython,
+    ["-I", "-B", path.join(__dirname, "test_stata_stream_composition.py")],
+    { input: JSON.stringify({ legacy: method(legacyStream), candidate: method(composed) }),
+      encoding: "utf8", timeout: 10000 });
+  assert.equal(composedBehavior.status, 0, composedBehavior.stderr || composedBehavior.stdout);
+  // Unknown edits and duplicate helpers must be rejected before any write.
+  for (const bad of [deployedComposition.replace("has_written = False", "has_written = None"),
+    deployedComposition + runtimePatch.LEGACY_STREAM_HELPER_WITHOUT_TAIL]) {
+    fs.writeFileSync(clientPath, bad);
+    const rejected = runtimePatch.patchRuntime(patchOptions);
+    assert.equal(rejected.ok, false);
+    assert.equal(rejected.anchor, "completion-tail-helper");
+    assert.equal(fs.readFileSync(clientPath, "utf8"), bad);
+  }
+  fs.writeFileSync(clientPath, firstClientRawText);
+  }
   const breakBehaviorSource = `
 import logging
 import sys
@@ -672,14 +1018,14 @@ asyncio.run(main())
     [
       "# fixture",
       "class GraphCreationDetector:",
-      runtimePatch.ORIGINAL_DETECTOR_GRAPH_DIR,
-      runtimePatch.ORIGINAL_DETECTOR_GRAPH_DIR,
-      runtimePatch.ORIGINAL_DETECTOR_GRAPH_DESCRIBE,
+      originalDetectorMethods,
+      graphCallbacks.ORIGINAL,
+      graphTaskDrain.ORIGINAL_DETECTOR + cacheFixture.scaffold.cacheTail.source,
       "# end",
     ].join("\n"),
     "utf8"
   );
-  fs.writeFileSync(sessionPath, runtimePatch.ORIGINAL_SESSION_CALL, "utf8");
+  fs.writeFileSync(sessionPath, sessionOriginal.replace(runtimePatch.PATCHED_SESSION_CALL, runtimePatch.ORIGINAL_SESSION_CALL), "utf8");
   const transactionBefore = [serverPath, clientPath, graphDetectorPath, sessionPath].map(
     (file) => fs.readFileSync(file)
   );

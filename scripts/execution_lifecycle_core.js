@@ -253,15 +253,39 @@ function inspectLogText(text, runId) {
   let endOfDoFile = false;
   let rc = null;
   let noVariablesDefined = false;
+  const returnPrefix = runId ? "___CODEX_RUN_RC_" + String(runId) + "___=" : null;
+  const returnRecords = [];
+  const completionLines = [];
+  let lineIndex = 0;
   for (const raw of lines) {
-    if (lineIsCompletion(raw, runId)) completionMarkerVerified = true;
+    if (lineIsCompletion(raw, runId)) {
+      completionMarkerVerified = true;
+      completionLines.push(lineIndex);
+    }
     const line = stripSmclPrefix(raw);
+    if (returnPrefix && line.startsWith(returnPrefix)) {
+      const value = line.slice(returnPrefix.length).trim();
+      const code = /^\d+$/.test(value) ? Number(value) : null;
+      returnRecords.push({ index: lineIndex, rc: Number.isSafeInteger(code) ? code : null });
+    }
     if (/^end of do-file$/i.test(line)) endOfDoFile = true;
     if (/no variables defined/i.test(line)) noVariablesDefined = true;
     const match = line.match(/^r\((\d+)\);$/i);
     if (match) rc = Number(match[1]);
+    lineIndex += 1;
   }
-  return { completionMarkerVerified, endOfDoFile, rc, noVariablesDefined };
+  // A captured inner error may be intentional. The finalizer records the actual
+  // do-file return before its exact completion marker. Never infer rc=0 from a
+  // marker while discarding that return, or accept duplicate/misordered records.
+  const finalizerReturnCodeVerified = returnRecords.length === 1
+    && returnRecords[0].rc !== null
+    && completionLines.length === 1
+    && returnRecords[0].index < completionLines[0];
+  const finalizerEvidenceInvalid = returnRecords.length > 0 && !finalizerReturnCodeVerified;
+  if (finalizerReturnCodeVerified) rc = returnRecords[0].rc;
+  if (finalizerEvidenceInvalid) completionMarkerVerified = false;
+  return { completionMarkerVerified, endOfDoFile, rc, noVariablesDefined,
+    finalizerReturnCodeVerified, finalizerEvidenceInvalid };
 }
 
 function transportSettlementDecision(result = {}, lifecycle = {}) {

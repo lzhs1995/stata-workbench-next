@@ -4,6 +4,7 @@ const crypto = require("crypto");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+const { scanDoReferences } = require("./stata_do_references");
 
 function slash(value) {
   return value ? String(value).replace(/\\/g, "/").replace(/\/$/, "") : null;
@@ -169,6 +170,11 @@ function makeCompatCopy(sourcePath, options = {}) {
     sourcePath,
   });
   let code = transformed.code;
+  // Descendants are prepared before the parent's PNG/DOCX conversion. Only
+  // execution copies are rewritten, never the author's source files.
+  if (options.recursiveReferencedDo && options.referenceState) {
+    code = prepareReferences(code, { ...options, sourcePath }, options.referenceState);
+  }
   let secondaryTransform = null;
   if (typeof options.transformReferencedCode === "function") {
     const secondary = options.transformReferencedCode(code, {
@@ -215,28 +221,65 @@ function makeCompatCopy(sourcePath, options = {}) {
   };
 }
 
+function referenceError(reason, sourcePath) {
+  const error = new Error(`${reason}: ${sourcePath}`);
+  error.code = "REFERENCED_DO_PREPARATION_FAILED";
+  return error;
+}
+
+function prepareReferences(source, options, state) {
+  const scan = scanDoReferences(source);
+  state.unsupported.push(...scan.unsupported.map(item => ({ ...item, sourcePath: options.sourcePath || null })));
+  // A dynamic child or a cd anywhere in a file defeats a static cwd inference.
+  // Absolute paths are still safe to resolve without guessing Stata's cwd.
+  if (scan.changesCwd || scan.unsupported.length) state.cwdUncertain = true;
+  const replacements = [];
+  for (const ref of scan.refs) {
+    if (state.cwdUncertain && !path.isAbsolute(ref.filePath)) {
+      if (options.recursiveReferencedDo) throw referenceError("relative DO after uncertain working directory", ref.filePath);
+      continue;
+    }
+    const resolved = path.resolve(options.cwd || process.cwd(), ref.filePath);
+    try {
+      const canonical = fs.realpathSync(resolved);
+      if (!fs.statSync(canonical).isFile()) throw referenceError("DO is not a regular file", resolved);
+      if (state.active.has(canonical)) throw referenceError("cyclic DO reference", resolved);
+      if (state.active.size >= 16) throw referenceError("DO reference depth exceeds 16", resolved);
+      if (++state.visits > 256) throw referenceError("DO reference count exceeds 256", resolved);
+      // Bound synchronous reads on the extension-host event loop.
+      state.bytes += fs.statSync(canonical).size;
+      if (state.bytes > 16 * 1024 * 1024) throw referenceError("DO source budget exceeds 16 MiB", resolved);
+      state.active.add(canonical);
+      let copy;
+      try {
+        copy = makeCompatCopy(resolved, { ...options, referenceState: state });
+      } finally {
+        state.active.delete(canonical);
+      }
+      if (copy.changed) {
+        state.copies.push(copy.diagnostics);
+        replacements.push({ ...ref, path: slash(copy.path) });
+      }
+    } catch (error) {
+      // Darwin must not silently run the original after a failed transform.
+      if (options.recursiveReferencedDo) throw referenceError(error.message, resolved);
+      state.unsupported.push({ sourcePath: resolved, reason: error.message });
+    }
+  }
+  let code = source;
+  for (const ref of replacements.reverse()) code = code.slice(0, ref.start) + ref.path + code.slice(ref.end);
+  return code;
+}
+
 function prepareExecutionCode(source, options = {}) {
   const compatOptions = {
     ...options,
     protectTransportLog: options.protectTransportLog !== false,
   };
   let transformed = transformSource(source, compatOptions);
-  const copies = [];
-  let code = transformed.code.replace(/\bdo\s+"([^"\r\n]+\.do)"/gi,
-    (command, filePath) => {
-      const resolved = path.isAbsolute(filePath)
-        ? filePath
-        : path.resolve(options.cwd || process.cwd(), filePath);
-      try {
-        if (!fs.statSync(resolved).isFile()) return command;
-        const copy = makeCompatCopy(resolved, compatOptions);
-        if (!copy.changed) return command;
-        copies.push(copy.diagnostics);
-        return command.replace(filePath, slash(copy.path));
-      } catch {
-        return command;
-      }
-    });
+  const state = { copies: [], unsupported: [], active: new Set(), visits: 0, bytes: 0, cwdUncertain: false };
+  const copies = state.copies;
+  let code = prepareReferences(transformed.code, compatOptions, state);
   const pagination = ensurePaginationOff(code);
   code = pagination.code;
   transformed = {
@@ -246,6 +289,8 @@ function prepareExecutionCode(source, options = {}) {
       applied: transformed.diagnostics.applied || copies.length > 0 || pagination.applied,
       paginationGuardApplied: pagination.applied,
       referencedDoCopies: copies,
+      unresolvedDoReferences: state.unsupported,
+      referenceCoverage: state.unsupported.length ? "partial-static" : "literal-do-only",
     },
   };
   return transformed;

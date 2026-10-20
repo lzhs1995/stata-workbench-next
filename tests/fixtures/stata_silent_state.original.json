@@ -1,0 +1,20 @@
+{
+  "sourcePath": "mcp_stata/stata_client.py",
+  "sourceSha256": "967ef1d669efbde2242d717e9784217e7372b42be7e1a61b18ee80bb71ee5de8",
+  "blocks": [
+    {
+      "name": "_get_preserved_rc",
+      "start": "    def _get_preserved_rc(",
+      "end": "    def _restore_state(",
+      "sha256": "642fb9ac0ecdb90cfbd58f6fb8655d053a4fe96ab8a0903bd9e9b05efbf0c6a7",
+      "source": "    def _get_preserved_rc(self) -> int:\n        \"\"\"Fetch current RC without mutating it.\"\"\"\n        try:\n            from sfi import Scalar\n            return int(float(Scalar.getValue(\"c(rc)\") or 0))\n        except Exception:\n            return 0\n\n"
+    },
+    {
+      "name": "_exec_no_capture_silent",
+      "start": "    def _exec_no_capture_silent(",
+      "end": "    def exec_lightweight(",
+      "sha256": "6c2bd6debb0a4ef27f2ed3ed1e87d37129cdbfccd28c89910705d69be2f8ed0c",
+      "source": "    def _exec_no_capture_silent(self, code: str, echo: bool = False, trace: bool = False) -> CommandResponse:\n        \"\"\"Executes code silently, preserving ALL state (RC, r, e, s).\"\"\"\n        hold_name = f\"_mcp_sh_{uuid.uuid4().hex[:8]}\"\n        preserved_rc = self._get_preserved_rc()\n        output_buffer, error_buffer = StringIO(), StringIO()\n        rc = 0\n\n        with self._exec_lock, self._redirect_io(output_buffer, error_buffer):\n            try:\n                # Bundle everything to minimize round-trips and ensure invisibility.\n                # Use braces to capture multi-line code correctly.\n                inner_code = f\"{{\\n{code}\\n}}\" if \"\\n\" in code.strip() else code\n                trace_on = \"set trace on\\n\" if trace else \"\"\n                trace_off = \"set trace off\\n\" if trace else \"\"\n                full_cmd = (\n                    f\"capture _return hold {hold_name}\\n\"\n                    f\"{trace_on}\"\n                    # Workbench internal no-capture commands must stay out of the visible log.\n                    f\"capture quietly {inner_code}\\n\"\n                    f\"local mcp_rc = _rc\\n\"\n                    f\"{trace_off}\"\n                    f\"capture _return restore {hold_name}\\n\"\n                    f\"capture error {preserved_rc}\"\n                )\n                self.stata.run(full_cmd, echo=echo)\n                from sfi import Macro\n                try: rc = int(float(Macro.getLocal(\"mcp_rc\") or 0))\n                except: rc = 0\n            except Exception as e:\n                rc = self._parse_rc_from_text(str(e)) or 1\n            \n        return CommandResponse(\n            command=code, rc=rc,\n            stdout=output_buffer.getvalue(),\n            stderr=error_buffer.getvalue(),\n            success=rc == 0\n        )\n\n"
+    }
+  ]
+}

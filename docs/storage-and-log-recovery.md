@@ -22,10 +22,13 @@ and does not prevent these activities.
 ## Trigger backup before crossing the free-space reserve
 
 Record the user's reserve in bytes and check it before every large stage. In the
-local case the user requested **10 GB = 10,000,000,000 bytes**. Start backup of
-completed large files when current free space is below that reserve, or when the
-next stage's estimated peak writes would take it below the reserve. Keep any
-higher existing stage budget. This is a task policy, not a new runtime default.
+2026-10-01 historical case the user requested **10 GB = 10,000,000,000 bytes**.
+The documented 2026-10-18 continuation has an explicit **20 GB = 20,000,000,000
+bytes** user requirement, which takes precedence for that task. Start backup of
+completed large files when current free space is below the applicable reserve,
+or when the next stage's estimated peak writes would take it below the reserve.
+Keep any higher existing stage budget. These are task policies, not new runtime
+defaults.
 
 Prepare manifests and bounded packages early and send them to the authorized
 **dedicated task folder** through the existing transfer coordinator. Budget the

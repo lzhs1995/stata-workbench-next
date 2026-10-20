@@ -1,6 +1,6 @@
 # Stata Workbench Shared Session
 
-Toolchain guide revision **2026-10-01**: [explicit shared execution, permitted hiding and concurrency](docs/shared-execution-and-concurrency.md), plus [research handoff and archive lessons](docs/empirical-review-and-archive.md). Documentation changes leave public runtime **0.1.3-rc.7.39** unchanged; they do not certify a candidate protocol or require a running backend restart.
+Toolchain guide revision **2026-10-01**: [explicit shared execution, permitted hiding and concurrency](docs/shared-execution-and-concurrency.md), plus [research handoff and archive lessons](docs/empirical-review-and-archive.md). The published public runtime remains **0.1.3-rc.7.39**. This branch is **0.1.3-rc.7.44-dev.1**, a candidate recursive DO/PNG compatibility fix, not installed or covered by historical FULL45 acceptance. See [candidate scope](docs/ACCEPTANCE.md#recursive-do-candidate).
 
 A VS Code extension for a visible Stata session shared sequentially by a human
 and AI agents. Human Run File/Selection and agent commands use the same backend,
@@ -9,6 +9,11 @@ with visible output, graphs, execution serialization and recovery diagnostics.
 中文：让人与 AI 在 VS Code 中轮流操作同一个 Stata 会话，共享数据和结果。
 同一 backend 内人机串行提交。用户允许时，现有共享窗口可遮挡、隐藏或最小化；
 这不改变执行所属会话。多实例并发需各自隔离和验证，当前公共客户端不提供通用多实例调度。
+
+Read [shared-session execution and delivery lessons](docs/shared-session-delivery-lessons.md)
+for preserving author DO files, inventorying actual saved data, reconciling the
+original request, and distinguishing task budgets from user requirements.
+Graph recovery and candidate release evidence retain their stated limits.
 
 ## Current Release
 
@@ -56,6 +61,12 @@ recovering session, or changed backend. It never resets Stata or retries an
 unconfirmed POST. Keep the bridge on loopback: it is not a remote multi-user service.
 
 ## Development
+
+For macOS/cmux caller-signature errors, interactive-launch failures or permission
+setup, read the [complete desktop recovery record](docs/desktop-auth-terminal-recovery.md)
+and [permission guide](docs/MAC_PERMISSIONS.md) before requesting a restart.
+The record separates actual desktop access from original-profile/backend recovery
+and preserves completed research and original failed requests.
 
 ```sh
 npm ci --ignore-scripts

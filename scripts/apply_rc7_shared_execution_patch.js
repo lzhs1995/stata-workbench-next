@@ -3405,5 +3405,15 @@ if (!text.includes("codex patch r16j126: stderr consumer per transport")) {
     'this._attachStderrListener(C.stderr,"post_connect",Q)');
 }
 
+// Keep the new finalizer in the deterministic maintenance replay. As with the
+// other patches, replay leaves fingerprint finalization to the final build step.
+text = require("./apply_inline_error_finalizer_patch").patchBundle(text, { finalize: false });
+text = require("./apply_terminal_memory_patch").patchBundle(text, { finalize: false });
+text = require("./apply_source_column_graph_batch_patch").patchBundle(text, { finalize: false });
+text = require("./apply_log_tail_fairness_patch").patchBundle(text, { finalize: false });
+text = require("./apply_bridge_request_preservation_patch").patchBundle(text, { finalize: false });
+text = require("./apply_bridge_prerun_failure_patch").patchBundle(text, { finalize: false });
+text = require("./apply_graph_inventory_guard_patch").patchBundle(text, { finalize: false });
+text = require("./apply_activation_isolation_patch").patchBundle(text, { finalize: false });
 fs.writeFileSync(target, text, "utf8");
 console.log(baseAlreadyApplied ? "RC7_SHARED_EXECUTION_UPDATED" : "RC7_SHARED_EXECUTION_APPLIED", target);

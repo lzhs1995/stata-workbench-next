@@ -20,6 +20,53 @@ def state(rid="old"):
 
 
 class SharedClientTests(unittest.TestCase):
+    def test_failed_http_envelope_retains_run_identity_without_accepting_or_retrying(self):
+        with tempfile.TemporaryDirectory() as directory:
+            inner = {"ok": False, "runId": "new", "requestId": "req-new", "rc": 101}
+            body = {"_httperror": json.dumps(inner)}
+            original = copy.deepcopy(body)
+            post = Mock(return_value=(500, body))
+            result = client.execute_once(SimpleNamespace(w=SimpleNamespace(http_post=post)),
+                {"code": "display 1"}, Path(directory) / "receipt",
+                observe=Mock(side_effect=[state(), state("new")]))
+            self.assertEqual(result["verdict"], "EXECUTION_UNCONFIRMED_NO_RETRY")
+            self.assertEqual(result["postCount"], 1)
+            self.assertEqual(result["retryCount"], 0)
+            self.assertEqual(post.call_count, 1)
+            self.assertEqual(result["response"], original)
+            self.assertEqual(result["responseDiagnostics"]["fields"],
+                             {"runId": "new", "requestId": "req-new", "rc": 101})
+            self.assertFalse(result["checks"]["http200"])
+            self.assertFalse(result["checks"]["noHttpErrorEnvelope"])
+            saved = json.loads((Path(directory) / "receipt/response.json").read_text())
+            self.assertEqual(saved, {"http": 500, "body": original})
+            self.assertFalse((Path(directory) / "receipt/run.log").exists())
+
+    def test_diagnostics_reject_malformed_and_conflicting_envelopes(self):
+        for raw, issue in ((None, "HTTP_ERROR_PAYLOAD_NOT_STRING"),
+                           ("{bad", "HTTP_ERROR_PAYLOAD_INVALID_JSON"),
+                           ("[]", "HTTP_ERROR_PAYLOAD_NOT_OBJECT"),
+                           ("null", "HTTP_ERROR_PAYLOAD_NOT_OBJECT")):
+            self.assertIn(issue, client.response_diagnostics({"_httperror": raw})["issues"])
+        for value in (None, [], "failure"):
+            self.assertIn("RESPONSE_NOT_OBJECT", client.response_diagnostics(value)["issues"])
+        for key, outer, inner in (("runId", "old", "new"), ("requestId", "a", "b"),
+                                   ("rc", False, 0)):
+            body = {key: outer, "_httperror": json.dumps({key: inner})}
+            diag = client.response_diagnostics(body)
+            self.assertEqual(diag["fields"], {})
+            self.assertEqual(diag["conflictingFields"], [key])
+            self.assertEqual(diag["topLevelFields"][key], outer)
+            self.assertEqual(diag["httpErrorFields"][key], inner)
+        body = {"runId": "new", "_httperror": '{"runId":"new","rc":101}'}
+        self.assertEqual(client.response_diagnostics(body)["fields"], {"runId": "new", "rc": 101})
+
+    def test_http_error_envelope_cannot_be_promoted_by_success_fields(self):
+        body = {"ok": True, "rc": 0, "runId": "new", "requestId": "new", "_httperror": "{}"}
+        checks = client.completion_checks({"runId": "new"}, 200, body, state(), state("new"))
+        self.assertFalse(checks["noHttpErrorEnvelope"])
+        self.assertFalse(all(checks.values()))
+
     def test_permission_revoked_after_post_is_unconfirmed_not_zero_dispatch(self):
         with tempfile.TemporaryDirectory() as directory:
             after = state("new")

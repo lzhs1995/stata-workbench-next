@@ -25,6 +25,10 @@ const SCRIPTS_DIR = __dirname;
 
 // guardStage 的完整依赖闭包（打包必须整组带上，缺一即崩）
 const REQUIRED_CLOSURE = ["prerun_stage_guard.js", "execution_guard.js"];
+const DARWIN_CLOSURE = [
+  "darwin_compat_adapter.js", "stata_source_compat_core.js", "stata_do_references.js",
+  "mac/png_compat_transform.js", "mac/png_compat_sips.sh", "mac/docx_image_inject.py",
+];
 
 let pass = 0;
 const failures = [];
@@ -39,6 +43,7 @@ function mkIsolatedTree(files) {
   const scripts = path.join(dir, "scripts");
   fs.mkdirSync(scripts);
   for (const f of files) {
+    fs.mkdirSync(path.dirname(path.join(scripts, f)), { recursive: true });
     fs.copyFileSync(path.join(SCRIPTS_DIR, f), path.join(scripts, f));
   }
   return { dir, scripts };
@@ -83,6 +88,29 @@ function rmrf(dir) { try { fs.rmSync(dir, { recursive: true, force: true }); } c
       assert.ok(threw, "缺依赖竟未失败 —— 门禁形同虚设");
       assert.ok(/Cannot find module|MODULE_NOT_FOUND/.test(msg),
                 "失败原因不是缺模块：" + msg.slice(0, 200));
+    } finally { rmrf(dir); }
+  });
+
+  t("D.1 Darwin nested DO preparation works in an isolated package layout", () => {
+    const { dir, scripts } = mkIsolatedTree(DARWIN_CLOSURE);
+    try {
+      const leaf = path.join(dir, "leaf.do");
+      const wrapper = path.join(dir, "wrapper.do");
+      fs.writeFileSync(leaf, 'graph export "test.png", replace\n');
+      fs.writeFileSync(wrapper, `do "${leaf}"\n`);
+      const probe = `
+        const a = require(${JSON.stringify(path.join(scripts, "darwin_compat_adapter.js"))});
+        const r = a.prepareVisibleExecution(${JSON.stringify(`do "${wrapper}"`)}, {
+          platform: "darwin", cwd: ${JSON.stringify(dir)}, tempRoot: ${JSON.stringify(dir)},
+          extensionRoot: ${JSON.stringify(dir)}
+        });
+        if (!r.darwinDiagnostics.ok || r.darwinDiagnostics.replacements !== 1 ||
+            r.sourceDiagnostics.referencedDoCopies.length !== 2) throw new Error(JSON.stringify(r));
+        process.stdout.write("DARWIN_CHAIN_OK");`;
+      const out = execFileSync(process.execPath, ["-e", probe], { encoding: "utf8" });
+      assert.strictEqual(out, "DARWIN_CHAIN_OK");
+      fs.unlinkSync(path.join(scripts, "stata_do_references.js"));
+      assert.throws(() => execFileSync(process.execPath, ["-e", probe], { stdio: "pipe" }), /Command failed/);
     } finally { rmrf(dir); }
   });
 

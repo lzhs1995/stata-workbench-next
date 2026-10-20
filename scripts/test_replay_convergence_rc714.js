@@ -263,9 +263,10 @@ function main() {
         l.label + " ≠ 真 dist：" + l.finalSha.slice(0, 16) + " vs " + realSha.slice(0, 16));
     }
   });
-  t("C.2 package.json / package-lock.json 版本为 rc.7.39 且互相一致", () => {
+  t("C.2 package.json / package-lock.json 与版本化 runtime manifest 一致", () => {
     const lock = JSON.parse(fs.readFileSync(path.join(REPO, "package-lock.json"), "utf8"));
-    assert.strictEqual(PKG_VERSION, "0.1.3-rc.7.39", "package.json 版本：" + PKG_VERSION);
+    const manifest = JSON.parse(fs.readFileSync(path.join(REPO, "release/runtime-manifest.json"), "utf8"));
+    assert.strictEqual(PKG_VERSION, manifest.version, "package.json 与 runtime manifest 版本不一致");
     assert.strictEqual(lock.version, PKG_VERSION, "lock 顶层版本不一致：" + lock.version);
     assert.strictEqual(lock.packages[""].version, PKG_VERSION, "lock packages[\"\"] 版本不一致");
   });

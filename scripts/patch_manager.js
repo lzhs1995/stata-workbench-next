@@ -473,8 +473,8 @@ const REQUIRED_MARKERS = [
   },
   {
     key: "graphInventoryTimeout",
-    label: "graph inventory timeout cannot block execution",
-    marker: "graph inventory timeout cannot block execution",
+    label: "graph inventory awaits guard settlement and refuses failed probes",
+    marker: "codex patch: graph inventory waits for guard and preserves local returns",
   },
   {
     key: "visibleBridgeIncludeGate",

@@ -4,6 +4,29 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const childProcess = require("child_process");
+const streamStatePatch = require("./stata_stream_state_patch");
+const smclLogPatch = require("./stata_smcl_log_patch");
+const responseRcPatch = require("./stata_response_rc_patch");
+const rcReadPatch = require("./stata_rc_read_patch");
+const silentStatePatch = require("./stata_silent_state_patch");
+const captureStatePatch = require("./stata_capture_state_patch");
+const graphTaskDrainPatch = require("./stata_graph_task_drain_patch");
+const graphErrorPatch = require("./stata_graph_error_patch");
+const graphCallbackPatch = require("./stata_graph_callback_patch");
+const detectorErrorPatch = require("./stata_detector_error_patch");
+const detectorStatePatch = require("./stata_detector_state_patch");
+const detectorSreturnPatch = require("./stata_detector_sreturn_patch");
+const cacheTransactionPatch = require("./stata_cache_transaction_patch");
+const exportStatePatch = require("./stata_export_state_patch");
+const storedResultsPatch = require("./stata_stored_results_patch");
+const startupStatePatch = require("./stata_startup_state_patch");
+const bulkCachePatch = require("./stata_bulk_cache_patch");
+const graphInventoryPatch = require("./stata_graph_inventory_patch");
+const streamLifecyclePatch = require("./stata_stream_lifecycle_patch");
+const helpStatePatch = require("./stata_help_state_patch");
+const sessionHealthPatch = require("./stata_session_health_patch");
+const logQueryPatch = require("./stata_log_query_patch");
+const graphNameBoundaryPatch = require("./stata_graph_name_boundary_patch");
 
 const PATCH_MARKER = "UI/DataBrowser HTTP threads must not create a second asyncio loop";
 const TASK_DONE_PATCH_MARKER = "Workbench task_done notification must not retain the MCP transport";
@@ -433,7 +456,7 @@ const PATCHED_STREAM_HELPER_V18 = `        has_written = False
         # Wait for Stata to create the SMCL file
 `;
 
-const PATCHED_STREAM_HELPER = `        has_written = False
+const PATCHED_STREAM_HELPER_WITH_SEPARATORS = `        has_written = False
         notifications_enabled = True
         notify_budget_remaining = 4000
         tail_marker_buffer = ""
@@ -498,6 +521,9 @@ const PATCHED_STREAM_HELPER = `        has_written = False
         # Wait for Stata to create the SMCL file
 `;
 
+const PATCHED_STREAM_HELPER = PATCHED_STREAM_HELPER_WITH_SEPARATORS.replace(
+  'tail_marker_buffer + "\\n" + cleaned_chunk', 'tail_marker_buffer + cleaned_chunk');
+
 const PATCHED_STREAM_HELPER_V19 = PATCHED_STREAM_HELPER
   .replace(STREAM_PATCH_MARKER, STREAM_PATCH_MARKER_V19)
   .replace(
@@ -506,6 +532,20 @@ const PATCHED_STREAM_HELPER_V19 = PATCHED_STREAM_HELPER
 [Stata Workbench: further progress available in log_path]
 "`
   );
+
+// Deployed notification-budget builds shared STREAM_PATCH_MARKER with newer
+// builds but did not yet track the completion tail. Match their exact body:
+// a comment marker alone cannot establish that the helper was upgraded.
+const LEGACY_STREAM_HELPER_WITHOUT_TAIL = PATCHED_STREAM_HELPER
+  .replace(PATCHED_STREAM_HELPER.slice(
+    PATCHED_STREAM_HELPER.indexOf('        tail_marker_buffer = ""'),
+    PATCHED_STREAM_HELPER.indexOf('\n        async def _write_and_notify')
+  ), '')
+  .replace('            nonlocal tail_marker_buffer, saw_required_tail\n', '')
+  .replace(PATCHED_STREAM_HELPER.slice(
+    PATCHED_STREAM_HELPER.indexOf('            if tail_marker_line and not saw_required_tail:'),
+    PATCHED_STREAM_HELPER.indexOf('            if not notifications_enabled or notify_budget_remaining <= 0:')
+  ), '');
 
 const ORIGINAL_STREAM_NOTIFY = `                    if cleaned_chunk:
                         try:
@@ -752,10 +792,35 @@ function addCandidate(set, candidate) {
 }
 
 function runtimeRootFromCommand(command) {
-  if (!command || !path.isAbsolute(command)) return null;
+  if (typeof command !== "string" || !path.isAbsolute(command)) return null;
+  // An absolute uv/uvx launcher is not an installed Python environment.
+  if (["uv", "uv.exe", "uvx", "uvx.exe"].includes(path.basename(command).toLowerCase())) return null;
   const parent = path.dirname(command);
   const leaf = path.basename(parent).toLowerCase();
   return leaf === "bin" || leaf === "scripts" ? path.dirname(parent) : null;
+}
+
+function runtimeOptionsFromConfig(config = {}, env = process.env) {
+  return { command: config && config.command, env: { ...env, ...(config && config.env || {}) } };
+}
+
+function hasExplicitRuntime(options = {}) {
+  const env = options.env || process.env;
+  return Object.prototype.hasOwnProperty.call(options, "runtimeRoot") ||
+    Object.prototype.hasOwnProperty.call(env, "MCP_STATA_RUNTIME_ROOT") ||
+    runtimeRootFromCommand(options.command) !== null;
+}
+
+function explicitRuntimeRoot(options = {}) {
+  const env = options.env || process.env;
+  const candidate = Object.prototype.hasOwnProperty.call(options, "runtimeRoot")
+    ? options.runtimeRoot
+    : Object.prototype.hasOwnProperty.call(env, "MCP_STATA_RUNTIME_ROOT")
+      ? env.MCP_STATA_RUNTIME_ROOT : runtimeRootFromCommand(options.command);
+  if (typeof candidate !== "string" || !path.isAbsolute(candidate)) {
+    throw new Error("An explicit runtime root must be an absolute path");
+  }
+  return path.resolve(candidate);
 }
 
 function runtimeRootFromUvCommand(command, options = {}) {
@@ -783,13 +848,13 @@ function runtimeRootFromUvCommand(command, options = {}) {
 }
 
 function candidateRuntimeRoots(options = {}) {
+  // An explicit environment is a boundary, never a hint to try before shared home.
+  if (hasExplicitRuntime(options)) return [explicitRuntimeRoot(options)];
   // Workbench runtime precedence: configured/fixed installs before disposable uv caches.
+  // Explicit roots returned above never participate in fallback discovery.
   const roots = new Set();
-  addCandidate(roots, options.runtimeRoot);
-  addCandidate(roots, runtimeRootFromCommand(options.command));
 
   const env = options.env || process.env;
-  addCandidate(roots, env.MCP_STATA_RUNTIME_ROOT);
   const home = options.homedir || os.homedir();
   if (home) {
     addCandidate(roots, path.join(home, ".local", "share", "stata-workbench", "mcp-stata-1.26.1"));
@@ -925,7 +990,17 @@ function atomicWrite(file, content, mode) {
 }
 
 function patchRuntime(options = {}) {
-  const roots = candidateRuntimeRoots(options);
+  // Reject a positional root/options pair before discovery can select and write
+  // the default live runtime. JavaScript otherwise silently ignores argument 2.
+  if (arguments.length > 1 || options === null || typeof options !== "object" ||
+      Array.isArray(options) ||
+      (options.dryRun !== undefined && typeof options.dryRun !== "boolean")) {
+    return { ok: false, status: "invalid-options",
+      error: "patchRuntime requires one options object; dryRun must be boolean" };
+  }
+  let roots;
+  try { roots = candidateRuntimeRoots(options); }
+  catch (error) { return { ok: false, status: "invalid-runtime-root", error: error.message }; }
   const located = roots
     .map((root) => ({
       root,
@@ -938,6 +1013,16 @@ function patchRuntime(options = {}) {
       entry.graphDetectorPath && entry.sessionPath);
   if (!located) {
     return { ok: false, status: "not-found", roots };
+  }
+  if (hasExplicitRuntime(options)) {
+    // A site-packages symlink must not turn an isolated patch into a shared write.
+    const realRoot = fs.realpathSync(located.root);
+    for (const key of ["serverPath", "clientPath", "graphDetectorPath", "sessionPath"]) {
+      const relative = path.relative(realRoot, fs.realpathSync(located[key]));
+      if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+        return { ok: false, status: "runtime-path-escape", component: key, roots };
+      }
+    }
   }
 
   const sessionBytes = fs.readFileSync(located.sessionPath);
@@ -960,10 +1045,25 @@ function patchRuntime(options = {}) {
     sessionStatus = options.dryRun ? "would-apply" : "applied";
   }
 
+  try {
+    const next = sessionHealthPatch.patchSessions(patchedSession);
+    if (next !== patchedSession) sessionStatus = options.dryRun ? "would-apply" : "applied";
+    patchedSession = next;
+  } catch (error) {
+    return { ok: false, status: "unsupported-source", component: "session-health", error: error.message, ...located };
+  }
+
   const serverBytes = fs.readFileSync(located.serverPath);
   const serverSource = serverBytes.toString("utf8");
   let patchedServer = serverSource;
   let serverStatus = "already-applied";
+  try {
+    const next = sessionHealthPatch.patchServer(patchedServer);
+    if (next !== patchedServer) serverStatus = options.dryRun ? "would-apply" : "applied";
+    patchedServer = next;
+  } catch (error) {
+    return { ok: false, status: "unsupported-source", component: "server-event-loop", error: error.message, ...located };
+  }
   if (!serverSource.includes(PATCH_MARKER)) {
     const count = patchedServer.split(ORIGINAL_CALL_SYNC).length - 1;
     if (count !== 1) {
@@ -1102,6 +1202,12 @@ function patchRuntime(options = {}) {
   const clientSource = clientBytes.toString("utf8");
   let patchedClient = clientSource;
   let clientStatus = "already-applied";
+  try {
+    patchedClient = logQueryPatch.normalizeClient(patchedClient);
+  } catch (error) {
+    return { ok: false, status: "unsupported-source", component: "client",
+      anchor: "owned-log-query", error: error.message, ...located };
+  }
   if (!patchedClient.includes(STATA_SET_BREAK_PATCH_MARKER)) {
     const count = patchedClient.split(ORIGINAL_STATA_BREAK_REQUEST).length - 1;
     if (count !== 1) {
@@ -1147,6 +1253,17 @@ function patchRuntime(options = {}) {
       patchedClient = patchedClient.replace(original, replacement);
     }
     clientStatus = options.dryRun ? "would-apply" : "applied";
+  }
+  const tailHelperCount = patchedClient.split(PATCHED_STREAM_HELPER).length - 1;
+  const legacyTailHelperCount = patchedClient.split(LEGACY_STREAM_HELPER_WITHOUT_TAIL).length - 1;
+  const separatorHelperCount = patchedClient.split(PATCHED_STREAM_HELPER_WITH_SEPARATORS).length - 1;
+  if (tailHelperCount === 0 && legacyTailHelperCount === 1 && separatorHelperCount === 0) {
+    patchedClient = patchedClient.replace(LEGACY_STREAM_HELPER_WITHOUT_TAIL, () => PATCHED_STREAM_HELPER);
+  } else if (tailHelperCount === 0 && legacyTailHelperCount === 0 && separatorHelperCount === 1) {
+    patchedClient = patchedClient.replace(PATCHED_STREAM_HELPER_WITH_SEPARATORS, () => PATCHED_STREAM_HELPER);
+  } else if (tailHelperCount !== 1 || legacyTailHelperCount !== 0 || separatorHelperCount !== 0) {
+    return { ok: false, status: "unsupported-source", component: "client",
+      anchor: "completion-tail-helper", tailHelperCount, legacyTailHelperCount, ...located };
   }
   if (!patchedClient.includes(STREAM_TAIL_PATCH_MARKER)) {
     const signatureCount = patchedClient.split(ORIGINAL_STREAM_TAIL_SIGNATURE).length - 1;
@@ -1233,6 +1350,226 @@ function patchRuntime(options = {}) {
     clientStatus = options.dryRun ? "would-apply" : "applied";
   }
 
+  try {
+    const streamPatched = streamStatePatch.patchClient(patchedClient);
+    if (streamPatched !== patchedClient) {
+      patchedClient = streamPatched;
+      clientStatus = options.dryRun ? "would-apply" : "applied";
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      status: "unsupported-source",
+      component: "client",
+      anchor: "streaming-worker-state",
+      error: error.message,
+      ...located,
+    };
+  }
+
+  try {
+    const logsPatched = smclLogPatch.patchClient(patchedClient);
+    if (logsPatched !== patchedClient) {
+      patchedClient = logsPatched;
+      clientStatus = options.dryRun ? "would-apply" : "applied";
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      status: "unsupported-source",
+      component: "client",
+      anchor: "named-smcl-log-only",
+      error: error.message,
+      ...located,
+    };
+  }
+
+  try {
+    const rcPatched = responseRcPatch.patchClient(patchedClient);
+    if (rcPatched !== patchedClient) {
+      patchedClient = rcPatched;
+      clientStatus = options.dryRun ? "would-apply" : "applied";
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      status: "unsupported-source",
+      component: "client",
+      anchor: "execution-response-rc",
+      error: error.message,
+      ...located,
+    };
+  }
+
+  try {
+    const readPatched = rcReadPatch.patchClient(patchedClient);
+    if (readPatched !== patchedClient) {
+      patchedClient = readPatched;
+      clientStatus = options.dryRun ? "would-apply" : "applied";
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      status: "unsupported-source",
+      component: "client",
+      anchor: "readonly-rc-reader",
+      error: error.message,
+      ...located,
+    };
+  }
+
+  try {
+    const silentPatched = silentStatePatch.patchClient(patchedClient);
+    if (silentPatched !== patchedClient) {
+      patchedClient = silentPatched;
+      clientStatus = options.dryRun ? "would-apply" : "applied";
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      status: "unsupported-source",
+      component: "client",
+      anchor: "silent-maintenance-state",
+      error: error.message,
+      ...located,
+    };
+  }
+
+  try {
+    const capturePatched = captureStatePatch.patchClient(patchedClient);
+    if (capturePatched !== patchedClient) {
+      patchedClient = capturePatched;
+      clientStatus = options.dryRun ? "would-apply" : "applied";
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      status: "unsupported-source",
+      component: "client",
+      anchor: "capture-request-state",
+      error: error.message,
+      ...located,
+    };
+  }
+
+  try {
+    // Lifecycle replaces the graph patches' exception boundary. Validate the
+    // complete final candidate before normalizing those upstream anchors.
+    patchedClient = streamLifecyclePatch.normalizeClient(patchedClient);
+  } catch (error) {
+    return { ok: false, status: "unsupported-source", component: "client",
+      anchor: "streaming-lifecycle", error: error.message, ...located };
+  }
+
+  try {
+    patchedClient = bulkCachePatch.normalizeClient(patchedClient);
+  } catch (error) {
+    return { ok: false, status: "unsupported-source", component: "client",
+      anchor: "bulk-cache", error: error.message, ...located };
+  }
+
+  try {
+    const graphPatched = graphTaskDrainPatch.patchClient(patchedClient);
+    if (graphPatched !== patchedClient) {
+      patchedClient = graphPatched;
+      clientStatus = options.dryRun ? "would-apply" : "applied";
+    }
+  } catch (error) {
+    return { ok: false, status: "unsupported-source", component: "client",
+      anchor: "graph-task-drain", error: error.message, ...located };
+  }
+
+  try {
+    const errorsPatched = graphErrorPatch.patchClient(patchedClient);
+    if (errorsPatched !== patchedClient) {
+      patchedClient = errorsPatched;
+      clientStatus = options.dryRun ? "would-apply" : "applied";
+    }
+  } catch (error) {
+    return { ok: false, status: "unsupported-source", component: "client",
+      anchor: "graph-error-propagation", error: error.message, ...located };
+  }
+
+  try {
+    const inventoryPatched = graphInventoryPatch.patchClient(patchedClient);
+    if (inventoryPatched !== patchedClient) {
+      patchedClient = inventoryPatched;
+      clientStatus = options.dryRun ? "would-apply" : "applied";
+    }
+  } catch (error) {
+    return { ok: false, status: "unsupported-source", component: "client",
+      anchor: "graph-inventory-state", error: error.message, ...located };
+  }
+
+  try {
+    const lifecyclePatched = streamLifecyclePatch.patchClient(patchedClient);
+    if (lifecyclePatched !== patchedClient) {
+      patchedClient = lifecyclePatched;
+      clientStatus = options.dryRun ? "would-apply" : "applied";
+    }
+  } catch (error) {
+    return { ok: false, status: "unsupported-source", component: "client",
+      anchor: "streaming-lifecycle", error: error.message, ...located };
+  }
+  try {
+    patchedClient = helpStatePatch.patchClient(patchedClient);
+  } catch (error) {
+    return { ok: false, status: "unsupported-source", component: "client",
+      anchor: "help-state", error: error.message, ...located };
+  }
+  // Only final bytes determine whether the normalized composition changed.
+  try {
+    patchedClient = cacheTransactionPatch.patchClient(patchedClient);
+  } catch (error) {
+    return { ok: false, status: "unsupported-source", component: "client",
+      anchor: "cache-transaction", error: error.message, ...located };
+  }
+  try {
+    patchedClient = exportStatePatch.patchClient(patchedClient);
+  } catch (error) {
+    return { ok: false, status: "unsupported-source", component: "client",
+      anchor: "export-state", error: error.message, ...located };
+  }
+  try {
+    patchedClient = storedResultsPatch.patchClient(patchedClient);
+  } catch (error) {
+    return { ok: false, status: "unsupported-source", component: "client",
+      anchor: "stored-results", error: error.message, ...located };
+  }
+  try {
+    patchedClient = startupStatePatch.patchClient(patchedClient);
+  } catch (error) {
+    return { ok: false, status: "unsupported-source", component: "client",
+      anchor: "startup-state", error: error.message, ...located };
+  }
+  try {
+    patchedClient = bulkCachePatch.patchClient(patchedClient);
+  } catch (error) {
+    return { ok: false, status: "unsupported-source", component: "client",
+      anchor: "bulk-cache", error: error.message, ...located };
+  }
+  try {
+    patchedClient = logQueryPatch.patchClient(patchedClient);
+  } catch (error) {
+    return { ok: false, status: "unsupported-source", component: "client",
+      anchor: "owned-log-query", error: error.message, ...located };
+  }
+  try {
+    patchedClient = graphNameBoundaryPatch.patchClient(patchedClient);
+  } catch (error) {
+    return { ok: false, status: "unsupported-source", component: "client",
+      anchor: "graph-name-boundary", error: error.message, ...located };
+  }
+  // Check the final composition, after every subsidiary transform. A later
+  // patch must not leave the completion drain without its local state.
+  if (patchedClient.split(PATCHED_POST_DONE_DRAIN).length - 1 !== 1 ||
+      patchedClient.split(PATCHED_STREAM_HELPER).length - 1 !== 1) {
+    return { ok: false, status: "unsupported-source", component: "client",
+      anchor: "final-completion-tail-composition", ...located };
+  }
+  clientStatus = patchedClient === clientSource ? "already-applied"
+    : (options.dryRun ? "would-apply" : "applied");
+
   const graphDetectorBytes = fs.readFileSync(located.graphDetectorPath);
   const graphDetectorSource = graphDetectorBytes.toString("utf8");
   let patchedGraphDetector = graphDetectorSource;
@@ -1260,6 +1597,59 @@ function patchRuntime(options = {}) {
       );
     graphDetectorStatus = options.dryRun ? "would-apply" : "applied";
   }
+
+  try {
+    patchedGraphDetector = cacheTransactionPatch.normalizeDetector(patchedGraphDetector);
+  } catch (error) {
+    return { ok: false, status: "unsupported-source", component: "graph-detector",
+      anchor: "cache-transaction", error: error.message, ...located };
+  }
+  try {
+    const drainedDetector = graphTaskDrainPatch.patchDetector(patchedGraphDetector);
+    if (drainedDetector !== patchedGraphDetector) {
+      patchedGraphDetector = drainedDetector;
+      graphDetectorStatus = options.dryRun ? "would-apply" : "applied";
+    }
+  } catch (error) {
+    return { ok: false, status: "unsupported-source", component: "graph-detector",
+      anchor: "graph-thread-drain", error: error.message, ...located };
+  }
+
+  try {
+    const callbacksPatched = graphCallbackPatch.patchDetector(patchedGraphDetector);
+    if (callbacksPatched !== patchedGraphDetector) {
+      patchedGraphDetector = callbacksPatched;
+      graphDetectorStatus = options.dryRun ? "would-apply" : "applied";
+    }
+  } catch (error) {
+    return { ok: false, status: "unsupported-source", component: "graph-detector",
+      anchor: "graph-callback-errors", error: error.message, ...located };
+  }
+
+  try {
+    // Normalize only exact state candidates for the upstream SHA-bound transform.
+    // Compare the complete final candidate so repeated application is a no-op.
+    const normalizedDetector = detectorStatePatch.normalizeDetector(
+      detectorSreturnPatch.normalizeDetector(patchedGraphDetector));
+    const detectorErrorsPatched = detectorSreturnPatch.patchDetector(detectorStatePatch.patchDetector(
+      detectorErrorPatch.patchDetector(normalizedDetector)));
+    if (detectorErrorsPatched !== patchedGraphDetector) {
+      patchedGraphDetector = detectorErrorsPatched;
+      graphDetectorStatus = options.dryRun ? "would-apply" : "applied";
+    }
+  } catch (error) {
+    return { ok: false, status: "unsupported-source", component: "graph-detector",
+      anchor: "detector-error-propagation", error: error.message, ...located };
+  }
+
+  try {
+    patchedGraphDetector = cacheTransactionPatch.patchDetector(patchedGraphDetector);
+  } catch (error) {
+    return { ok: false, status: "unsupported-source", component: "graph-detector",
+      anchor: "cache-transaction", error: error.message, ...located };
+  }
+  graphDetectorStatus = patchedGraphDetector === graphDetectorSource ? "already-applied"
+    : (options.dryRun ? "would-apply" : "applied");
 
   const changed = serverStatus !== "already-applied" ||
     clientStatus !== "already-applied" ||
@@ -1445,6 +1835,8 @@ module.exports = {
   PATCHED_STREAM_CALL_TAIL_COMMAND,
   PATCHED_STREAM_CALL_TAIL_DOFILE,
   PATCHED_STREAM_HELPER,
+  PATCHED_STREAM_HELPER_WITH_SEPARATORS,
+  LEGACY_STREAM_HELPER_WITHOUT_TAIL,
   PATCHED_STREAM_HELPER_V17,
   PATCHED_STREAM_HELPER_V18,
   PATCHED_STREAM_HELPER_V19,
@@ -1476,10 +1868,12 @@ module.exports = {
   clientPathForRoot,
   compilePythonSources,
   graphDetectorPathForRoot,
+  hasExplicitRuntime,
   patchRuntime,
   pythonCommandForRoot,
   pythonSitePackageRoots,
   runtimeRootFromCommand,
+  runtimeOptionsFromConfig,
   runtimeRootFromUvCommand,
   sessionPathForRoot,
   serverPathForRoot,

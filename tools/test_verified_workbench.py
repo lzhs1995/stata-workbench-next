@@ -1,6 +1,7 @@
 """Mock-only launcher tests: no process, network, GUI or Stata launch."""
 import copy
 import hashlib
+import json
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -8,6 +9,11 @@ import verified_workbench as v
 
 
 class LauncherTests(unittest.TestCase):
+    def test_declared_version_matches_package_and_install_directory(self):
+        version = json.loads((v.WORK / "package.json").read_text())["version"]
+        self.assertEqual(v.VERSION, version)
+        self.assertEqual(v.EXTENSION.name, "lzhs1995.stata-workbench-shared-session-" + version)
+
     def test_declared_dependencies_match_real_disk(self):
         for path, expected in v.PINS.items():
             with self.subTest(path=str(path)):

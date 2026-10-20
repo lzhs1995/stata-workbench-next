@@ -12,15 +12,25 @@ jobs:
           node-version: '22'
           cache: npm
       - uses: actions/setup-python@v5
+        id: python
         with:
           python-version: '3.14'
+      - name: Install offline Python test dependencies
+        env:
+          STATA_CI_PYTHON: ${{ steps.python.outputs.python-path }}
+        run: |
+          "$STATA_CI_PYTHON" -m pip install anyio==4.15.1 idna==3.19 typing_extensions==4.16.0
+          echo "STATA_PATCH_TEST_PYTHON=$STATA_CI_PYTHON" >> "$GITHUB_ENV"
+          echo "PYTHON=$STATA_CI_PYTHON" >> "$GITHUB_ENV"
       - run: npm ci --ignore-scripts
       - run: npm audit
       - run: npm run check
       - run: python -B -m unittest discover -s tools -p 'test_*.py'
       - run: python -B tools/verify_release.py
       - run: npm run package
-      - run: python -B tools/verify_release.py --vsix stata-workbench-shared-session-0.1.3-rc.7.39.vsix
+      - run: |
+          candidate_version=$(node -p "require('./package.json').version")
+          python -B tools/verify_release.py --vsix "stata-workbench-shared-session-${candidate_version}.vsix"
       - uses: actions/upload-artifact@v4
         with:
           name: public-candidate-vsix

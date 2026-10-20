@@ -93,14 +93,32 @@ function prepareVisibleExecution(source, options = {}) {
     tempRoot: options.tempRoot,
   };
   if (platform === "darwin") {
+    compatOptions.recursiveReferencedDo = true;
     compatOptions.transformReferencedCode = (code, context) => {
       const transformed = transformDarwin(code, { ...context, scope: "referenced-do" });
       if (transformed.diagnostics.needed) darwinRuns.push(transformed.diagnostics);
+      if (!transformed.diagnostics.ok) {
+        throw new Error(transformed.diagnostics.reason || transformed.diagnostics.error || "Darwin transformation failed");
+      }
       return transformed;
     };
   }
 
-  const prepared = sourceCompat.prepareExecutionCode(original, compatOptions);
+  let prepared;
+  try {
+    prepared = sourceCompat.prepareExecutionCode(original, compatOptions);
+  } catch (error) {
+    if (platform !== "darwin") throw error;
+    const reason = error && error.message ? error.message : String(error);
+    return {
+      code: failCode("REFERENCED_DO_PREPARATION_FAILED", reason),
+      sourceDiagnostics: { applied: false, preparationFailed: true, reason },
+      darwinDiagnostics: {
+        ok: false, applied: true, replacements: 0, referencedFiles: 0,
+        error: "REFERENCED_DO_PREPARATION_FAILED", reason, runs: darwinRuns,
+      },
+    };
+  }
   const direct = transformDarwin(prepared.code, {
     scope: "direct",
     sourcePath: options.sourcePath || null,
