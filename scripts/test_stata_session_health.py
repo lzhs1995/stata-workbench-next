@@ -1,4 +1,5 @@
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 from pathlib import Path
@@ -46,8 +47,16 @@ class Health(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.unhandled, [])
 
     async def test_normal_concurrent_messages(self):
+        # Small runners have fewer executor threads than concurrent requests.
+        # Queued writers must not occupy the threads needed to read responses.
+        asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(max_workers=4))
         s = await self.session()
-        results = await asyncio.gather(*(s.call("echo", {"i":i,"data":"x"*50000}) for i in range(12)))
+        calls = [asyncio.create_task(s.call("echo", {"i":i,"data":"x"*50000})) for i in range(12)]
+        _, pending = await asyncio.wait(calls, timeout=5)
+        if pending:
+            await s.stop(.3)
+        results = await asyncio.gather(*calls, return_exceptions=True)
+        self.assertFalse(pending, "concurrent pipe writers starved the response reader")
         self.assertEqual([x["i"] for x in results], list(range(12)))
         self.assertEqual(s.get_info().status, "running")
         self.assertTrue(s._child_conn.closed)

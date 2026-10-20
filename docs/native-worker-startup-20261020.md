@@ -10,6 +10,8 @@ Cancellation waits for the original worker acknowledgement or a proven worker ex
 
 Manager shutdown awaits every session even if one stop fails. Remove successfully stopped sessions, preserve failed sessions for inspection, and report the collected errors after all peers finish.
 
+Queue concurrent pipe writers behind an asynchronous lock before assigning executor threads. A blocking lock inside each thread exhausted the smaller CI runner's pool, leaving no thread to read worker responses. A regression fixes the pool at four threads and exercises twelve large concurrent requests; the previous class fails that bounded test. The patch recognizes the complete previously deployed class for this upgrade. This final concurrency correction is covered by the stub-worker tests; the live graphics evidence below predates it.
+
 Start sessions and serve the MCP stdio transport in the **same event loop**. The previous sequence, `asyncio.run(init_sessions()); mcp.run()`, closes the initialization loop and cancels its listeners before the transport starts. The candidate calls `init_sessions()` and `mcp.run_stdio_async()` inside one coroutine and stops sessions in its `finally` block. This is specific to the inspected FastMCP stdio API; verify the installed API before adapting other transports.
 
 ## Validate Stata syntax against the actual engine

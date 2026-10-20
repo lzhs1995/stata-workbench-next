@@ -9,6 +9,8 @@ const original = fs.readFileSync(path.join(__dirname, "../tests/fixtures/stata_s
 const candidate = patch.patchSessions(original);
 assert.notEqual(candidate, original);
 assert.equal(patch.patchSessions(candidate), candidate);
+assert.equal(patch.patchSessions(original.replace(patch.ORIGINAL, patch.LEGACY_REPLACEMENT)), candidate);
+assert.throws(() => patch.patchSessions(candidate + patch.LEGACY_REPLACEMENT), /unsupported/);
 assert.throws(() => patch.patchSessions(original + patch.ORIGINAL), /unsupported/);
 assert.throws(() => patch.patchSessions(original.replace("self._process.daemon = True", "self._process.daemon = False")), /unsupported/);
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "stata-session-test-"));

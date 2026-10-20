@@ -201,7 +201,7 @@ const ORIGINAL = String.raw`class StataSession:
         )
 
 `;
-const REPLACEMENT = String.raw`class StataSession:
+const LEGACY_REPLACEMENT = String.raw`class StataSession:
     def __init__(self, session_id: str):
         import threading
         self.id = session_id
@@ -445,11 +445,30 @@ const REPLACEMENT = String.raw`class StataSession:
             self._send_tasks.discard(task)
 
 `;
+// Keep the full previously deployed class for a precise, idempotent upgrade.
+const REPLACEMENT = LEGACY_REPLACEMENT.replace(
+  "        self._send_lock = threading.Lock()",
+  "        self._send_lock = threading.Lock()\n        self._send_async_lock = asyncio.Lock()",
+).replace(
+  "    async def _send(self, message):\n        task = asyncio.create_task(self._owned_io(self._send_sync, message))",
+  `    async def _send_serialized(self, message):
+        # Wait for other writers on the event loop, not in executor threads.
+        # The response listener must retain a thread even on small runners.
+        async with self._send_async_lock:
+            return await self._owned_io(self._send_sync, message)
+
+    async def _send(self, message):
+        task = asyncio.create_task(self._send_serialized(message))`,
+);
 function patchSessions(source) {
   const oldCount = source.split(ORIGINAL).length - 1;
   const newCount = source.split(REPLACEMENT).length - 1;
-  if (!oldCount && newCount === 1) return patchStopAll(source);
-  if (oldCount !== 1 || newCount) throw new Error("unsupported session lifecycle source");
+  const legacyCount = source.split(LEGACY_REPLACEMENT).length - 1;
+  if (!oldCount && !legacyCount && newCount === 1) return patchStopAll(source);
+  if (!oldCount && !newCount && legacyCount === 1) {
+    return patchStopAll(source.replace(LEGACY_REPLACEMENT, REPLACEMENT));
+  }
+  if (oldCount !== 1 || newCount || legacyCount) throw new Error("unsupported session lifecycle source");
   return patchStopAll(source.replace(ORIGINAL, REPLACEMENT));
 }
 const STOP_ALL_ORIGINAL = `    async def stop_all(self):
@@ -491,5 +510,5 @@ function patchServer(source) {
   if (oldCount !== 1 || newCount) throw new Error("unsupported server event-loop lifecycle source");
   return source.replace(SERVER_ORIGINAL, SERVER_REPLACEMENT);
 }
-module.exports = { ORIGINAL, REPLACEMENT, patchSessions, SERVER_ORIGINAL, SERVER_REPLACEMENT, patchServer,
+module.exports = { ORIGINAL, LEGACY_REPLACEMENT, REPLACEMENT, patchSessions, SERVER_ORIGINAL, SERVER_REPLACEMENT, patchServer,
   STOP_ALL_ORIGINAL, STOP_ALL_REPLACEMENT, patchStopAll };
