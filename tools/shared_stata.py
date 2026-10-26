@@ -1,9 +1,9 @@
 """Single visible AI dispatch to the verified, existing Workbench session."""
 import argparse
 from contextlib import ExitStack
-import fcntl
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import sys
@@ -105,7 +105,7 @@ def completion_checks(request, http, body, before, after):
         "requestBound": request_bound,
         "newRunId": isinstance(rid, str) and bool(rid) and rid != before["status"].get("runId"),
         "responseRcZero": type(body.get("rc")) is int and body["rc"] == 0,
-        "sameLauncher": before.get("launcherPid") == after.get("launcherPid"),
+        "sameLauncher": before.get("launcherPid") == after.get("launcherPid") and before.get("launcher") == after.get("launcher"),
         "sameBridgeOwner": before.get("owner") == after.get("owner"),
         "sameStataBackend": _valid_backend_pids(before["status"].get("ownedBackendPids"))
             and before["status"]["ownedBackendPids"] == s.get("ownedBackendPids"),
@@ -122,7 +122,7 @@ def completion_checks(request, http, body, before, after):
     }
 
 
-def execute_once(d, request, receipt, timeout=3600, observe=entry.observe, sleep=time.sleep):
+def execute_once(d, request, receipt, timeout=3600, observe=entry.observe, sleep=time.sleep, source_path=None):
     receipt = Path(receipt)
     receipt.mkdir(mode=0o700, parents=True, exist_ok=False)
     result = {"verdict": "BLOCKED_NO_DISPATCH", "postCount": 0, "retryCount": 0,
@@ -136,11 +136,20 @@ def execute_once(d, request, receipt, timeout=3600, observe=entry.observe, sleep
         write_once(receipt / "request.json", request)
         write_once(receipt / "before.json", before)
         payload = dict(request)
+        if source_path is not None:
+            original = Path(source_path).resolve(strict=True)
+            source = original.read_bytes()
+            execution = receipt.resolve() / "runtime-execution.do"
+            write_once(execution, source)
+            payload["code"] = entry.host.stata_file_command(execution)
+            result["executionSource"] = {"authorPath": str(original), "path": str(execution),
+                "bytes": len(source), "sha256": hashlib.sha256(source).hexdigest()}
+            write_once(receipt / "execution-source.json", result["executionSource"])
         token = uuid.uuid4().hex
         payload.pop("runId", None)
         payload.pop("clientToken", None)
         marker = "___VERIFIED_CLIENT_" + token + "___"
-        payload["code"] = request["code"] + '\n#delimit cr\ndisplay as text "' + marker + '"\n'
+        payload["code"] += '\n#delimit cr\ndisplay as text "' + marker + '"\n'
         payload["source"] = "agent"
         result["clientToken"] = token
         result["wireRequest"] = payload
@@ -179,6 +188,7 @@ def execute_once(d, request, receipt, timeout=3600, observe=entry.observe, sleep
             write_once(receipt / "run.log", log)
             result["log"] = {"originalPath": str(path), "sha256": hashlib.sha256(log).hexdigest(), "bytes": len(log)}
             result["verdict"] = "PASS_VISIBLE_SHARED_RUN"
+            result["note"] = "Legacy verdict certifies execution/identity, not simultaneous source/Terminal visibility."
     except Exception as exc:
         result["error"] = repr(exc)
         result["windowObservation"] = getattr(exc, "observation", None)
@@ -186,6 +196,23 @@ def execute_once(d, request, receipt, timeout=3600, observe=entry.observe, sleep
         result["endedAtEpoch"] = time.time()
         write_once(receipt / "result.json", result)
     return result
+
+
+def wait_ready(d, deadline, observe=entry.observe, clock=time.monotonic, sleep=time.sleep):
+    """Poll before submission only. Identity/visibility failures are never retried."""
+    while True:
+        state = observe(d)
+        entry.permissions.require_window_observation(state)
+        if not state.get("identityOk") or state.get("axWindowCount") != 1:
+            raise RuntimeError("instance identity/window is not verified; no dispatch")
+        if ready(state):
+            return state
+        s = state.get("status") or {}
+        if s.get("recovery", {}).get("required") is not False:
+            raise RuntimeError("session requires recovery; no automatic reset")
+        if clock() >= deadline:
+            raise TimeoutError("session did not become ready before the pre-submit deadline")
+        sleep(min(1, max(0, deadline - clock())))
 
 
 def main():
@@ -196,30 +223,32 @@ def main():
     parser.add_argument("--cwd", type=Path, default=Path.cwd())
     parser.add_argument("--receipt-dir", type=Path)
     parser.add_argument("--timeout", type=int, default=3600)
+    parser.add_argument("--busy-policy", choices=("fail", "wait"), default="fail")
+    parser.add_argument("--max-wait", type=float, default=60)
+    parser.add_argument("--label", default="Shared session AI run")
     args = parser.parse_args()
-    if args.timeout < 1 or not args.cwd.is_dir():
+    if args.timeout < 1 or not math.isfinite(args.max_wait) or args.max_wait < 0 or not args.cwd.is_dir():
         parser.error("positive timeout and existing cwd required")
     os.environ.update(WS_FG_ALLOWED="0", WS_WINDOW_ALLOWED="0", WS_PHYSICAL_KEYS="0")
     d = entry.helpers()
     token = "shared_" + uuid.uuid4().hex
     receipt = args.receipt_dir or Path.cwd() / ".stata-receipts" / token
     if args.file:
-        path = args.file.resolve(strict=True)
-        if not path.is_file() or '"' in str(path) or "\n" in str(path):
-            parser.error("file must be regular and contain no quote/newline in its path")
-        code = 'do "' + str(path) + '"'
+        code = entry.host.stata_file_command(args.file)
     else:
         code = args.code
     if not code or not code.strip():
         parser.error("empty code is not an execution")
     request = {"code": code, "cwd": str(args.cwd.resolve()),
-               "source": "agent", "agentId": "verified-shared-session-client", "label": "Shared session AI run"}
+               "source": "agent", "agentId": "verified-shared-session-client", "label": args.label}
     with ExitStack() as stack:
-        for lock_path in ("/private/tmp/stata-workbench-broad-rc739-targeted.lock",
-                          "/private/tmp/stata-workbench-shared-client.lock"):
-            handle = stack.enter_context(open(lock_path, "a+"))
-            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        result = execute_once(d, request, receipt, args.timeout)
+        wait = args.max_wait if args.busy_policy == "wait" else 0
+        deadline = time.monotonic() + wait
+        for lock in entry.host.lock_paths(entry.PROFILE, "execute"):
+            stack.enter_context(entry.host.file_lock(lock, timeout=max(0, deadline - time.monotonic())))
+        if args.busy_policy == "wait":
+            wait_ready(d, deadline)
+        result = execute_once(d, request, receipt, args.timeout, source_path=args.file)
     diagnostics = result.get("responseDiagnostics") or response_diagnostics(result.get("response"))
     print(json.dumps({"verdict": result["verdict"], "postCount": result["postCount"], "retryCount": 0,
                       "runId": diagnostics["fields"].get("runId"),

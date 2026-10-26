@@ -3,9 +3,11 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+import sys
 from unittest.mock import patch
 import verify_release as release
 import verified_workbench as entry
+import mac_workbench
 
 
 class PublicReleaseTests(unittest.TestCase):
@@ -33,16 +35,18 @@ class PublicReleaseTests(unittest.TestCase):
             self.assertEqual(entry.LocalBridge().launcher_window_count(42), 1)
             out.assert_called_once_with(42)
 
+    @unittest.skipUnless(sys.platform == "darwin", "Mac adapter path rules")
     def test_profile_prefix_collision_rejected(self):
         expected = str(entry.PROFILE / "user-data")
         executable = str(Path(entry.CODE_CLI).resolve().parents[3] / "MacOS/Code")
         rows = f"42 {executable} --user-data-dir {expected}-foreign --other\n"
-        with patch.object(entry, "output", side_effect=[rows, executable]):
+        with patch.object(mac_workbench, "output", side_effect=[rows, executable]):
             self.assertEqual(entry.LocalBridge().code_instances(), [])
 
+    @unittest.skipUnless(sys.platform == "darwin", "Mac adapter path rules")
     def test_exact_profile_accepted(self):
         expected = str(entry.PROFILE / "user-data")
         executable = str(Path(entry.CODE_CLI).resolve().parents[3] / "MacOS/Code")
         rows = f"42 {executable} --user-data-dir {expected} --extensions-dir /other\n"
-        with patch.object(entry, "output", side_effect=[rows, executable]):
+        with patch.object(mac_workbench, "output", side_effect=[rows, executable]):
             self.assertEqual(entry.LocalBridge().code_instances(), [{"pid":42,"launcher":True}])

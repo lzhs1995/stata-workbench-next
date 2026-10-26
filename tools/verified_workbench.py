@@ -1,6 +1,6 @@
-"""Pinned, idempotent Mac entry point for the local shared-session candidate."""
+"""Pinned, idempotent macOS/Windows entry for the shared-session candidate."""
 import argparse
-import fcntl
+from contextlib import ExitStack
 import hashlib
 import json
 import os
@@ -8,7 +8,8 @@ from pathlib import Path
 import subprocess
 import sys
 import time
-import mac_permissions as permissions
+import workbench_platform as host
+permissions = host.permissions_module()
 import shlex
 from types import SimpleNamespace
 import urllib.request
@@ -17,8 +18,11 @@ import urllib.error
 WORK = Path(__file__).resolve().parents[1]
 PROFILE = Path(os.environ.get("STATA_WORKBENCH_PROFILE", str(Path.home() / ".stata-workbench-shared"))).expanduser().resolve()
 EXTENSION = PROFILE / "extensions/lzhs1995.stata-workbench-shared-session-0.1.3-rc.7.44-dev.2"
-PORT = int(os.environ.get("STATA_WORKBENCH_PORT", "17485"))
-CODE_CLI = os.environ.get("STATA_WORKBENCH_CODE", "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code")
+try:
+    PORT = int(os.environ.get("STATA_WORKBENCH_PORT", "17485"))
+except ValueError:
+    PORT = 0  # Doctor can report the bad setting before any connection or launch.
+CODE_CLI = host.default_code()
 VERSION = "0.1.3-rc.7.44-dev.2"
 BUNDLE_SHA256 = "23ba6d13cd0d5711b07d62fefbd0a6a9e02e55dd69639fc8596b3d8e99f579fc"
 PINS = {
@@ -27,8 +31,8 @@ PINS = {
 
 
 def helpers():
-    if sys.platform != "darwin" or not 1024 <= PORT <= 65535:
-        raise RuntimeError("this launcher requires macOS and a valid local port")
+    if sys.platform not in ("darwin", "win32") or not 1024 <= PORT <= 65535:
+        raise RuntimeError("this launcher requires macOS/Windows and a valid local port")
     for path, sha in {**PINS, EXTENSION / "dist/extension.js": BUNDLE_SHA256}.items():
         if hashlib.sha256(path.read_bytes()).hexdigest() != sha:
             raise RuntimeError("candidate identity mismatch: " + str(path))
@@ -47,6 +51,9 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 class LocalBridge:
+    def __init__(self):
+        self.platform = host.adapter(PROFILE, CODE_CLI, PORT)
+
     def http_post(self, path, payload, timeout=30):
         return self.request(path, payload, timeout)
 
@@ -69,71 +76,25 @@ class LocalBridge:
             raise RuntimeError("status unavailable")
         return body
 
-    def code_instances(self):
-        rows = []
-        expected = str(PROFILE / "user-data")
-        for line in output(["/bin/ps", "-ax", "-o", "pid=,args="]).splitlines():
-            fields = line.strip().split(None, 1)
-            if len(fields) != 2 or "/Contents/MacOS/" not in fields[1]:
-                continue
-            pid, args = int(fields[0]), fields[1]
-            # ps does not preserve shell quotes around paths containing spaces.
-            # Bind the executable independently, then the full profile argument.
-            if not any(x in args for x in ("--user-data-dir " + expected, "--user-data-dir=" + expected)):
-                continue
-            try:
-                executable = output(["/bin/ps", "-p", str(pid), "-o", "comm="])
-            except subprocess.CalledProcessError:
-                continue
-            expected_executable = Path(CODE_CLI).resolve().parents[3] / "MacOS/Code"
-            if Path(executable).resolve() == expected_executable:
-                suffix = args.split("--user-data-dir", 1)[1].lstrip("= ")
-                if suffix == expected or suffix.startswith(expected + " --"):
-                    rows.append({"pid": pid, "launcher": True})
-        return rows
-
-    def bridge_owner(self):
-        run = subprocess.run(["/usr/sbin/lsof", "-nP", f"-iTCP:{PORT}", "-sTCP:LISTEN", "-t"],
-                             capture_output=True, text=True, timeout=10)
-        if run.returncode == 1 and not run.stdout.strip() and not run.stderr.strip():
-            return None
-        if run.returncode != 0:
-            raise RuntimeError("listener census failed")
-        pids = set(run.stdout.split())
-        if len(pids) != 1:
-            raise RuntimeError("listener owner is not unique")
-        pid = int(pids.pop())
-        ppid = int(output(["/bin/ps", "-p", str(pid), "-o", "ppid="]))
-        return {"pid": pid, "ppid": ppid, "launcher": any(i["pid"] == ppid for i in self.code_instances())}
-
-    def launcher_window_count(self, pid):
-        obs = permissions.window_observation(pid)
-        permissions.require_window_observation({"windowObservation": obs, "axWindowCount": obs["count"]})
-        return obs["count"]
-
-    def screen_locked(self):
-        text = output(["/usr/sbin/ioreg", "-n", "Root", "-d1"])
-        return '"CGSSessionScreenIsLocked" = Yes' in text or '"ScreenIsLocked" = Yes' in text
+    def __getattr__(self, name):
+        return getattr(self.platform, name)
 
 
 def activate_once(pid):
-    output(["/usr/bin/osascript", "-e",
-        f'tell application "System Events"\nset p to first application process whose unix id is {int(pid)}\nset frontmost of p to true\nend tell'])
-    actual = int(output(["/usr/bin/osascript", "-e",
-        'tell application "System Events" to unix id of first application process whose frontmost is true']))
-    return {"ok": actual == pid, "actualPid": actual, "targetPid": pid}
+    return permissions.activate_once(pid) if sys.platform == "win32" else __import__("mac_workbench").activate_once(pid)
 
 
 def observe(d):
     instances = [row for row in d.w.code_instances() if row.get("launcher") is True]
     owner = d.w.bridge_owner()
     if len(instances) > 1:
-        raise RuntimeError("multiple rc70 instances; refusing to select or terminate one")
+        raise RuntimeError("multiple matching Workbench instances; refusing to select or terminate one")
     if owner and (not instances or owner.get("launcher") is not True
-                  or owner.get("ppid") != instances[0]["pid"]):
-        raise RuntimeError("bridge listener does not belong to the exact rc70 instance")
+                  or owner.get("launcherPid", owner.get("ppid")) != instances[0]["pid"]):
+        raise RuntimeError("bridge listener does not belong to the exact Workbench instance")
     status = d.w.status(timeout=5) if owner else {}
     identity_ok = (bool(instances) and owner is not None
+        and ("launcherCreatedAt" not in owner or owner["launcherCreatedAt"] == instances[0].get("createdAt"))
         and status.get("extensionVersion") == VERSION
         and status.get("diskBundleSha256") == BUNDLE_SHA256
         and status.get("bundleIdentityState") == "OK"
@@ -141,6 +102,7 @@ def observe(d):
         and status.get("extensionHostPid") == owner.get("pid"))
     window = permissions.window_observation(instances[0]["pid"] if instances else None)
     return {"launcherPid": instances[0]["pid"] if instances else None,
+            "launcher": instances[0] if instances else None,
             "owner": owner, "identityOk": identity_ok,
             "axWindowCount": window["count"], "windowObservation": window,
             "status": status}
@@ -171,7 +133,7 @@ def open_once(d, launch, foreground=True, timeout=120, sleep=time.sleep, clock=t
         raise RuntimeError("instance exists but bridge identity is not ready; no relaunch/reset/retry")
     permissions.require_window_observation(state)
     if state["axWindowCount"] != 1:
-        raise RuntimeError("expected one rc70 window; no window was closed")
+        raise RuntimeError("expected one Workbench window; no window was closed")
     activation = None
     if foreground:
         activation = d._activate_exact_pid_once(state["launcherPid"])
@@ -202,8 +164,13 @@ def main():
     args = parser.parse_args()
     os.environ["WS_FG_ALLOWED"] = "1" if args.open and not args.no_activate else "0"
     os.environ["WS_PHYSICAL_KEYS"] = "0"
+    if args.doctor:
+        from workbench_doctor import diagnose
+        result = diagnose(sys.modules[__name__])
+        print(json.dumps(result, ensure_ascii=False))
+        return 0 if result["verdict"] == "READY" else 2
     d = helpers()
-    if args.doctor or args.request_permissions:
+    if args.request_permissions:
         result = permissions.diagnostic(d, observe, request=args.request_permissions)
         print(json.dumps(result, ensure_ascii=False))
         return 0 if result["verdict"] == "PASS_PERMISSION_WINDOW_CHECK" else 2
@@ -211,13 +178,14 @@ def main():
         state = observe(d)
         print(json.dumps(state, ensure_ascii=False))
         return 0 if state["identityOk"] and state["windowObservation"]["ok"] and state["axWindowCount"] == 1 else 2
-    with open("/private/tmp/stata-workbench-verified-open.lock", "a+") as handle:
-        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    with ExitStack() as stack:
+        for lock in host.lock_paths(PROFILE, "open"):
+            stack.enter_context(host.file_lock(lock))
 
         def launch():
             if not args.workspace.is_dir():
                 raise RuntimeError("workspace must exist")
-            subprocess.run([CODE_CLI, "--user-data-dir", str(PROFILE / "user-data"),
+            subprocess.run([str(host.code_executable(CODE_CLI)), "--user-data-dir", str(PROFILE / "user-data"),
                 "--extensions-dir", str(PROFILE / "extensions"), "--new-window",
                 str(args.workspace.resolve())], check=True, timeout=30)
 

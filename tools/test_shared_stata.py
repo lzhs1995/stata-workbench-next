@@ -20,6 +20,40 @@ def state(rid="old"):
 
 
 class SharedClientTests(unittest.TestCase):
+    def test_file_dispatch_freezes_original_bytes_before_post(self):
+        with tempfile.TemporaryDirectory(prefix="shared 中文 ") as directory:
+            root = Path(directory)
+            source = root / "author's & file.do"
+            original = b'display "original"\r\n'
+            source.write_bytes(original)
+            receipt = root / "receipt"
+            def post(endpoint, payload, **kwargs):
+                self.assertEqual((receipt / "runtime-execution.do").read_bytes(), original)
+                self.assertIn((receipt / "runtime-execution.do").resolve().as_posix(), payload["code"])
+                source.write_bytes(b"display 999\n")
+                raise TimeoutError("response lost after submission")
+            result = client.execute_once(SimpleNamespace(w=SimpleNamespace(http_post=Mock(side_effect=post))),
+                {"code": "unused original path"}, receipt, source_path=source, observe=lambda _: state())
+            self.assertEqual(result["postCount"], 1)
+            self.assertEqual(result["verdict"], "EXECUTION_UNCONFIRMED_NO_RETRY")
+            self.assertEqual((receipt / "runtime-execution.do").read_bytes(), original)
+            self.assertEqual(result["executionSource"]["bytes"], len(original))
+
+    def test_pre_submit_wait_never_sends_or_resets(self):
+        busy = state()
+        busy["status"]["busy"] = True
+        d = SimpleNamespace(w=Mock())
+        sleep = Mock()
+        result = client.wait_ready(d, 10, observe=Mock(side_effect=[busy, state()]), clock=lambda: 0, sleep=sleep)
+        self.assertTrue(client.ready(result))
+        sleep.assert_called_once_with(1)
+        d.w.assert_not_called()
+        self.assertEqual(d.w.method_calls, [])
+        with self.assertRaises(TimeoutError):
+            client.wait_ready(d, 0, observe=lambda _: busy, clock=lambda: 1, sleep=sleep)
+        with self.assertRaisesRegex(RuntimeError, "identity"):
+            client.wait_ready(d, 10, observe=lambda _: dict(busy, identityOk=False), clock=lambda: 0, sleep=sleep)
+
     def test_failed_http_envelope_retains_run_identity_without_accepting_or_retrying(self):
         with tempfile.TemporaryDirectory() as directory:
             inner = {"ok": False, "runId": "new", "requestId": "req-new", "rc": 101}
