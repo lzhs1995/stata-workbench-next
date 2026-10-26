@@ -32,7 +32,7 @@ def process_rows():
     rows = powershell_json("@(Get-CimInstance Win32_Process | Select-Object "
         "@{n='pid';e={[int]$_.ProcessId}},@{n='ppid';e={[int]$_.ParentProcessId}},"
         "@{n='executable';e={$_.ExecutablePath}},@{n='commandLine';e={$_.CommandLine}},"
-        "@{n='createdAt';e={$_.CreationDate.ToUniversalTime().ToString('o')}}) | ConvertTo-Json -Depth 4 -Compress")
+        "@{n='createdAt';e={if ($_.CreationDate) {$_.CreationDate.ToUniversalTime().ToString('o')} else {$null}}}) | ConvertTo-Json -Depth 4 -Compress")
     return rows if isinstance(rows, list) else [rows]
 
 

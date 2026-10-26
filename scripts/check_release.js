@@ -13,6 +13,8 @@ const mutators = new Set(["node scripts/apply_rc7_shared_execution_patch.js", "n
 const commands = ["node scripts/audit_candidate_readonly.js", "node --check scripts/test_activation_isolation.js",
   "node scripts/test_activation_isolation.js", ...pkg.scripts["check:legacy"].split(" && ")];
 let count = 0;
+const keepGoing = process.argv.includes("--keep-going");
+const failed = [];
 for (const command of commands) {
   if (mutators.has(command)) continue;
   const argv = command.split(" ");
@@ -22,8 +24,9 @@ for (const command of commands) {
   if (r.status !== 0) {
     console.error(command, r.stdout, r.stderr);
     process.exitCode = 1;
-    break;
+    failed.push(command);
+    if (!keepGoing) break;
   }
 }
 if (hash() !== before) throw new Error("Verifier modified sealed runtime");
-console.log(JSON.stringify({verdict: process.exitCode ? "FAIL" : "PASS", commands: count, runtimeUnchanged: true, bundleSha256: before}));
+console.log(JSON.stringify({verdict: process.exitCode ? "FAIL" : "PASS", commands: count, failed, runtimeUnchanged: true, bundleSha256: before}));

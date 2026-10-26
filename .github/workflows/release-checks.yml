@@ -33,8 +33,10 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm audit
       - name: Shared logic and platform regressions (no licensed Stata)
-        run: npm run check
-      - run: python -B -m unittest discover -s tools -p 'test_*.py'
+        run: npm run check -- --keep-going
+      - name: Python client and actual OS tests
+        if: ${{ !cancelled() }}
+        run: python -B -m unittest discover -s tools -p 'test_*.py'
       - run: python -B tools/verify_release.py
       - run: npm run package
       - run: python -B tools/verify_release.py --packaged

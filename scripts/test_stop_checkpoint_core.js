@@ -201,7 +201,7 @@ try {
     assert.ok(observedCode.includes("estimates save"));
     assert.ok(observedCode.includes("graph save"));
     assert.ok(observedCode.includes("classutil describe Graph"));
-    assert.ok(observedCode.includes(snapshot.defaultGraphObjectPath));
+    assert.ok(observedCode.includes(snapshot.defaultGraphObjectPath.replace(/\\/g, "/")));
     assert.ok(observedCode.includes("    break {"), "expensive checkpoint work must allow Break");
     assert.ok(observedCode.indexOf("_estimates hold") < observedCode.indexOf("    break {"),
       "hold and held flag must be established without a Break window");
@@ -284,7 +284,7 @@ try {
     drainedClient._cancellationSourcesByRunId.clear();
 
     const restore = checkpoint.restoreCode(snapshot, (value) => String(value).replace(/\\/g, "/"));
-    assert.ok(restore.includes(`use "${snapshot.path}", clear`));
+    assert.ok(restore.includes(`use "${snapshot.path.replace(/\\/g, "/")}", clear`));
     assert.ok(restore.indexOf("st_isname(") < restore.indexOf(`use "${snapshot.path}", clear`),
       "native name validation must precede every destructive restore operation");
     assert.ok(restore.includes("base64decode"));
