@@ -342,7 +342,7 @@ try {
     const nativeChecks = [...globalRestore.matchAll(/st_isname\(base64decode\("([A-Za-z0-9+/=]+)"\)\)/g)];
     assert.deepStrictEqual(nativeChecks.map((m) => Buffer.from(m[1], "base64").toString()),
       [...trickyGlobals.keys()], "every exported name uses the same native predicate before restoration");
-    assert.ok(nativeChecks.every((m) => m.index < globalRestore.indexOf(`use "${snapshot.path}"`)));
+    assert.ok(nativeChecks.every((m) => m.index < globalRestore.indexOf(`use "${snapshot.path.replace(/\\/g, "/")}"`)));
     assert.ok(!/[{}]/.test(globalRestore), "Unicode preflight must preserve brace-free replay");
     for (const invalid of [
       "bad name\tdmFsdWU=\n", "!1fe\tdmFsdWU=\n", "r(result)\tdmFsdWU=\n",

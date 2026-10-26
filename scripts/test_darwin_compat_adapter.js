@@ -69,14 +69,16 @@ assert.strictEqual(fs.readFileSync(nested, "utf8"), source);
 
 
 const opts = { platform: "darwin", cwd: root, tempRoot: root, extensionRoot: path.join(__dirname, "..") };
+// This corpus tests inactive DO references, independently of Darwin path conversion.
+const commentPath = nested.replace(/\\/g, "/");
 const commentOnly = [
-  `* do "${nested}"`, `// do "${nested}"`,
-  `/* block\ndo "${nested}"\n*/`,
-  'display `"do "' + nested + '""\'',
-  `local example "do ${nested}"`,
-  'local multiline `"example\ndo "' + nested + '"\nend"\'',
-  'local nestedquote `"example\n`"inner\ndo "' + nested + '"\ninner"\'\nend"\'',
-  'local ordinary "example\ndo ' + nested + '\nend"',
+  `* do "${commentPath}"`, `// do "${commentPath}"`,
+  `/* block\ndo "${commentPath}"\n*/`,
+  'display `"do "' + commentPath + '""\'',
+  `local example "do ${commentPath}"`,
+  'local multiline `"example\ndo "' + commentPath + '"\nend"\'',
+  'local nestedquote `"example\n`"inner\ndo "' + commentPath + '"\ninner"\'\nend"\'',
+  'local ordinary "example\ndo ' + commentPath + '\nend"',
 ].join("\n");
 const comments = adapter.prepareVisibleExecution(commentOnly, opts);
 assert.strictEqual(comments.code, "set more off\n" + commentOnly);
