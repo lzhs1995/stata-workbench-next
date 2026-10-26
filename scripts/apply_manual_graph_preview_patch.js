@@ -7,10 +7,11 @@ const fs = require("node:fs");
 const path = require("node:path");
 const fingerprint = require("./finalize_bundle_identity");
 const BEFORE = 'I.path&&pag(I.path,I.baseDir)';
-const AFTER = 'I.path&&(typeof __codexOpenGraphPreview=="function"&&__codexOpenGraphPreview(I)||pag(I.path,I.baseDir))';
+const LEGACY_AFTER = 'I.path&&(typeof __codexOpenGraphPreview=="function"&&__codexOpenGraphPreview(I)||pag(I.path,I.baseDir))';
+const AFTER = 'I.path&&(typeof globalThis.__codexOpenGraphPreview=="function"&&globalThis.__codexOpenGraphPreview(I)||pag(I.path,I.baseDir))';
 const ANCHOR = 'function __codexHandleArtifact(runId, artifact) {';
 const MARKER = '// codex manual graph preview:';
-const HELPER = String.raw`// codex manual graph preview: a user click on an existing Terminal graph link opens
+const LEGACY_HELPER = String.raw`// codex manual graph preview: a user click on an existing Terminal graph link opens
 // the Stata Graphs panel (creating it if needed). Automatic batch delivery still
 // does not create/reveal a panel; help, non-graph and missing paths keep pag().
 var __codexManualPreviewSeq = 0;
@@ -30,6 +31,9 @@ function __codexOpenGraphPreview(message) {
 }
 
 `;
+// The Terminal and graph providers are separate bundled module closures.
+// Export the callback explicitly; a same-scope VM test hid the missing route.
+const HELPER = LEGACY_HELPER + 'globalThis.__codexOpenGraphPreview = __codexOpenGraphPreview;\n\n';
 
 function uniqueAt(source, needle) {
   const at = source.indexOf(needle);
@@ -43,8 +47,15 @@ function patchBundle(source, options = {}) {
   const anchor = uniqueAt(source, ANCHOR);
   if (source.includes(MARKER)) {
     const start = uniqueAt(source, MARKER);
-    if (source.slice(start, anchor) !== HELPER) throw new Error("modified manual graph preview helper");
-    uniqueAt(source, AFTER);
+    const installed = source.slice(start, anchor);
+    if (installed === LEGACY_HELPER) {
+      uniqueAt(source, LEGACY_AFTER);
+      if (source.includes(AFTER)) throw new Error("mixed manual graph preview routes");
+      source = source.replace(LEGACY_HELPER, HELPER).replace(LEGACY_AFTER, AFTER);
+    } else if (installed === HELPER) {
+      uniqueAt(source, AFTER);
+      if (source.includes(LEGACY_AFTER)) throw new Error("mixed manual graph preview routes");
+    } else throw new Error("modified manual graph preview helper");
     if (source.includes(BEFORE)) throw new Error("mixed manual graph preview routes");
   } else {
     uniqueAt(source, BEFORE);
@@ -64,4 +75,4 @@ if (require.main === module) {
   console.log(JSON.stringify({ changed: before !== after, target, installed: false }));
 }
 
-module.exports = { patchBundle, BEFORE, AFTER, HELPER };
+module.exports = { patchBundle, BEFORE, AFTER, HELPER, LEGACY_AFTER, LEGACY_HELPER, ANCHOR };

@@ -12,6 +12,11 @@ const previous = fingerprint.finalize(source.replace(patch.HELPER, '').replace(p
 assert.equal(crypto.createHash('sha256').update(previous).digest('hex'),
   '5519c6f04a0ca6a46ea81d8f2e6e2c293a006b7d620214eec6bef7bfff63fbea', 'previous bundle fixture must be exact');
 assert.equal(patch.patchBundle(previous), source, 'maintenance replay must reproduce sealed bundle');
+const legacy = fingerprint.finalize(previous.replace(patch.BEFORE, patch.LEGACY_AFTER)
+  .replace(patch.ANCHOR, patch.LEGACY_HELPER + patch.ANCHOR)).text;
+assert.equal(crypto.createHash('sha256').update(legacy).digest('hex'),
+  '23ba6d13cd0d5711b07d62fefbd0a6a9e02e55dd69639fc8596b3d8e99f579fc', 'deployed legacy candidate is exact');
+assert.equal(patch.patchBundle(legacy), source, 'upgrade the exact deployed helper and route together');
 assert.equal(patch.patchBundle(source), source, 'patch must be idempotent');
 assert.throws(() => patch.patchBundle(previous.replace(patch.BEFORE, 'missingRoute')), /anchor/);
 assert.throws(() => patch.patchBundle(previous + patch.BEFORE), /anchor/);
@@ -46,13 +51,22 @@ const context = {
 context.__codexGraphMark = (p) => Object.assign(context.__codexGraphPanelDiag, p);
 vm.createContext(context);
 vm.runInContext(extract('function __codexArtifactIsHelp(', 'function __codexCreateGraphSnapshot('), context);
-vm.runInContext(extract('var __codexManualPreviewSeq = 0;', 'function __codexHandleArtifact('), context);
-vm.runInContext(extract('function __codexHandleArtifact(', 'var kM='), context);
+const provider = extract('var __codexManualPreviewSeq = 0;', 'var kM=');
 // 生产 webview 消息分支（minified，参数 g=panel 实例，I=message）。
 const clause = extract('I.type==="openArtifact"&&', ',I.type==="revealArtifact"');
-assert(clause.includes('__codexOpenGraphPreview(I)||pag(I.path,I.baseDir)'), 'handler must try preview before pag fallback');
-vm.runInContext('function __dispatch(g,I){' + clause + '}', context);
+assert(clause.includes('globalThis.__codexOpenGraphPreview(I)||pag(I.path,I.baseDir)'), 'handler must try the exported preview before pag fallback');
+// Production providers are sibling bundled modules. The old same-scope harness
+// made a private callback visible to the Terminal and incorrectly passed.
+const oldProvider = provider.replace('globalThis.__codexOpenGraphPreview = __codexOpenGraphPreview;\n\n', '');
+vm.runInContext('(function(){' + oldProvider + '})();', context);
+vm.runInContext('(function(){globalThis.__legacyDispatch=function(g,I){' + clause.replace(patch.AFTER, patch.LEGACY_AFTER) + '}})();', context);
 const terminal = { _openHelpPanel: (p, l) => calls.help.push([p, l]) };
+context.__legacyDispatch(terminal, { type: 'openArtifact', path: '/runs/r8/graph_001.svg' });
+assert.equal(calls.ensure, 0, 'legacy module-private callback must reproduce the native failure');
+assert.equal(calls.pag.length, 1, 'legacy click falls back to the ordinary editor');
+calls.pag.length = 0;
+vm.runInContext('(function(){' + provider + '})();', context);
+vm.runInContext('(function(){globalThis.__dispatch=function(g,I){' + clause + '}})();', context);
 const send = (m) => context.__dispatch(terminal, Object.assign({ type: 'openArtifact' }, m));
 
 // 1. 无图形面板时，用户点击已有 SVG：创建并显示 Graphs，独立 preview runId，不走 pag。
