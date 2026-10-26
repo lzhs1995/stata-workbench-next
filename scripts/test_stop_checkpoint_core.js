@@ -285,7 +285,7 @@ try {
 
     const restore = checkpoint.restoreCode(snapshot, (value) => String(value).replace(/\\/g, "/"));
     assert.ok(restore.includes(`use "${snapshot.path.replace(/\\/g, "/")}", clear`));
-    assert.ok(restore.indexOf("st_isname(") < restore.indexOf(`use "${snapshot.path}", clear`),
+    assert.ok(restore.indexOf("st_isname(") < restore.indexOf(`use "${snapshot.path.replace(/\\/g, "/")}", clear`),
       "native name validation must precede every destructive restore operation");
     assert.ok(restore.includes("base64decode"));
     assert.ok(restore.includes("estimates store good_est"));

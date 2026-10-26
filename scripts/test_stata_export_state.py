@@ -167,7 +167,11 @@ with tempfile.TemporaryDirectory(prefix='stata-export-') as tmp:
         cases.append('reject-unsafe-graph:' + repr(name))
 
     for text in ('bad"dir', 'bad$dir', 'bad`dir', 'bad\ndir', 'bad\rdir'):
-        directory = root / text; directory.mkdir()
+        directory = root / text
+        # Quotes/control characters cannot exist in Windows filenames. Still
+        # pass the invalid path to the real exporter and require zero dispatch.
+        if os.name != 'nt' or not any(c in text for c in ('"', '\n', '\r')):
+            directory.mkdir()
         b = reset(); error(lambda: b.export_graph('g2', directory / 'out.pdf'))
         assert not b.calls and not b.reads; unchanged()
         cases.append('reject-interpolated-path:' + repr(text))

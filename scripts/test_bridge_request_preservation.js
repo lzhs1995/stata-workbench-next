@@ -131,7 +131,7 @@ try {
     assert.equal(prepared.darwinDiagnostics.ok, true, JSON.stringify(prepared.darwinDiagnostics));
     assert.equal(prepared.sourceDiagnostics.referencedDoCopies.length, 2);
     const guardCopy = prepared.sourceDiagnostics.referencedDoCopies.find(x => x.sourcePath === file);
-    assert.ok(prepared.code.includes(`capture noisily do "${guardCopy.tempPath}"`));
+    assert.ok(prepared.code.includes(`capture noisily do "${guardCopy.tempPath.replace(/\\/g, "/")}"`));
     assert.ok(prepared.code.includes(wrapper.slice(wrapper.indexOf("\nlocal diagrc"))));
     assert.equal(prepared.code.split(marker).length - 1, 1);
     assert.equal(fs.readFileSync(file, "utf8"), fileText);

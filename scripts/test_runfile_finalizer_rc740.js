@@ -92,7 +92,7 @@ test("driver still passes the body through the real Mac compatibility adapter", 
   assert.equal(copy.sourceSha256, sha(before));
   assert.equal(fs.readFileSync(record.tempDoFile).equals(before), true);
   assert.ok(fs.readFileSync(copy.tempPath, "utf8").includes("/Users/fixture/cnm/tasks/07_Stata-workbench/开题报告"));
-  assert.ok(prepared.code.includes('capture noisily do "' + copy.tempPath + '"'));
+  assert.ok(prepared.code.includes('capture noisily do "' + copy.tempPath.replace(/\\/g, "/") + '"'));
 });
 
 test("actual return record beats stale inner errors and preserves a real 601", () => {

@@ -21,7 +21,7 @@ const { execFileSync } = require("child_process");
 const { createRequire } = require("module");
 
 const ROOT = path.resolve(__dirname, "..");
-const VSCE = path.join(ROOT, "node_modules", ".bin", "vsce");
+const VSCE = require.resolve("@vscode/vsce/vsce");
 
 // ---------------------------------------------------------------- L1 分类器
 

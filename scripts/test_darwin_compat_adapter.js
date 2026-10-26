@@ -62,7 +62,7 @@ assert.strictEqual(recursive.darwinDiagnostics.replacements, 3,
 assert.strictEqual(recursive.sourceDiagnostics.referencedDoCopies.length, 2);
 const wrapperCopy = recursive.sourceDiagnostics.referencedDoCopies.find(x => x.sourcePath === wrapper);
 const leafCopy = recursive.sourceDiagnostics.referencedDoCopies.find(x => x.sourcePath === nested);
-assert.ok(fs.readFileSync(wrapperCopy.tempPath, "utf8").includes(leafCopy.tempPath));
+assert.ok(fs.readFileSync(wrapperCopy.tempPath, "utf8").includes(leafCopy.tempPath.replace(/\\/g, "/")));
 assert.ok(fs.readFileSync(leafCopy.tempPath, "utf8").includes(".__pngcompat__.svg"));
 assert.strictEqual(fs.readFileSync(wrapper, "utf8"), wrapperSource);
 assert.strictEqual(fs.readFileSync(nested, "utf8"), source);

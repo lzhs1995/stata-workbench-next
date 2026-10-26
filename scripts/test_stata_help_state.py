@@ -154,7 +154,7 @@ with tempfile.TemporaryDirectory(prefix='stata-help-') as tmp:
     assert isinstance(error(lambda: b.get_help('regress')), FileNotFoundError)
     restored(b); cases.append('located-file-disappears-is-error')
     b = fresh(tmp)
-    assert isinstance(error(lambda: b.get_help('regress')), IsADirectoryError)
+    assert isinstance(error(lambda: b.get_help('regress')), PermissionError if os.name == 'nt' else IsADirectoryError)
     restored(b); cases.append('unreadable-file-is-error')
 
     convert = scope['smcl_to_markdown']

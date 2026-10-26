@@ -9,9 +9,9 @@ const core = require("./stata_source_compat_core");
 
 const roots = {
   platform: "darwin",
-  stataRoot: "/Users/test/Documents/cnm/tasks/07_Stata-workbench/开题报告",
-  cnmRoot: "/Users/test/Documents/cnm",
-  documentsRoot: "/Users/test/Documents",
+  stataRoot: path.resolve("/Users/test/Documents/cnm/tasks/07_Stata-workbench/开题报告"),
+  cnmRoot: path.resolve("/Users/test/Documents/cnm"),
+  documentsRoot: path.resolve("/Users/test/Documents"),
 };
 
 const source = [
@@ -26,7 +26,7 @@ assert.strictEqual(result.diagnostics.rootRewrites, 1);
 assert.strictEqual(result.diagnostics.separatorRewrites, 2);
 assert.strictEqual(result.diagnostics.dynamicGraphNameProtections, 0);
 assert.strictEqual(result.diagnostics.dynamicGraphNameMacro, null);
-assert.ok(result.code.includes(`global workfolder "${roots.stataRoot}"`));
+assert.ok(result.code.includes(`global workfolder "${roots.stataRoot.replace(/\\/g, "/")}"`));
 assert.ok(result.code.includes('global data "${workfolder}/0_data_clo/Prepare_data"'));
 assert.ok(result.code.includes('local regex "^foo\\\\d+$"'), "non-path strings stay byte-identical");
 
@@ -72,7 +72,7 @@ assert.ok(prepared.code.startsWith("set more off\n"),
 assert.notStrictEqual(prepared.code, `do "${sourceDo}"`);
 assert.deepStrictEqual(fs.readFileSync(sourceDo), before, "research source must not be modified");
 const copiedPath = prepared.diagnostics.referencedDoCopies[0].tempPath;
-assert.ok(fs.readFileSync(copiedPath, "utf8").includes(roots.stataRoot));
+assert.ok(fs.readFileSync(copiedPath, "utf8").includes(roots.stataRoot.replace(/\\/g, "/")));
 assert.strictEqual(prepared.diagnostics.referencedDoCopies[0].sourceIntact, true);
 
 const nestedDo = path.join(tempRoot, "nested-graph.do");

@@ -294,6 +294,8 @@ def inject(docx_path: Path) -> dict[str, object]:
                 if b"__CODEX_DOCX_IMAGE_V1__" in xml:
                     raise ValueError("DOCX_IMAGE_COMPAT_MARKER_REMAINED")
             shutil.copymode(docx_path, temp_name)
+            # Windows refuses replacement while the original ZIP handle is open.
+            source.close()
             os.replace(temp_name, docx_path)
             for generated_image in generated_images:
                 try:
