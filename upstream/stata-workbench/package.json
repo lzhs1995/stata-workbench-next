@@ -1,0 +1,343 @@
+{
+  "name": "stata-workbench",
+  "displayName": "Stata Workbench",
+  "description": "Allows Stata code to be run directly from the IDE. Enables AI agents to directly interact with Stata, powered by mcp-stata.",
+  "author": "Thomas Monk",
+  "publisher": "tmonk",
+  "license": "AGPL-3.0-or-later",
+  "homepage": "https://github.com/tmonk/stata-workbench",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tmonk/stata-workbench"
+  },
+  "bugs": {
+    "url": "https://github.com/tmonk/stata-workbench/issues"
+  },
+  "version": "1.1.1",
+  "engines": {
+    "vscode": "^1.75.0",
+    "node": ">=22.14.0"
+  },
+  "keywords": [
+    "stata",
+    "statistics",
+    "data science",
+    "mcp",
+    "ai"
+  ],
+  "categories": [
+    "Programming Languages",
+    "Data Science",
+    "Machine Learning",
+    "Other"
+  ],
+  "sponsor": {
+    "url": "https://github.com/sponsors/tmonk"
+  },
+  "icon": "img/icon.png",
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "stata-workbench.runSelection",
+        "title": "Stata: Run Selection/Current Line",
+        "icon": "$(play)"
+      },
+      {
+        "command": "stata-workbench.runFile",
+        "title": "Stata: Run Current File",
+        "icon": "$(run-all)"
+      },
+      {
+        "command": "stata-workbench.testMcpServer",
+        "title": "Stata: Test MCP Server Connection"
+      },
+      {
+        "command": "stata-workbench.viewData",
+        "title": "Stata: View Data",
+        "icon": "$(table)"
+      },
+      {
+        "command": "stata-workbench.installMcpCli",
+        "title": "Stata: Install MCP CLI",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "stata-workbench.cancelRequest",
+        "title": "Stata: Cancel Current Request",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "stata-workbench.openTerminal",
+        "title": "Stata: Open Interactive Terminal",
+        "icon": "$(terminal)"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "when": "resourceExtname == .do || resourceExtname == .ado || resourceExtname == .mata || editorLangId == stata",
+          "command": "stata-workbench.runSelection",
+          "group": "navigation@1"
+        },
+        {
+          "when": "resourceExtname == .do || resourceExtname == .ado || resourceExtname == .mata || editorLangId == stata",
+          "command": "stata-workbench.runFile",
+          "group": "navigation@2"
+        }
+      ],
+      "editor/context": [
+        {
+          "when": "resourceExtname == .do || resourceExtname == .ado || resourceExtname == .mata || editorLangId == stata",
+          "command": "stata-workbench.runSelection",
+          "group": "1_stata"
+        },
+        {
+          "when": "resourceExtname == .do || resourceExtname == .ado || resourceExtname == .mata || editorLangId == stata",
+          "command": "stata-workbench.runFile",
+          "group": "1_stata"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "stata-workbench.runSelection",
+        "key": "ctrl+shift+enter",
+        "mac": "cmd+shift+enter",
+        "when": "editorTextFocus && (editorLangId == stata || resourceExtname == .do || resourceExtname == .ado || resourceExtname == .mata)"
+      },
+      {
+        "command": "stata-workbench.runFile",
+        "key": "ctrl+shift+d",
+        "mac": "cmd+shift+d",
+        "when": "editorTextFocus && (editorLangId == stata || resourceExtname == .do || resourceExtname == .ado || resourceExtname == .mata)"
+      },
+      {
+        "command": "stata-workbench.openTerminal",
+        "key": "ctrl+shift+c",
+        "mac": "cmd+shift+c"
+      }
+    ],
+    "configuration": {
+      "title": "Stata Workbench",
+      "properties": {
+        "stataMcp.requestTimeoutMs": {
+          "type": "number",
+          "default": 100000,
+          "description": "Timeout (ms) for Stata metadata/UI requests (e.g., getting variable lists). To enable timeout for long-running execution commands (Run File, Run Selection), use stataMcp.enableExecuteTimeout."
+        },
+        "stataMcp.enableExecuteTimeout": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable timeout for Stata execution commands (Run File, Run Selection). If disabled, these commands will run indefinitely unless manually cancelled."
+        },
+        "stataMcp.loadStataOnStartup": {
+          "type": "boolean",
+          "default": true,
+          "description": "Load Stata automatically when VS Code starts. This makes the first run faster but consumes memory immediately."
+        },
+        "stataMcp.autoRevealOutput": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically show the Stata output channel after runs."
+        },
+        "stataMcp.showAllLogsInOutput": {
+          "type": "boolean",
+          "default": false,
+          "description": "Stream all raw mcp-stata logs to the Stata Workbench Output channel."
+        },
+        "stataMcp.logStataCode": {
+          "type": "boolean",
+          "default": false,
+          "description": "Log the Stata code sent to the server in the Output channel (useful for debugging agentic commands)."
+        },
+        "stataMcp.autoConfigureMcp": {
+          "type": "boolean",
+          "default": true,
+          "description": "On extension load and when toggled: add/update mcp-stata in host MCP config (mcp.json). When disabled: remove mcp-stata from host config."
+        },
+        "stataMcp.configureClaudeCode": {
+          "type": "boolean",
+          "default": false,
+          "description": "On load and when toggled: register mcp-stata via 'claude mcp add-json' (CLI). Ensures both Claude Code CLI and VS Code extension see the server. When disabled: runs 'claude mcp remove mcp_stata'."
+        },
+        "stataMcp.configureCodex": {
+          "type": "boolean",
+          "default": false,
+          "description": "On load and when toggled: add/update mcp-stata in Codex config. When disabled: remove mcp_stata from the configured path."
+        },
+        "stataMcp.codexConfigPath": {
+          "type": "string",
+          "default": "~/.codex/config.toml",
+          "description": "Path to Codex MCP config file. Supports ~ for home and ${workspaceFolder} for project root."
+        },
+        "stataMcp.runFileWorkingDirectory": {
+          "type": "string",
+          "default": "",
+          "description": "Working directory when running .do files. Supports an absolute path, ~, ${workspaceFolder} or ${fileDir}; empty uses the .do file's folder."
+        },
+        "stataMcp.stataPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to your Stata installation. Can be a directory (e.g. /Applications/Stata/StataMP.app) or the full path to the Stata binary. Leave empty to use auto-discovery. Maps to the STATA_PATH environment variable for mcp-stata."
+        },
+        "stataMcp.setupTimeoutSeconds": {
+          "type": "number",
+          "default": 60,
+          "description": "Timeout (seconds) for Stata initialization (stata_setup.config preflight). Passed to STATA_SETUP_TIMEOUT for mcp-stata."
+        },
+        "stataMcp.noReloadOnClear": {
+          "type": "boolean",
+          "default": false,
+          "description": "Disable reloading startup/profile do files after clear all/program drop. Maps to MCP_STATA_NO_RELOAD_ON_CLEAR."
+        },
+        "stataMcp.maxOutputLines": {
+          "type": "number",
+          "default": 0,
+          "description": "Maximum lines of output to return from Stata commands (0 = unlimited). Useful for limiting token usage with verbose commands like regress or codebook."
+        },
+        "stataMcp.runFileBehavior": {
+          "type": "string",
+          "enum": [
+            "runDirtyFile",
+            "runDiskFile"
+          ],
+          "default": "runDirtyFile",
+          "description": "Choose whether 'Run File' should run the current editor content (including unsaved changes) or the version saved on disk."
+        },
+        "stataMcp.defaultVariableLimit": {
+          "type": "number",
+          "default": 100,
+          "description": "Default number of variables to select when opening the Data Browser (0 = all). Useful for huge datasets with thousands of variables."
+        },
+        "stata-workbench.telemetry.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable Sentry telemetry to help improve Stata Workbench. No personal data or Stata content is collected."
+        }
+      }
+    },
+    "languages": [
+      {
+        "id": "stata",
+        "extensions": [
+          ".do",
+          ".ado",
+          ".doh",
+          ".mata"
+        ],
+        "aliases": [
+          "Stata",
+          "STATA",
+          "stata"
+        ],
+        "configuration": "./src/language_config.json"
+      },
+      {
+        "id": "stata-dyndoc-markdown",
+        "extensions": [
+          ".domd"
+        ],
+        "aliases": [
+          "Stata Dyndoc Markdown",
+          "Stata DOMD"
+        ]
+      },
+      {
+        "id": "stata-dyndoc-latex",
+        "extensions": [
+          ".dotex"
+        ],
+        "aliases": [
+          "Stata Dyndoc LaTeX",
+          "Stata DOTEX"
+        ]
+      }
+    ],
+    "grammars": [
+      {
+        "language": "stata",
+        "scopeName": "source.stata",
+        "path": "./src/grammars/stata.json"
+      },
+      {
+        "scopeName": "source.dyndoc.stata",
+        "path": "./src/grammars/stata-dyndoc.json"
+      },
+      {
+        "language": "stata-dyndoc-markdown",
+        "scopeName": "source.dyndoc.md.stata",
+        "path": "./src/grammars/stata-dyndoc-md.json"
+      },
+      {
+        "language": "stata-dyndoc-latex",
+        "scopeName": "source.dyndoc.latex.stata",
+        "path": "./src/grammars/stata-dyndoc-latex.json"
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "bun ./build/esbuild.js",
+    "bundle": "bun ./build/esbuild.js --production",
+    "watch": "bun ./build/esbuild.js --watch",
+    "test": "bun test --concurrent --preload ./test/bun-preload.js test/unit",
+    "test:mcp-config": "bun test --concurrent --preload ./test/bun-preload.js test/unit --testPathPattern='mcp-config|extension.test'",
+    "test:full": "bun test --concurrent --preload ./test/bun-preload.js test/unit && bun run test:integration:parallel",
+    "pretest:integration": "bun run compile",
+    "test:integration": "bun -e \"process.env.MCP_STATA_INTEGRATION='1'; require('./test/integration/runTest');\"",
+    "test:integration:parallel": "TEST_SHARD_TOTAL=4 bun -e \"process.env.MCP_STATA_INTEGRATION='1'; require('./test/integration/runTest');\"",
+    "lint:commits": "commitlint --from HEAD~20 --to HEAD",
+    "vscode:prepublish": "node -e \"const t=process.env.npm_config_target || process.env.BUILD_TARGET; const s=process.env.SENTRY_UPLOAD; require('child_process').execSync('bun run bundle' + (t ? ' -- --target=' + t : ''), {stdio:'inherit', env: {...process.env, SENTRY_UPLOAD: s}});\"",
+    "package": "bun run bundle && node ./scripts/verify-build.js && bunx vsce package",
+    "package:target": "BUILD_TARGET=$npm_config_target bunx vsce package --target $npm_config_target",
+    "package:dist": "bun run bundle && node ./scripts/verify-build.js && bun -e \"require('fs').mkdirSync('dist',{recursive:true});\" && bunx vsce package --out dist/stata-workbench-$(bun -e \"console.log(require('./package.json').version)\").vsix",
+    "package:local": "SENTRY_UPLOAD=false bun run bundle && SENTRY_UPLOAD=false node ./scripts/verify-build.js && bun -e \"require('fs').mkdirSync('dist',{recursive:true});\" && SENTRY_UPLOAD=false bunx vsce package --out dist/stata-workbench-$(bun -e \"console.log(require('./package.json').version)\")-local.vsix",
+    "package:zip": "bun pack",
+    "publish:ovsx": "bun run bundle && bunx ovsx publish -p $OVSX_TOKEN",
+    "release": "semantic-release",
+    "prepare": "husky"
+  },
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "MCP services require a trusted workspace."
+    }
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.24.3",
+    "@sentry/browser": "^10.35.0",
+    "@sentry/node": "^10.35.0",
+    "@vscode/codicons": "^0.0.44",
+    "apache-arrow": "^21.1.0"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^20.2.0",
+    "@commitlint/config-conventional": "^20.2.0",
+    "@semantic-release/changelog": "^6.0.3",
+    "@semantic-release/commit-analyzer": "^13.0.1",
+    "@semantic-release/exec": "^7.1.0",
+    "@semantic-release/git": "^10.0.1",
+    "@semantic-release/github": "^12.0.2",
+    "@semantic-release/npm": "^13.1.3",
+    "@semantic-release/release-notes-generator": "^14.1.0",
+    "@sentry/esbuild-plugin": "^4.7.0",
+    "@types/jest": "^30.0.0",
+    "@vscode/test-electron": "^2.4.0",
+    "@vscode/vsce": "^3.7.1",
+    "chai": "^6.2.1",
+    "esbuild": "^0.27.1",
+    "husky": "^9.1.7",
+    "jest": "^30.2.0",
+    "jest-environment-jsdom": "^30.2.0",
+    "jsdom": "^24.0.0",
+    "mocha": "^11.7.5",
+    "ovsx": "^0.8.4",
+    "proxyquire": "^2.1.3",
+    "semantic-release": "^25.0.2",
+    "semantic-release-vsce": "^6.0.20",
+    "sinon": "^21.0.0"
+  }
+}

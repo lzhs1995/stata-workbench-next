@@ -1,0 +1,118 @@
+{
+  "schema": "upstream-source/1",
+  "repository": "https://github.com/tmonk/stata-workbench",
+  "commit": "d36f7be03711fe47eb5c7cecc0048f0fa49ab825",
+  "version": "1.1.1",
+  "license": "AGPL-3.0-or-later",
+  "role": "fixed reference source for migration; correspondence to maintained bundle not certified",
+  "files": {
+    "LICENSE": {
+      "bytes": 34522,
+      "sha256": "4df3c306dddaaf4baffdff5ca820cc679ac8cd6dc263c6a74517783e42fa7a3b"
+    },
+    "build/esbuild.js": {
+      "bytes": 3117,
+      "sha256": "014785588a960fc1f89862c64c1adb5ec77796d6b67d3285407b7c4892cbd896"
+    },
+    "bun.lock": {
+      "bytes": 270106,
+      "sha256": "372621236e544c294f77055699f1753ba918f0af6d0718daaa8b657ae3ad28bd"
+    },
+    "package.json": {
+      "bytes": 13290,
+      "sha256": "7d9915e22b78e8e828daa92c0b9f0e36b8458083d1371a7a570bb0e3cf75bfdf"
+    },
+    "src/artifact-utils.js": {
+      "bytes": 2954,
+      "sha256": "525c3b51b877649ccd90adde0feeb26a2fbaab55662c2c41c95f82e11537c712"
+    },
+    "src/data-browser-panel.js": {
+      "bytes": 17188,
+      "sha256": "7986a18ebf9e1ee76e40fe6541658a6bbe6380d59c9fb10d1ad9e1d77c6c1ed8"
+    },
+    "src/extension.js": {
+      "bytes": 73871,
+      "sha256": "5beca34dea2574a73dbe3c19b5277e2702bb19e3b4d77477ae1e1601fbdf1f72"
+    },
+    "src/fs-utils.js": {
+      "bytes": 2434,
+      "sha256": "d42d0262563202d7f1aa7fee6f73614ca4ad8ba6beb69917cf5b9d10c9512400"
+    },
+    "src/grammars/stata-dyndoc-latex.json": {
+      "bytes": 277,
+      "sha256": "48f86652b7edb7ba80c95b3de5237b64b1d02ab75ea862381a79cfef2d289955"
+    },
+    "src/grammars/stata-dyndoc-md.json": {
+      "bytes": 813,
+      "sha256": "9237b6dc753c9196c58c0d0859f8d357bff81ab339b921b9568e5acbea28cac3"
+    },
+    "src/grammars/stata-dyndoc.json": {
+      "bytes": 6893,
+      "sha256": "78c51467b712ecc02b1fa0ae5b8093caae0ed81a286db168680a934e2b44b4d1"
+    },
+    "src/grammars/stata.json": {
+      "bytes": 133532,
+      "sha256": "99d2ba623bbaee2067c471af2189a6023a0ef5a380251ac76559f79b6aad1dd3"
+    },
+    "src/help-panel.js": {
+      "bytes": 10832,
+      "sha256": "eb7ba1b0e60b740e18862912ba2f45c6466d9104dedd462753f81d4b42283812"
+    },
+    "src/instrument.js": {
+      "bytes": 7916,
+      "sha256": "e929aef03adc3f415fcb5bbf80434063a8556acb13413a681dc128fbf630c08a"
+    },
+    "src/language_config.json": {
+      "bytes": 1925,
+      "sha256": "6954f7d5c0dbbd8ae3c639b03977e74c56bde3c3553ff5da14b69c94f390e198"
+    },
+    "src/log-utils.js": {
+      "bytes": 2735,
+      "sha256": "d0460d8b573eccc89d4870dab5027c4b16ff4fec1aed88c00629fd9549fb605c"
+    },
+    "src/mcp-client.js": {
+      "bytes": 119366,
+      "sha256": "a4f80587e4d4bd503485f20e6a3ded9e328ac855ebcfa96975d6d6feed497e81"
+    },
+    "src/runtime-context.js": {
+      "bytes": 2797,
+      "sha256": "f43369741b268a221758eb6e7740688d8025449a4784dbde8bc0ce7593e8ac1b"
+    },
+    "src/terminal-panel.js": {
+      "bytes": 121406,
+      "sha256": "d5a369d672cc68f3d15134e9a0940749cb9967016cb801a29d3e45a7a27eed40"
+    },
+    "src/ui-shared/autocomplete.js": {
+      "bytes": 9950,
+      "sha256": "261642bced67f4d86c487972d9fbac420c698a2ad060b8b954d8571fd0bd4474"
+    },
+    "src/ui-shared/data-browser.css": {
+      "bytes": 8891,
+      "sha256": "5c5d6e971bc17eb4e07514421d98a3a9acbcd1ef3d628552c6719f6d1ef6443e"
+    },
+    "src/ui-shared/data-browser.js": {
+      "bytes": 27081,
+      "sha256": "09dccfb95a5c6386cdba114cb3e91ae8516afb4fa6ef4e485ba08556f5cb9600"
+    },
+    "src/ui-shared/design.css": {
+      "bytes": 19231,
+      "sha256": "faf7e896cb592481e111f454729037b3b0951fbd1680efe708da2d2098510045"
+    },
+    "src/ui-shared/highlight.css": {
+      "bytes": 1315,
+      "sha256": "9f208d022102b1d0c7aebfecd8e42ca7997d5de636649d2b31ea63093d809019"
+    },
+    "src/ui-shared/highlight.min.js": {
+      "bytes": 54151,
+      "sha256": "051dd6922d6d91835153217064c3572b78586307f49e809d5f78ec9d019a3fcc"
+    },
+    "src/ui-shared/main.js": {
+      "bytes": 33400,
+      "sha256": "eb11a74ce0fd01905c20bf5f839b920cf230519ac6217bdc03068b331ae91cf4"
+    },
+    "src/ui-shared/mark.min.js": {
+      "bytes": 16917,
+      "sha256": "21d62e1053f7589fe6365cccd7c636d1781abf7879a605d8ce5f1f5b81a7b8fa"
+    }
+  }
+}

@@ -6,3 +6,6 @@ tests/** -text
 *.vsix binary
 # Python sources now travel with the cross-platform candidate and its receipts.
 tools/** -text
+
+# Preserve exact upstream input hashes on every checkout.
+upstream/** -text

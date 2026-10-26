@@ -50,3 +50,7 @@ mcp-stata-temp/**
 .env
 .env.*
 STATA.LIC
+
+# Reference source migration is not shipped as the maintained runtime.
+upstream/**
+out/**
