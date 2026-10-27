@@ -21,6 +21,12 @@ builder hashes, repeated-build equality and every output hash. This proves a
 build of the pinned reference. It does not prove correspondence with the local
 maintained bundle or preservation of the local execution/graph fixes.
 
+The dependency lock is checked out byte-for-byte on every platform. The first
+stage-1 Windows build produced the same 15 reference and 17 migration outputs
+as both Mac runners, but Git's CRLF conversion changed the raw lockfile hash.
+The checkout rule now preserves that input identity too; do not discard or
+normalize a mismatching hash in a saved build manifest.
+
 Migration proceeds in bounded steps:
 
 1. Map the maintained bridge, execution guard, finalizers, state patches and
