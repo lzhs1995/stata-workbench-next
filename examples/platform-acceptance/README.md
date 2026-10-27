@@ -1,5 +1,12 @@
 # Licensed desktop acceptance fixtures
 
+Windows operators can use the source-only `acceptance.py` tool: `prepare`,
+`open`, `run`, and `collect`. The [runbook](../../docs/WINDOWS_ACCEPTANCE.md)
+selects an exact successful CI revision and its VSIX before installation. The
+tool records each setup/dispatch outcome, refuses existing roots and repeated
+fixture submissions, and collects bounded logs/output with a matching ZIP hash
+manifest. It does not certify the licensed desktop from setup or collection.
+
 These seven synthetic programs cover one continuous Workbench session: editor
 Run File, Python client, editor selection, two queued clients, Stop, and cleanup.
 Use a fresh workspace and isolated profile with an empty `default` frame. Set
