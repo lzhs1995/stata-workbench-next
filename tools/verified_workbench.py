@@ -17,14 +17,14 @@ import urllib.error
 
 WORK = Path(__file__).resolve().parents[1]
 PROFILE = Path(os.environ.get("STATA_WORKBENCH_PROFILE", str(Path.home() / ".stata-workbench-shared"))).expanduser().resolve()
-EXTENSION = PROFILE / "extensions/lzhs1995.stata-workbench-shared-session-0.1.3-rc.7.44-dev.4"
+EXTENSION = PROFILE / "extensions/lzhs1995.stata-workbench-shared-session-0.1.3-rc.7.44-dev.5"
 try:
     PORT = int(os.environ.get("STATA_WORKBENCH_PORT", "17485"))
 except ValueError:
     PORT = 0  # Doctor can report the bad setting before any connection or launch.
 CODE_CLI = host.default_code()
-VERSION = "0.1.3-rc.7.44-dev.4"
-BUNDLE_SHA256 = "f26e06f9b42d650dff797f3ad44021d6826c02600bd94d41958fd40a5c653377"
+VERSION = "0.1.3-rc.7.44-dev.5"
+BUNDLE_SHA256 = "bf3e938134855456475754ceeca00600c9a295a4f1bd530b811f90377dfc23ca"
 PINS = {
     WORK / "dist/extension.js": BUNDLE_SHA256,
 }

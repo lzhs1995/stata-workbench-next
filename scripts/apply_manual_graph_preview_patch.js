@@ -34,6 +34,9 @@ function __codexOpenGraphPreview(message) {
 // The Terminal and graph providers are separate bundled module closures.
 // Export the callback explicitly; a same-scope VM test hid the missing route.
 const HELPER = LEGACY_HELPER + 'globalThis.__codexOpenGraphPreview = __codexOpenGraphPreview;\n\n';
+const CLEAR_BEFORE = "function clearAllOutput() {\n        // Clear the chat stream\n        if (chatStream) {\n            chatStream.innerHTML = '';\n        }";
+const CLEAR_AFTER = CLEAR_BEFORE.replace("            chatStream.innerHTML = '';",
+  "            chatStream.innerHTML = '';\n            // Retain the artifact container used by later runArtifact messages.\n            if (sessionArtifactsEl) chatStream.appendChild(sessionArtifactsEl);");
 
 function uniqueAt(source, needle) {
   const at = source.indexOf(needle);
@@ -64,6 +67,13 @@ function patchBundle(source, options = {}) {
     }
     source = source.replace(BEFORE, AFTER).replace(ANCHOR, HELPER + ANCHOR);
   }
+  // Restoring Terminal output calls clearAllOutput too. Its captured container
+  // must remain in the live DOM before the next graph batch arrives.
+  if (source.includes(CLEAR_AFTER)) uniqueAt(source, CLEAR_AFTER);
+  else {
+    uniqueAt(source, CLEAR_BEFORE);
+    source = source.replace(CLEAR_BEFORE, CLEAR_AFTER);
+  }
   return options.finalize === false ? source : fingerprint.finalize(source).text;
 }
 
@@ -75,4 +85,4 @@ if (require.main === module) {
   console.log(JSON.stringify({ changed: before !== after, target, installed: false }));
 }
 
-module.exports = { patchBundle, BEFORE, AFTER, HELPER, LEGACY_AFTER, LEGACY_HELPER, ANCHOR };
+module.exports = { patchBundle, BEFORE, AFTER, HELPER, LEGACY_AFTER, LEGACY_HELPER, ANCHOR, CLEAR_BEFORE, CLEAR_AFTER };

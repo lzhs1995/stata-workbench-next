@@ -8,7 +8,11 @@ const source = fs.readFileSync(path.join(__dirname, '../dist/extension.js'), 'ut
 const patch = require('./apply_manual_graph_preview_patch');
 const fingerprint = require('./finalize_bundle_identity');
 const crypto = require('node:crypto');
-const previous = fingerprint.finalize(source.replace(patch.HELPER, '').replace(patch.AFTER, patch.BEFORE)).text;
+const beforeContainerFix = fingerprint.finalize(source.replace(patch.CLEAR_AFTER, patch.CLEAR_BEFORE)).text;
+assert.equal(crypto.createHash('sha256').update(beforeContainerFix).digest('hex'),
+  'f26e06f9b42d650dff797f3ad44021d6826c02600bd94d41958fd40a5c653377', 'deployed dev.4 bundle is exact');
+assert.equal(patch.patchBundle(beforeContainerFix), source, 'upgrade the deployed Terminal restore path');
+const previous = fingerprint.finalize(beforeContainerFix.replace(patch.HELPER, '').replace(patch.AFTER, patch.BEFORE)).text;
 assert.equal(crypto.createHash('sha256').update(previous).digest('hex'),
   '5519c6f04a0ca6a46ea81d8f2e6e2c293a006b7d620214eec6bef7bfff63fbea', 'previous bundle fixture must be exact');
 assert.equal(patch.patchBundle(previous), source, 'maintenance replay must reproduce sealed bundle');
@@ -22,6 +26,7 @@ assert.throws(() => patch.patchBundle(previous.replace(patch.BEFORE, 'missingRou
 assert.throws(() => patch.patchBundle(previous + patch.BEFORE), /anchor/);
 assert.throws(() => patch.patchBundle(source.replace(patch.AFTER, patch.BEFORE)), /anchor|mixed/);
 assert.throws(() => patch.patchBundle(source.replace('manual-terminal-click', 'changed-click')), /modified/);
+assert.throws(() => patch.patchBundle(source.replace(patch.CLEAR_AFTER, 'unknownClear')), /anchor/);
 function extract(start, end) {
   const a = source.indexOf(start), b = source.indexOf(end, a + start.length);
   assert(a >= 0 && b > a, 'bundle segment not found: ' + start);
@@ -92,4 +97,41 @@ assert.deepEqual(calls.pag.at(-1), ['/runs/r8/missing.svg', undefined]); assert.
 assert.equal(context.__codexGraphState.graphs.length, 1, 'missing file not added');
 // 6. 全程未调用 Stata，也未写入 run 产物。
 assert.equal(calls.stata, 0); assert.equal(calls.appended.length, 0);
+
+// Restore/clear removed the captured artifact element from the real Terminal.
+// Exercise the production clear and render functions with DOM detach semantics;
+// retaining an off-screen object is not a visible artifact delivery.
+class Element {
+  constructor(root = false) { this.root = root; this.parentNode = null; this.children = []; this.html = ''; }
+  get isConnected() { return this.root || !!this.parentNode?.isConnected; }
+  set innerHTML(value) { this.html = value; for (const child of this.children) child.parentNode = null; this.children = []; }
+  get innerHTML() { return this.html; }
+  appendChild(child) { child.parentNode = this; this.children.push(child); return child; }
+  querySelectorAll() { return []; }
+}
+const clearFunction = extract('    function clearAllOutput() {', '\n    function ');
+const artifactFunctions = extract('    function renderSessionArtifacts() {', '    function removeSessionArtifact(');
+function restoration(withFix) {
+  const stream = new Element(true), artifacts = new Element();
+  stream.appendChild(artifacts);
+  const state = { chatStream: stream, sessionArtifactsEl: artifacts, runs: { old: {} },
+    sessionArtifacts: [], sessionArtifactKeys: new Set(), history: ['old'], historyIndex: 0,
+    updateLastCommand() {}, updateStatusIndicator() {}, scrollToBottom() {},
+    renderArtifacts: items => items.map(item => item.path).join(','), bindArtifactImageEvents() {}, console: { log() {} } };
+  vm.createContext(state);
+  vm.runInContext((withFix ? clearFunction : clearFunction.replace(patch.CLEAR_AFTER, patch.CLEAR_BEFORE)) + artifactFunctions, state);
+  for (let i = 0; i < 2; i++) {
+    state.clearAllOutput();
+    assert.equal(state.history.length, 0);
+    assert.equal(Object.keys(state.runs).length, 0);
+    assert.equal(state.sessionArtifacts.length, 0);
+    assert.equal(state.addSessionArtifact({ path: '/saved/graph-' + i + '.svg', label: 'saved' }), true);
+    state.renderSessionArtifacts();
+    assert.equal(artifacts.innerHTML, '/saved/graph-' + i + '.svg');
+    assert.equal(artifacts.isConnected, withFix, 'graph preview must be in the document after restore/clear');
+    assert.equal(stream.children.length, withFix ? 1 : 0, 'reuse exactly one artifact container');
+  }
+}
+restoration(false); // Exact old body reproduces the disconnected native result.
+restoration(true);
 console.log('MANUAL_GRAPH_PREVIEW_PASS: click opens Graphs without panel, relative+baseDir, non-graph/help/missing keep original, Stata calls 0');
