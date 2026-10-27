@@ -40,13 +40,14 @@ function verifySource() {
   return { ...manifest, manifestSha256: sha256(fs.readFileSync(manifestPath)) };
 }
 
-async function compile(manifest) {
+async function compile(manifest, options = {}) {
   // No upload plugins, network calls, environment-selected release or watch mode.
   // Build to memory so verification cannot overwrite either source tree.
   const common = {
     absWorkingDir: root, bundle: true, minify: true, write: false,
     sourcemap: false, legalComments: "eof", logLevel: "silent", metafile: true,
     define: { "process.env.SENTRY_RELEASE": JSON.stringify("reference-" + manifest.commit) },
+    plugins: options.plugins || [],
   };
   const builds = await Promise.all([
     esbuild.build({ ...common,
@@ -72,6 +73,16 @@ async function compile(manifest) {
     }
     for (const input of Object.keys(build.metafile.inputs)) {
       assert(!input.startsWith("dist/"), "Reference build must not consume maintained dist");
+    }
+  }
+  if (options.contractEntry) {
+    const contract = await esbuild.build({ ...common, entryPoints: [options.contractEntry],
+      format: "cjs", platform: "node", target: "node22", external: ["vscode"],
+      outfile: "out/reference-source/terminal-contract.cjs" });
+    assert.equal(contract.outputFiles.length, 1);
+    outputs.set("terminal-contract.cjs", Buffer.from(contract.outputFiles[0].contents));
+    for (const input of Object.keys(contract.metafile.inputs)) {
+      assert(!input.startsWith("dist/"), "Contract build must not consume maintained dist");
     }
   }
   // Assets used by the original source, kept byte-for-byte. This is not a VSIX.
@@ -117,4 +128,7 @@ async function main() {
   console.log(JSON.stringify({ ...result, outputs: Object.keys(result.outputs), manifest: "out/reference-source/BUILD-MANIFEST.json" }));
 }
 
-main().catch(error => { console.error(error.message); process.exitCode = 1; });
+if (require.main === module) {
+  main().catch(error => { console.error(error.message); process.exitCode = 1; });
+}
+module.exports = { verifySource, snapshot, compile, describe, sha256, fingerprint };

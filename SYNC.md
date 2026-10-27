@@ -18,6 +18,7 @@ The evidence below separates versions and does not certify both desktops.
 | Cancellation | Existing lifecycle and restore logic | dev.3 soft Stop, task/transport drain and scoped restoration passed on same backend | Offline checks passed | Original HTTP 500 cancellation retained; no hard reset |
 | Build / package / audit | Versioned maintained bundle | ARM and Intel CI passed | x64 CI passed | 193 JS commands; 52 Python tests (3 Windows-only skips on Mac); 90 source/VSIX identity checks |
 | Reference source build | Separate migration in PR #9 | Repeated builds passed, ARM/Intel output matches | Same 15 outputs in CI | 27 pinned upstream files; feature parity with maintained runtime remains unproved |
+| Source migration stage 1 | Readable preview module and upstream Terminal source integration | Compiled-handler/HTML regression with failing upstream control | Same build/regression in source CI | Preview callback and container retention only; bridge/state/native parity remains pending |
 | Windows operator kit | Source-only `acceptance.py` | Portable setup/receipt/archive regressions | Private installation, one-shot fixture dispatch and bounded evidence ZIP | Windows CLI case runs in the OS matrix; licensed desktop remains operator-dependent |
 
 Three-platform dev.5 CI:

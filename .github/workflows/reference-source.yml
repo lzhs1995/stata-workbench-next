@@ -24,8 +24,12 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm audit
       - run: npm run build:reference
+      - run: npm run test:source-migration
       - uses: actions/upload-artifact@v4
         with:
           name: reference-source-${{ matrix.os }}-${{ github.sha }}
-          path: out/reference-source/BUILD-MANIFEST.json
+          path: |
+            out/reference-source/BUILD-MANIFEST.json
+            out/migrated-source/BUILD-MANIFEST.json
+            out/migrated-source/BEHAVIOR-RESULT.json
           retention-days: 7
