@@ -26,3 +26,10 @@ The old private VSIX is not public because it contained a local helper token.
 The public revision has a separate tag/hash. npm audit covers the developer
 lockfile, not all embedded upstream libraries; zero production npm dependencies
 is not a complete runtime security audit.
+
+The 2026-10-27 cross-platform candidates are tracked in [SYNC](../SYNC.md).
+PR #9 now supplies a separately verified reference source build; it has not
+established parity with the maintained bundle. dev.5 has bounded native Mac
+preview acceptance and three-platform CI, with Windows licensed desktop checks
+still required by the [operator runbook](WINDOWS_ACCEPTANCE.md). Keep these draft
+PRs separate from a public release/tag and from the working research install.

@@ -78,3 +78,28 @@ AGPL-3.0-or-later attribution and record the exact recovered source revision.
 Candidate VSIXs and CI reports are review artifacts. A public release requires
 licensed acceptance and release-specific scope notes; Windows CI alone does not
 certify the Windows desktop or a Stata edition.
+
+## Current implementation and next operator session
+
+The dev.5 matrix passed on all three runners. Native Mac checks and their exact
+version boundaries are in [SYNC](../SYNC.md) and the [acceptance scope](ACCEPTANCE.md).
+The [Windows runbook](WINDOWS_ACCEPTANCE.md) supplies a private installation and
+seven synthetic programs for the remaining licensed hardware checks.
+
+Native testing found two integration defects that isolated tests had missed:
+Terminal and Graphs providers lived in sibling bundle closures, and restoring
+output detached the artifact element still referenced by later messages. The
+deterministic patch now exports the callback explicitly and preserves the
+container. Regressions retain the actual module boundary and the disconnected
+DOM negative control. dev.5 also passed the actual reloaded Mac UI route.
+
+Windows tests exposed a real DOCX replacement error: the input ZIP must be
+closed before `os.replace`. Binary fixture bytes, LF/CRLF streams, native VSCE
+entry invocation, and Windows filename/error semantics are checked separately.
+Keep those platform differences in adapters and tests, while sharing the
+execution contract and webview code.
+
+The source recovery in [PR #9](https://github.com/lzhs1995/stata-workbench-shared-session/pull/9)
+has matching 15-output reference builds across local Mac, Mac ARM/Intel CI and
+Windows. Its next milestone is behavior-by-behavior feature mapping and parity,
+not replacement of the maintained bundle solely because compilation passed.
