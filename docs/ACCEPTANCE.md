@@ -65,3 +65,42 @@ automatic-batch regression; it does not establish native panel rendering. Prior
 PNG/GPH evidence belongs to the earlier private runtime. Final loaded-runtime,
 native UI and full licensed acceptance remain pending; no public release or
 research-instance upgrade is established by these source changes.
+
+## Cross-platform candidates, 2026-10-27
+
+The later candidates have bounded native evidence; the earlier FULL45 result is
+not inherited as a new full-suite certification. The public projection is
+[cross-platform-acceptance-20261027.json](../release/cross-platform-acceptance-20261027.json).
+
+- dev.3 on a licensed private Mac: actual Run File generated 6-row/4-variable
+  CSV/DTA, native GPH save/reload, and two fully decoded equal 800×480 PNGs through
+  SVG+sips. Data Browser displayed 6×4. Run File → installed Python client → Run
+  Selection shared scalar state 40 → 42. Two clients dispatched once each in
+  order. Soft Stop drained the original task and transport and restored the
+  declared state on the same backend; its original HTTP 500 remains recorded.
+  Cleanup verified the empty original frame and removed only private objects.
+- dev.3 graph **Open** incorrectly used the default file viewer: the test had
+  flattened sibling module scopes. dev.4 explicitly exported the callback.
+  Subsequent native reload testing found a detached artifact DOM container;
+  exported files and render counters existed while no thumbnail was visible.
+  dev.5 preserves that container through clear/restore. Both failures remain.
+- dev.5 reused the saved GPH and passed the real Terminal thumbnail → modal
+  **Open** → Stata Graphs route after reload. The image loaded visibly and all
+  ten route/identity/no-execution checks passed. The source and execution copies
+  are archived separately. dev.5 did not rerun the dev.3 full shared-state suite.
+- dev.5 source/package checks: 193 JS commands, 52 Python tests (3 Windows-only
+  skips on Mac), 90 runtime identity checks, and successful Mac ARM, Mac Intel
+  and Windows Server CI. Package resources and actual installed/loaded runtime
+  identity were checked separately. These counts are different test units.
+
+Limits: author source was observed beside Terminal while a request was active;
+the compatibility-transformed executed bytes were separately archived, so exact
+displayed/executed equality is not certified. The dev.4 saved-graph observation
+was after completion with older source on the left; it is not a live visibility
+pass. New files can follow the focused Terminal group until arranged explicitly.
+`graph use` alone is not currently recognized as a graph-producing command by
+the artifact scanner. A top-level Code window count is not code/Terminal proof.
+
+Windows licensed execution/desktop acceptance, consent and lock/unlock behavior,
+new FULL45 coverage, native Mac bitmap recovery, and source-built feature parity
+remain pending. The research instance and scientific acceptance are unchanged.

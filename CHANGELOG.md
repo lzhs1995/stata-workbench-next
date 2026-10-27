@@ -25,6 +25,19 @@ Preserves the Mac-accepted runtime; removes local maintenance credentials, adds 
 
 # Changelog
 
+## 0.1.3-rc.7.44-dev.5 — cross-platform candidate
+
+- Share the Python receipt/client contract across Mac and Windows; native process,
+  window and stable-lock adapters retain exact profile ownership. PowerShell
+  wrappers delegate to the single-POST client and reject automatic reset/retry.
+- Add Mac ARM, Mac Intel and Windows CI, including real Windows locks, CIM/TCP,
+  argv and PowerShell tests; fix DOCX ZIP replacement while its input was open.
+- Export the explicit Terminal → Graphs callback across bundle module scopes;
+  retain the artifact container after output clear/restore. Native Mac failures
+  and their regression controls are preserved; dev.5 passed the reloaded UI route.
+- Provide a Windows physical-machine runbook and seven synthetic session fixtures.
+  Evidence and remaining limits are in SYNC.md; no new universal/FULL45 acceptance.
+
 ## Unreleased
 
 - Prepared `0.1.3-rc.7.39` with the rc.7.38 Stop/checkpoint repair using a Stata-safe 21-character local macro name and a generator-level regression gate that rejects every emitted `__codex_*` identifier longer than Stata's observed 31-character limit.
