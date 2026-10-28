@@ -20,6 +20,7 @@ The evidence below separates versions and does not certify both desktops.
 | Reference source build | Separate migration in PR #9 | Repeated builds passed, ARM/Intel output matches | Same 15 outputs in CI | 27 pinned upstream files; feature parity with maintained runtime remains unproved |
 | Source migration stage 1 | Readable preview module and upstream Terminal source integration | Compiled-handler/HTML regression with failing upstream control | Same build/regression in source CI | Preview callback and container retention only; bridge/state/native parity remains pending |
 | Windows operator kit | Source-only `acceptance.py` | Portable setup/receipt/archive regressions | Private installation, one-shot fixture dispatch and bounded evidence ZIP | Windows CLI case runs in the OS matrix; licensed desktop remains operator-dependent |
+| VS Code launcher resolution | `workbench_platform.code_launch_command` | App CLI launches directly | `Code.exe` and user-local `code.cmd`/`.bat` shims resolve to an existing `Code.exe` and launch without a shell | Python portability tests pass; Windows physical launch still pending disk/Stata/profile prerequisites |
 | UU terminal control | `uuyc-cli` + remote PowerShell | CLI 1.0.0, online Windows device, terminal marker and read-only baseline verified on 2026-10-28 | Windows-side baseline JSON written without GUI clicks | C: free space 4.34 GB; Stata, private profile and Workbench extension absent, so setup/launch is deferred |
 
 Three-platform dev.5/operator-kit CI, commit `66faf389a6da36c11e7b85fc2e9458eb7419d488`:
