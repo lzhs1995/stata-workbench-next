@@ -198,7 +198,7 @@
     "test:terminal-memory": "node scripts/test_terminal_memory_bounds.js",
     "build:reference": "node scripts/build_reference_source.js",
     "build:migrated": "node scripts/build_migrated_source.js",
-    "test:source-migration": "npm run build:migrated && node tests/source/test-terminal-preview.js && node tests/source/test-platform-command.js && node tests/source/test-execution-lifecycle.js && node scripts/test_manual_graph_preview.js"
+    "test:source-migration": "npm run build:migrated && node tests/source/test-terminal-preview.js && node tests/source/test-platform-command.js && node tests/source/test-execution-lifecycle.js && node tests/source/test-bridge-http.js && node scripts/test_manual_graph_preview.js"
   },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "1.32.2",

@@ -46,9 +46,9 @@ Until those steps pass, `dist/extension.js` remains the maintained runtime.
 ## Stage 1: Terminal preview and restoration
 
 `npm run test:source-migration` builds a separate candidate from the pinned
-upstream source plus readable source changes, tests its compiled Terminal and
-execution lifecycle boundary, and runs the maintained bundle's existing
-preview/replay regression. Outputs stay
+upstream source plus readable source changes, tests its compiled Terminal,
+execution lifecycle and localhost bridge boundary, and runs the maintained
+bundle's existing preview/replay regression. Outputs stay
 under `out/migrated-source/`; they are excluded from the VSIX. The maintained
 runtime version, entry point and installed research profile remain unchanged.
 
@@ -86,7 +86,7 @@ The original byte-equality replay checks remain in `npm run check`.
 | Maintained component | Source destination / upstream location | Current state |
 | --- | --- | --- |
 | `apply_manual_graph_preview_patch.js`: explicit image click and container retention | `src/shared-session/manual-graph-preview.js`; source edits to `src/terminal-panel.js` and `src/extension.js` | Stage 1 compiled Terminal regression; native source-built Graphs still pending |
-| `apply_rc7_shared_execution_patch.js`, `execution_guard.js`, `execution_lifecycle_core.js` | `src/shared-session/execution-lifecycle.js`, wired to source `extension.js` selection and `.do`-file paths | Stage 2 source lifecycle boundary publishes run ownership and terminal release; `/status`, dispatch admission and bridge HTTP ownership remain pending |
+| `apply_rc7_shared_execution_patch.js`, `execution_guard.js`, `execution_lifecycle_core.js` | `src/shared-session/execution-lifecycle.js` and `src/shared-session/bridge-http.js`, wired to source `extension.js` selection and `.do`-file paths | Stage 3 source boundary exposes localhost `/status` and `/run-command` with run ownership and terminal release; checkpoint/finalizer/output parity remains pending |
 | `runfile_finalizer_core.js`, `data_browser_execution_gate.js`, `stop_checkpoint_core.js` | Upstream run-file finalizer, data-browser dispatch and lifecycle integration | Not migrated; preserve cleanup, checkpoint ownership and cancellation semantics before adoption |
 | `bridge_rebind_core.js` and request/prerun bridge patches | Upstream MCP status/transport callbacks plus shared-session bridge | Not migrated; original request identity and unknown outcomes require behavioral parity |
 | `apply_terminal_memory_patch.js` and maintained Terminal history/log helpers | Upstream Terminal streaming log/history and webview restoration | Only artifact-container fix migrated; output bounds/history/log fairness remain pending |
@@ -95,8 +95,8 @@ The original byte-equality replay checks remain in `npm run check`.
 | Windows MCP command probing | `src/shared-session/platform-process.js`; source edit to upstream `mcp-client.js` | Source migration now keeps real `uv/uvx(.exe)` probes shell-free and permits a shell only for an explicit `.cmd`/`.bat` shim; the maintained bundle and live Windows acceptance remain unchanged |
 | Python shared client, native adapters and PowerShell wrappers | Existing `tools/` and `scripts/invoke_stata_visible*.ps1` | Already readable/shared across platforms; no source-entry migration is needed for these files |
 
-The next source step is bridge HTTP route integration against the lifecycle,
-followed by checkpoint/finalizer and Terminal output behavior. Complete package identity,
+The next source step is checkpoint/finalizer and Terminal output behavior.
+Complete package identity,
 Mac FULL45 and Windows licensed desktop acceptance are required before changing
 the running entry point. Stage 1 is useful migration progress, not full feature
 parity or a release candidate to install.

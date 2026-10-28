@@ -12,6 +12,8 @@ const transformedExtension = migration.transform("extension.js", extensionSource
 for (const marker of ["sourceLifecycle.begin", "sourceLifecycle.started", "sourceLifecycle.finish", "sourceLifecycle.fail"]) {
   assert.equal(transformedExtension.split(marker).length - 1, 2, marker + " must cover selection and file paths");
 }
+assert.equal(transformedExtension.split("sourceBridge.start(").length - 1, 1);
+assert.equal(transformedExtension.split("await sourceBridge.close()").length - 1, 1);
 
 let clock = 0;
 const published = [];

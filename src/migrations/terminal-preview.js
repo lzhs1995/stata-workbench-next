@@ -13,11 +13,21 @@ const MCP_PROBE_BEFORE = "spawnSync(finalCommand, ['--version'], { encoding: 'ut
 const MCP_PROBE_AFTER = "spawnSync(finalCommand, ['--version'], commandProbeOptions(finalCommand));";
 
 const LIFECYCLE_REQUIRE = "const { createExecutionLifecycle } = require('shared-session/execution-lifecycle');\n";
+const BRIDGE_REQUIRE = "const { createBridgeHttp } = require('shared-session/bridge-http');\n";
 const LIFECYCLE_INIT = "let globalContext = null;";
 const LIFECYCLE_INIT_AFTER = `let globalContext = null;
 const sourceLifecycle = createExecutionLifecycle({
   publish: snapshot => { try { globalThis.__codexSourceLifecycle = snapshot; } catch (_) {} },
 });`;
+const BRIDGE_INIT_AFTER = `let globalContext = null;
+const sourceLifecycle = createExecutionLifecycle({
+  publish: snapshot => { try { globalThis.__codexSourceLifecycle = snapshot; } catch (_) {} },
+});
+const sourceBridge = createBridgeHttp({
+  lifecycle: sourceLifecycle,
+  runCommand: payload => terminalRunCommand(payload.code, { runId: payload.runId }),
+});
+try { globalThis.__codexSourceBridge = sourceBridge; } catch (_) {}`;
 const RUN_START = "const runId = TerminalPanel.startStreamingEntry(text, filePath, terminalRunCommand, variableListProvider, cancelRequest, cancelTask, downloadGraphAsPdf);";
 const RUN_START_AFTER = RUN_START + "\n            if (runId) sourceLifecycle.begin({ runId, requestId: runId, sourceMode: 'selection' });";
 const FILE_RUN_START = "const runId = TerminalPanel.startStreamingEntry(commandText, filePath, terminalRunCommand, variableListProvider, cancelRequest, cancelTask, downloadGraphAsPdf);";
@@ -28,6 +38,13 @@ const FINISH = "TerminalPanel.finishStreamingEntry(runId, result);";
 const FINISH_AFTER = "sourceLifecycle.finish(runId, result);\n                    " + FINISH;
 const FAIL = "TerminalPanel.failStreamingEntry(runId, error?.message || String(error));";
 const FAIL_AFTER = "sourceLifecycle.fail(runId, error);\n                    " + FAIL;
+const BRIDGE_START = "    outputChannel = vscode.window.createOutputChannel('Stata Workbench');";
+const BRIDGE_START_AFTER = BRIDGE_START + `
+    sourceBridge.start(Number(settings.get('visibleBridgePort', 17485))).then(snapshot => {
+        try { globalThis.__codexSourceBridgeStatus = snapshot; } catch (_) {}
+    }).catch(error => appendLine('[Source bridge] ' + String(error?.message || error)));`;
+const BRIDGE_CLOSE = "async function deactivate() {";
+const BRIDGE_CLOSE_AFTER = BRIDGE_CLOSE + "\n    await sourceBridge.close();";
 
 const CLEAR_BEFORE = "            chatStream.innerHTML = '';";
 const CLEAR_AFTER = CLEAR_BEFORE + "\n            // Preserve the element retained by artifact rendering after restore.\n            if (sessionArtifactsEl) chatStream.appendChild(sessionArtifactsEl);";
@@ -53,16 +70,6 @@ function transform(name, source) {
     assert.equal(source.split(MCP_PROBE_BEFORE).length - 1, 2,
       "Source migration anchor changed: Windows MCP probe options");
     return source.split(MCP_PROBE_BEFORE).join(MCP_PROBE_AFTER);
-  }
-  if (name === "extension.js") {
-    source = LIFECYCLE_REQUIRE + source;
-    source = replace(source, LIFECYCLE_INIT, LIFECYCLE_INIT_AFTER);
-    source = replace(source, RUN_START, RUN_START_AFTER);
-    source = replace(source, FILE_RUN_START, FILE_RUN_START_AFTER);
-    source = replace(source, STARTED, STARTED_AFTER, 2);
-    source = replace(source, FINISH, FINISH_AFTER, 2);
-    source = replace(source, FAIL, FAIL_AFTER, 2);
-    return source;
   }
   if (name === "terminal-panel.js") {
     source = "const { routeTerminalArtifact } = require('shared-session/manual-graph-preview');\n" + source;
@@ -103,6 +110,15 @@ const openGraphPreview = createManualGraphPreview({
     const html = renderGraphHtml(graphDetails, graphPanel.webview, globalExtensionUri, nonce);`);
     source = replace(source, "const canPreview = preview && preview.toLowerCase().endsWith('.svg');", "const canPreview = preview && /\\.(svg|png|jpe?g|gif|webp)$/i.test(preview);");
     source = replace(source, 'src="file://${preview}"', 'src="${escapeHtml(webview.asWebviewUri(vscode.Uri.file(preview)).toString())}"');
+    source = BRIDGE_REQUIRE + LIFECYCLE_REQUIRE + source;
+    source = replace(source, LIFECYCLE_INIT, BRIDGE_INIT_AFTER);
+    source = replace(source, RUN_START, RUN_START_AFTER);
+    source = replace(source, FILE_RUN_START, FILE_RUN_START_AFTER);
+    source = replace(source, STARTED, STARTED_AFTER, 2);
+    source = replace(source, FINISH, FINISH_AFTER, 2);
+    source = replace(source, FAIL, FAIL_AFTER, 2);
+    source = replace(source, BRIDGE_START, BRIDGE_START_AFTER);
+    source = replace(source, BRIDGE_CLOSE, BRIDGE_CLOSE_AFTER);
     return source;
   }
   return source;
@@ -121,6 +137,9 @@ function plugin() {
       build.onResolve({ filter: /^shared-session\/execution-lifecycle$/ }, () => ({
         path: path.join(root, "src/shared-session/execution-lifecycle.js"),
       }));
+      build.onResolve({ filter: /^shared-session\/bridge-http$/ }, () => ({
+        path: path.join(root, "src/shared-session/bridge-http.js"),
+      }));
       build.onLoad({ filter: /[/\\](extension|terminal-panel|mcp-client)\.js$/ }, args => {
         if (path.dirname(args.path) !== upstream) return;
         return { contents: transform(path.basename(args.path), fs.readFileSync(args.path, "utf8")),
@@ -132,7 +151,7 @@ function plugin() {
 
 module.exports = {
   plugin, transform, replace, CLEAR_BEFORE, CLEAR_AFTER, ROUTE_BEFORE, ROUTE_AFTER,
-  MCP_PROBE_BEFORE, MCP_PROBE_AFTER, LIFECYCLE_REQUIRE, LIFECYCLE_INIT,
-  LIFECYCLE_INIT_AFTER, RUN_START, RUN_START_AFTER, FILE_RUN_START,
-  FILE_RUN_START_AFTER, STARTED, FINISH, FAIL,
+  MCP_PROBE_BEFORE, MCP_PROBE_AFTER, LIFECYCLE_REQUIRE, BRIDGE_REQUIRE, LIFECYCLE_INIT,
+  LIFECYCLE_INIT_AFTER, BRIDGE_INIT_AFTER, RUN_START, RUN_START_AFTER, FILE_RUN_START,
+  FILE_RUN_START_AFTER, STARTED, FINISH, FAIL, BRIDGE_START, BRIDGE_CLOSE,
 };

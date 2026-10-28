@@ -13,10 +13,10 @@ async function main() {
   const upstream = reference.verifySource();
   const maintained = reference.snapshot(path.join(root, "dist"));
   const sourceFiles = ["src/shared-session/manual-graph-preview.js", "src/shared-session/platform-process.js",
-    "src/shared-session/execution-lifecycle.js",
+    "src/shared-session/execution-lifecycle.js", "src/shared-session/bridge-http.js",
     "src/migrations/terminal-preview.js",
     "tests/source/terminal-preview-entry.js", "tests/source/test-terminal-preview.js",
-    "tests/source/test-platform-command.js", "tests/source/test-execution-lifecycle.js",
+    "tests/source/test-platform-command.js", "tests/source/test-execution-lifecycle.js", "tests/source/test-bridge-http.js",
     "scripts/build_migrated_source.js", "scripts/build_reference_source.js"];
   const sources = Object.fromEntries(sourceFiles.map(name => [name, reference.fingerprint(fs.readFileSync(path.join(root, name)))]));
   const options = { plugins: [migration.plugin()], contractEntry: "tests/source/terminal-preview-entry.js" };
@@ -38,9 +38,10 @@ async function main() {
     repeatedBuildIdentical: true, maintainedRuntimeUnchanged: true,
     migratedBehavior: ["explicit Terminal-to-Graphs callback", "saved-image preview policy", "artifact container after clear/restore",
       "Windows MCP command probes use shell-free real executables and explicit cmd/bat shim fallback",
-      "selection and .do-file execution publish source lifecycle state with run ownership and terminal release"],
+      "selection and .do-file execution publish source lifecycle state with run ownership and terminal release",
+      "source candidate exposes localhost /status and /run-command around the lifecycle"],
     outputs: reference.describe(first),
-    scope: "Source migration stage 2: Terminal preview, platform-process adapter, and execution lifecycle boundary; bridge HTTP routes, checkpoint/finalizer parity, and licensed/native acceptance remain pending; not the VSIX runtime",
+    scope: "Source migration stage 3: Terminal preview, platform-process adapter, execution lifecycle, and localhost bridge status/dispatch boundary; checkpoint/finalizer parity and licensed/native acceptance remain pending; not the VSIX runtime",
   };
   for (const [relative, data] of first) {
     const target = path.join(destination, relative);
