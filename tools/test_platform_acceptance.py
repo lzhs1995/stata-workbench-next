@@ -214,6 +214,36 @@ class OperatorKitTests(unittest.TestCase):
         self.assertEqual(install.kwargs["extra_env"], {"ELECTRON_RUN_AS_NODE": "1", "VSCODE_DEV": ""})
         self.assertNotIn("ELECTRON_RUN_AS_NODE", kit.load_state(self.root)["environment"])
 
+    def test_code_cli_follows_versioned_folder_named_by_launcher(self):
+        # VS Code 1.121 on the Windows test machine: resources live in a commit folder
+        # (f6cfa2ea24) named by bin\code.cmd, not beside Code.exe.
+        code = self.parent / "VS Code" / "Code.exe"
+        (code.parent / "bin").mkdir(parents=True)
+        code.write_bytes(b"test executable placeholder")
+        for folder in ("0ld0000000", "f6cfa2ea24"):
+            cli = code.parent / folder / "resources/app/out/cli.js"
+            cli.parent.mkdir(parents=True)
+            cli.write_bytes(b"test CLI placeholder")
+        # 两个版本目录并存且没有 launcher：拒绝猜测
+        self.assertIsNone(kit.code_cli_path(code))
+        (code.parent / "bin/code.cmd").write_text(
+            '@echo off\r\nset ELECTRON_RUN_AS_NODE=1\r\n'
+            '"%~dp0..\\Code.exe" "%~dp0..\\f6cfa2ea24\\resources\\app\\out\\cli.js" %*\r\n')
+        self.assertEqual(kit.code_cli_path(code), code.parent / "f6cfa2ea24/resources/app/out/cli.js")
+        with patch.object(kit.shutil, "which", return_value="uv.exe"), patch.object(kit, "run_logged") as run:
+            kit.prepare(self.root, self.vsix, sys.executable, code, port=free_port(), reserve_bytes=0)
+        install = next(c for c in run.call_args_list if c.args[1] == "vsix-install")
+        self.assertEqual(install.args[2][:2], [str(code), str(code.parent / "f6cfa2ea24/resources/app/out/cli.js")])
+
+    def test_missing_code_cli_is_refused_before_root_is_created(self):
+        code = self.parent / "VS Code" / "Code.exe"
+        code.parent.mkdir()
+        code.write_bytes(b"test executable placeholder")
+        with patch.object(kit.shutil, "which", return_value="uv.exe"):
+            with self.assertRaisesRegex(FileNotFoundError, "VS Code CLI missing"):
+                kit.prepare(self.root, self.vsix, sys.executable, code, port=free_port(), reserve_bytes=0)
+        self.assertFalse(self.root.exists())
+
     def test_collector_does_not_follow_external_links_or_invent_acceptance(self):
         state = self.configured()
         outside = self.parent / "outside"

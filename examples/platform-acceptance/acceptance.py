@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import socket
 import subprocess
@@ -61,6 +62,29 @@ def environment(root, port, code):
     }
 
 
+def code_cli_path(code):
+    """Return the cli.js that the installed VS Code launcher itself uses.
+
+    Older Windows builds keep resources beside Code.exe. Newer builds put them
+    in a commit-named folder (for example ``f6cfa2ea24/resources``) that
+    bin/code.cmd names; during an update two such folders can coexist, so the
+    launcher is the authority and an ambiguous folder scan is refused.
+    """
+    base = Path(code).parent
+    legacy = base / "resources" / "app" / "out" / "cli.js"
+    if legacy.is_file():
+        return legacy
+    launcher = base / "bin" / "code.cmd"
+    if launcher.is_file():
+        text = launcher.read_text(encoding="utf-8", errors="replace")
+        for folder in re.findall(r'%~dp0\.\.\\([^\\"]+)\\resources\\app\\out\\cli\.js', text):
+            candidate = base / folder / "resources" / "app" / "out" / "cli.js"
+            if candidate.is_file():
+                return candidate
+    found = [p for p in base.glob("*/resources/app/out/cli.js") if p.is_file()]
+    return found[0] if len(found) == 1 else None
+
+
 def prepare(root, vsix, stata, code, *, port=17497, configure_only=False,
             reserve_bytes=DEFAULT_RESERVE_BYTES):
     # All preflight checks precede creating the new root or launching a process.
@@ -97,9 +121,9 @@ def prepare(root, vsix, stata, code, *, port=17497, configure_only=False,
     uv = shutil.which("uv")
     if not configure_only and not uv:
         raise FileNotFoundError("Install uv before preparing the private Stata service")
-    code_cli = paths["code"].parent / "resources" / "app" / "out" / "cli.js"
-    if not configure_only and not code_cli.is_file():
-        raise FileNotFoundError("VS Code CLI missing beside the selected Code.exe: " + str(code_cli))
+    code_cli = code_cli_path(paths["code"])
+    if not configure_only and code_cli is None:
+        raise FileNotFoundError("VS Code CLI missing beside the selected Code.exe: " + str(paths["code"].parent))
     root.parent.mkdir(parents=True, exist_ok=True)
     root.mkdir()  # Atomic refusal if another process created the same root.
     profile = root / "profile"
