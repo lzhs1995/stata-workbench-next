@@ -93,6 +93,15 @@ class WindowsBindingTests(unittest.TestCase):
 
 
 class PortabilityTests(unittest.TestCase):
+    def test_windows_default_code_discovers_user_local_shim(self):
+        with tempfile.TemporaryDirectory(prefix="Windows profile ") as directory:
+            root = Path(directory)
+            shim = root / ".local" / "bin" / "code.cmd"
+            shim.parent.mkdir(parents=True)
+            shim.write_text("@echo off\n", encoding="utf-8")
+            env = {"USERPROFILE": str(root), "ProgramFiles": str(root / "Program Files"), "PATH": ""}
+            self.assertEqual(host.default_code("win32", env), str(shim))
+
     def test_windows_code_shim_resolves_without_shell(self):
         with tempfile.TemporaryDirectory(prefix="VS Code wrapper ") as directory:
             root = Path(directory)
