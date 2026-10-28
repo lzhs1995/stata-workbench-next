@@ -235,6 +235,14 @@ class OperatorKitTests(unittest.TestCase):
         install = next(c for c in run.call_args_list if c.args[1] == "vsix-install")
         self.assertEqual(install.args[2][:2], [str(code), str(code.parent / "f6cfa2ea24/resources/app/out/cli.js")])
 
+    def test_open_no_activate_is_forwarded_and_default_still_activates(self):
+        state = {"work": "C:\\run\\workspace"}
+        self.assertNotIn("--no-activate", kit.open_argv(state))
+        self.assertEqual(kit.open_argv(state, True)[-1], "--no-activate")
+        args = kit.build_parser().parse_args(["open", "--root", "C:\\run", "--no-activate"])
+        self.assertTrue(args.no_activate)
+        self.assertFalse(kit.build_parser().parse_args(["open", "--root", "C:\\run"]).no_activate)
+
     def test_missing_code_cli_is_refused_before_root_is_created(self):
         code = self.parent / "VS Code" / "Code.exe"
         code.parent.mkdir()

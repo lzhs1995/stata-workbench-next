@@ -320,7 +320,17 @@ def build_parser():
         child.add_argument("--root", type=Path, required=True)
         if command == "run":
             child.add_argument("--fixture", choices=AGENT_FILES, required=True)
+        if command == "open":
+            # Windows refuses SetForegroundWindow from a background controller (for
+            # example a remote terminal). Identity and the single-window check still apply.
+            child.add_argument("--no-activate", action="store_true",
+                               help="open or reuse the exact instance without bringing it to the foreground")
     return parser
+
+
+def open_argv(state, no_activate=False):
+    argv = [sys.executable, "-B", str(REPO / "tools/verified_workbench.py"), "--open", "--workspace", state["work"]]
+    return argv + ["--no-activate"] if no_activate else argv
 
 
 def main():
@@ -338,8 +348,8 @@ def main():
         elif args.command == "run":
             result = {"log": run_agent(state, args.fixture)}
         else:
-            result = {"log": run_logged(state, "open", [sys.executable, "-B", str(REPO / "tools/verified_workbench.py"),
-                        "--open", "--workspace", state["work"]]), "nativeAcceptance": "NOT_INFERRED"}
+            result = {"log": run_logged(state, "open", open_argv(state, args.no_activate)),
+                      "nativeAcceptance": "NOT_INFERRED"}
     print(json.dumps(result, indent=2))
 
 
