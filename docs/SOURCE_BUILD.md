@@ -87,7 +87,8 @@ The original byte-equality replay checks remain in `npm run check`.
 | --- | --- | --- |
 | `apply_manual_graph_preview_patch.js`: explicit image click and container retention | `src/shared-session/manual-graph-preview.js`; source edits to `src/terminal-panel.js` and `src/extension.js` | Stage 1 compiled Terminal regression; native source-built Graphs still pending |
 | `apply_rc7_shared_execution_patch.js`, `execution_guard.js`, `execution_lifecycle_core.js` | `src/shared-session/execution-lifecycle.js` and `src/shared-session/bridge-http.js`, wired to source `extension.js` selection and `.do`-file paths | Stage 3 source boundary exposes localhost `/status` and `/run-command` with run ownership and terminal release; checkpoint/finalizer/output parity remains pending |
-| `runfile_finalizer_core.js`, `data_browser_execution_gate.js`, `stop_checkpoint_core.js` | Upstream run-file finalizer, data-browser dispatch and lifecycle integration | Not migrated; preserve cleanup, checkpoint ownership and cancellation semantics before adoption |
+| `runfile_finalizer_core.js` and the finalizer return reader in `execution_lifecycle_core.js` | `src/shared-session/runfile-finalizer.js`; source edit to the upstream `runFile` call in `extension.js` | Stage 4: `.do` runs call a temporary product driver; one integer return record before one exact marker settles rc in both directions, and a missing or malformed record leaves completion unverified. No pre-run snapshot is saved yet |
+| `data_browser_execution_gate.js`, `stop_checkpoint_core.js`, pre-run snapshot and continuity cleanup | Upstream data-browser dispatch and lifecycle integration | Not migrated; preserve cleanup, checkpoint ownership and cancellation semantics before adoption |
 | `bridge_rebind_core.js` and request/prerun bridge patches | Upstream MCP status/transport callbacks plus shared-session bridge | Not migrated; original request identity and unknown outcomes require behavioral parity |
 | `apply_terminal_memory_patch.js` and maintained Terminal history/log helpers | Upstream Terminal streaming log/history and webview restoration | Only artifact-container fix migrated; output bounds/history/log fairness remain pending |
 | `stata_source_compat_core.js`, Darwin PNG/DOCX adapters, recursive DO scanner | Upstream source preparation with explicit platform adapters | Existing readable helpers retained; source-built execution integration remains pending |
@@ -95,7 +96,20 @@ The original byte-equality replay checks remain in `npm run check`.
 | Windows MCP command probing | `src/shared-session/platform-process.js`; source edit to upstream `mcp-client.js` | Source migration now keeps real `uv/uvx(.exe)` probes shell-free and permits a shell only for an explicit `.cmd`/`.bat` shim; the maintained bundle and live Windows acceptance remain unchanged |
 | Python shared client, native adapters and PowerShell wrappers | Existing `tools/` and `scripts/invoke_stata_visible*.ps1` | Already readable/shared across platforms; no source-entry migration is needed for these files |
 
-The next source step is checkpoint/finalizer and Terminal output behavior.
+## Stage 4: Run-file finalizer
+
+`tests/source/test-runfile-finalizer.js` ports the maintained rc.7.40 cases to
+the source module and checks each one against the maintained log reader:
+author `exit` stays inside the body file, the record wins over a stale inner
+`r(601)` or a transport `rc=0`, and echoed, duplicate, misordered, malformed or
+foreign records are rejected. Only the last 256 KiB of the log are read. One
+intentional difference: the source settlement marks completion unverified
+when the driver ran but no record is found, instead of keeping a transport
+flag. The driver writes no dataset snapshot until the stop-checkpoint and
+pre-run snapshot owners move to source. These are offline tests; no Stata
+interpreter is mocked.
+
+The next source step is stop checkpoint/pre-run snapshot ownership and Terminal output behavior.
 Complete package identity,
 Mac FULL45 and Windows licensed desktop acceptance are required before changing
 the running entry point. Stage 3 is useful migration progress, not full feature

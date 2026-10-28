@@ -46,6 +46,25 @@ const BRIDGE_START_AFTER = BRIDGE_START + `
 const BRIDGE_CLOSE = "async function deactivate() {";
 const BRIDGE_CLOSE_AFTER = BRIDGE_CLOSE + "\n    await sourceBridge.close();";
 
+// Run files through the product driver so the finalizer record and exact
+// completion marker settle rc (stage 4); the researcher's file is not edited.
+const FINALIZER_REQUIRE = "const { prepareFinalizedRun, readLogTail, settleFinalizedResult } = require('shared-session/runfile-finalizer');\n";
+const FILE_RUN_CALL = "                    const result = await mcpClient.runFile(effectiveFilePath, {";
+const FILE_RUN_CALL_AFTER = `                    const sourceFinalized = runId ? prepareFinalizedRun({ runId, bodyPath: effectiveFilePath, tempDir: os.tmpdir() }) : null;
+                    let result;
+                    try {
+                    result = await mcpClient.runFile(sourceFinalized ? sourceFinalized.driverPath : effectiveFilePath, {`;
+const FILE_RUN_END = `                        }
+                    });
+                    if (runId) {
+                        // Enrich result with logSize if it's missing but we can find it`;
+const FILE_RUN_END_AFTER = `                        }
+                    });
+                    } finally { if (sourceFinalized) sourceFinalized.cleanup(); }
+                    if (sourceFinalized) result = settleFinalizedResult(result, runId, readLogTail(result && result.logPath));
+                    if (runId) {
+                        // Enrich result with logSize if it's missing but we can find it`;
+
 const CLEAR_BEFORE = "            chatStream.innerHTML = '';";
 const CLEAR_AFTER = CLEAR_BEFORE + "\n            // Preserve the element retained by artifact rendering after restore.\n            if (sessionArtifactsEl) chatStream.appendChild(sessionArtifactsEl);";
 const ROUTE_BEFORE = `        if ((message.artifactType === 'help' || message.type_hint === 'help') && message.path && typeof TerminalPanel._openHelpPanel === 'function') {
@@ -119,6 +138,9 @@ const openGraphPreview = createManualGraphPreview({
     source = replace(source, FAIL, FAIL_AFTER, 2);
     source = replace(source, BRIDGE_START, BRIDGE_START_AFTER);
     source = replace(source, BRIDGE_CLOSE, BRIDGE_CLOSE_AFTER);
+    source = FINALIZER_REQUIRE + source;
+    source = replace(source, FILE_RUN_CALL, FILE_RUN_CALL_AFTER);
+    source = replace(source, FILE_RUN_END, FILE_RUN_END_AFTER);
     return source;
   }
   return source;
@@ -140,6 +162,9 @@ function plugin() {
       build.onResolve({ filter: /^shared-session\/bridge-http$/ }, () => ({
         path: path.join(root, "src/shared-session/bridge-http.js"),
       }));
+      build.onResolve({ filter: /^shared-session\/runfile-finalizer$/ }, () => ({
+        path: path.join(root, "src/shared-session/runfile-finalizer.js"),
+      }));
       build.onLoad({ filter: /[/\\](extension|terminal-panel|mcp-client)\.js$/ }, args => {
         if (path.dirname(args.path) !== upstream) return;
         return { contents: transform(path.basename(args.path), fs.readFileSync(args.path, "utf8")),
@@ -154,4 +179,5 @@ module.exports = {
   MCP_PROBE_BEFORE, MCP_PROBE_AFTER, LIFECYCLE_REQUIRE, BRIDGE_REQUIRE, LIFECYCLE_INIT,
   LIFECYCLE_INIT_AFTER, BRIDGE_INIT_AFTER, RUN_START, RUN_START_AFTER, FILE_RUN_START,
   FILE_RUN_START_AFTER, STARTED, FINISH, FAIL, BRIDGE_START, BRIDGE_CLOSE,
+  FINALIZER_REQUIRE, FILE_RUN_CALL, FILE_RUN_END,
 };
