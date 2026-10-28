@@ -12,6 +12,23 @@ const upstream = path.join(root, "upstream/stata-workbench/src");
 const MCP_PROBE_BEFORE = "spawnSync(finalCommand, ['--version'], { encoding: 'utf8', shell: process.platform === 'win32' });";
 const MCP_PROBE_AFTER = "spawnSync(finalCommand, ['--version'], commandProbeOptions(finalCommand));";
 
+const LIFECYCLE_REQUIRE = "const { createExecutionLifecycle } = require('shared-session/execution-lifecycle');\n";
+const LIFECYCLE_INIT = "let globalContext = null;";
+const LIFECYCLE_INIT_AFTER = `let globalContext = null;
+const sourceLifecycle = createExecutionLifecycle({
+  publish: snapshot => { try { globalThis.__codexSourceLifecycle = snapshot; } catch (_) {} },
+});`;
+const RUN_START = "const runId = TerminalPanel.startStreamingEntry(text, filePath, terminalRunCommand, variableListProvider, cancelRequest, cancelTask, downloadGraphAsPdf);";
+const RUN_START_AFTER = RUN_START + "\n            if (runId) sourceLifecycle.begin({ runId, requestId: runId, sourceMode: 'selection' });";
+const FILE_RUN_START = "const runId = TerminalPanel.startStreamingEntry(commandText, filePath, terminalRunCommand, variableListProvider, cancelRequest, cancelTask, downloadGraphAsPdf);";
+const FILE_RUN_START_AFTER = FILE_RUN_START + "\n                if (runId) sourceLifecycle.begin({ runId, requestId: runId, sourceMode: 'file' });";
+const STARTED = "TerminalPanel.updateStreamingStatus(runId, 'running');";
+const STARTED_AFTER = "sourceLifecycle.started(runId);\n                        " + STARTED;
+const FINISH = "TerminalPanel.finishStreamingEntry(runId, result);";
+const FINISH_AFTER = "sourceLifecycle.finish(runId, result);\n                    " + FINISH;
+const FAIL = "TerminalPanel.failStreamingEntry(runId, error?.message || String(error));";
+const FAIL_AFTER = "sourceLifecycle.fail(runId, error);\n                    " + FAIL;
+
 const CLEAR_BEFORE = "            chatStream.innerHTML = '';";
 const CLEAR_AFTER = CLEAR_BEFORE + "\n            // Preserve the element retained by artifact rendering after restore.\n            if (sessionArtifactsEl) chatStream.appendChild(sessionArtifactsEl);";
 const ROUTE_BEFORE = `        if ((message.artifactType === 'help' || message.type_hint === 'help') && message.path && typeof TerminalPanel._openHelpPanel === 'function') {
@@ -36,6 +53,16 @@ function transform(name, source) {
     assert.equal(source.split(MCP_PROBE_BEFORE).length - 1, 2,
       "Source migration anchor changed: Windows MCP probe options");
     return source.split(MCP_PROBE_BEFORE).join(MCP_PROBE_AFTER);
+  }
+  if (name === "extension.js") {
+    source = LIFECYCLE_REQUIRE + source;
+    source = replace(source, LIFECYCLE_INIT, LIFECYCLE_INIT_AFTER);
+    source = replace(source, RUN_START, RUN_START_AFTER);
+    source = replace(source, FILE_RUN_START, FILE_RUN_START_AFTER);
+    source = replace(source, STARTED, STARTED_AFTER, 2);
+    source = replace(source, FINISH, FINISH_AFTER, 2);
+    source = replace(source, FAIL, FAIL_AFTER, 2);
+    return source;
   }
   if (name === "terminal-panel.js") {
     source = "const { routeTerminalArtifact } = require('shared-session/manual-graph-preview');\n" + source;
@@ -91,6 +118,9 @@ function plugin() {
       build.onResolve({ filter: /^shared-session\/platform-process$/ }, () => ({
         path: path.join(root, "src/shared-session/platform-process.js"),
       }));
+      build.onResolve({ filter: /^shared-session\/execution-lifecycle$/ }, () => ({
+        path: path.join(root, "src/shared-session/execution-lifecycle.js"),
+      }));
       build.onLoad({ filter: /[/\\](extension|terminal-panel|mcp-client)\.js$/ }, args => {
         if (path.dirname(args.path) !== upstream) return;
         return { contents: transform(path.basename(args.path), fs.readFileSync(args.path, "utf8")),
@@ -102,5 +132,7 @@ function plugin() {
 
 module.exports = {
   plugin, transform, replace, CLEAR_BEFORE, CLEAR_AFTER, ROUTE_BEFORE, ROUTE_AFTER,
-  MCP_PROBE_BEFORE, MCP_PROBE_AFTER,
+  MCP_PROBE_BEFORE, MCP_PROBE_AFTER, LIFECYCLE_REQUIRE, LIFECYCLE_INIT,
+  LIFECYCLE_INIT_AFTER, RUN_START, RUN_START_AFTER, FILE_RUN_START,
+  FILE_RUN_START_AFTER, STARTED, FINISH, FAIL,
 };
