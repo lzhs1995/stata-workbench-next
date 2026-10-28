@@ -9,6 +9,9 @@ const assert = require("node:assert/strict");
 const root = path.resolve(__dirname, "../..");
 const upstream = path.join(root, "upstream/stata-workbench/src");
 
+const MCP_PROBE_BEFORE = "spawnSync(finalCommand, ['--version'], { encoding: 'utf8', shell: process.platform === 'win32' });";
+const MCP_PROBE_AFTER = "spawnSync(finalCommand, ['--version'], commandProbeOptions(finalCommand));";
+
 const CLEAR_BEFORE = "            chatStream.innerHTML = '';";
 const CLEAR_AFTER = CLEAR_BEFORE + "\n            // Preserve the element retained by artifact rendering after restore.\n            if (sessionArtifactsEl) chatStream.appendChild(sessionArtifactsEl);";
 const ROUTE_BEFORE = `        if ((message.artifactType === 'help' || message.type_hint === 'help') && message.path && typeof TerminalPanel._openHelpPanel === 'function') {
@@ -28,6 +31,12 @@ function replace(source, before, after, expected = 1) {
 }
 
 function transform(name, source) {
+  if (name === "mcp-client.js") {
+    source = "const { commandProbeOptions } = require('shared-session/platform-process');\n" + source;
+    assert.equal(source.split(MCP_PROBE_BEFORE).length - 1, 2,
+      "Source migration anchor changed: Windows MCP probe options");
+    return source.split(MCP_PROBE_BEFORE).join(MCP_PROBE_AFTER);
+  }
   if (name === "terminal-panel.js") {
     source = "const { routeTerminalArtifact } = require('shared-session/manual-graph-preview');\n" + source;
     source = replace(source, "  static _openHelpPanel = null;", "  static _openHelpPanel = null;\n  static _openGraphPreview = null;");
@@ -79,7 +88,10 @@ function plugin() {
       build.onResolve({ filter: /^shared-session\/manual-graph-preview$/ }, () => ({
         path: path.join(root, "src/shared-session/manual-graph-preview.js"),
       }));
-      build.onLoad({ filter: /[/\\](extension|terminal-panel)\.js$/ }, args => {
+      build.onResolve({ filter: /^shared-session\/platform-process$/ }, () => ({
+        path: path.join(root, "src/shared-session/platform-process.js"),
+      }));
+      build.onLoad({ filter: /[/\\](extension|terminal-panel|mcp-client)\.js$/ }, args => {
         if (path.dirname(args.path) !== upstream) return;
         return { contents: transform(path.basename(args.path), fs.readFileSync(args.path, "utf8")),
           loader: "js", resolveDir: upstream };
@@ -88,4 +100,7 @@ function plugin() {
   };
 }
 
-module.exports = { plugin, transform, replace, CLEAR_BEFORE, CLEAR_AFTER, ROUTE_BEFORE, ROUTE_AFTER };
+module.exports = {
+  plugin, transform, replace, CLEAR_BEFORE, CLEAR_AFTER, ROUTE_BEFORE, ROUTE_AFTER,
+  MCP_PROBE_BEFORE, MCP_PROBE_AFTER,
+};

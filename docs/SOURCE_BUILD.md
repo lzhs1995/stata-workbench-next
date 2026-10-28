@@ -91,6 +91,7 @@ The original byte-equality replay checks remain in `npm run check`.
 | `apply_terminal_memory_patch.js` and maintained Terminal history/log helpers | Upstream Terminal streaming log/history and webview restoration | Only artifact-container fix migrated; output bounds/history/log fairness remain pending |
 | `stata_source_compat_core.js`, Darwin PNG/DOCX adapters, recursive DO scanner | Upstream source preparation with explicit platform adapters | Existing readable helpers retained; source-built execution integration remains pending |
 | `mcp_stata_runtime_patch.js` and `stata_*_patch.js` backend state repairs | Runtime installer/MCP bootstrap, with versioned external Python patches | Not replaced by an upstream JS build; installation and state-regression gates still required |
+| Windows MCP command probing | `src/shared-session/platform-process.js`; source edit to upstream `mcp-client.js` | Source migration now keeps real `uv/uvx(.exe)` probes shell-free and permits a shell only for an explicit `.cmd`/`.bat` shim; the maintained bundle and live Windows acceptance remain unchanged |
 | Python shared client, native adapters and PowerShell wrappers | Existing `tools/` and `scripts/invoke_stata_visible*.ps1` | Already readable/shared across platforms; no source-entry migration is needed for these files |
 
 The next source step is bridge/execution lifecycle integration, followed by

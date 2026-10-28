@@ -12,8 +12,10 @@ async function main() {
   assert.equal(process.argv.length, 2, "Usage: node scripts/build_migrated_source.js");
   const upstream = reference.verifySource();
   const maintained = reference.snapshot(path.join(root, "dist"));
-  const sourceFiles = ["src/shared-session/manual-graph-preview.js", "src/migrations/terminal-preview.js",
+  const sourceFiles = ["src/shared-session/manual-graph-preview.js", "src/shared-session/platform-process.js",
+    "src/migrations/terminal-preview.js",
     "tests/source/terminal-preview-entry.js", "tests/source/test-terminal-preview.js",
+    "tests/source/test-platform-command.js",
     "scripts/build_migrated_source.js", "scripts/build_reference_source.js"];
   const sources = Object.fromEntries(sourceFiles.map(name => [name, reference.fingerprint(fs.readFileSync(path.join(root, name)))]));
   const options = { plugins: [migration.plugin()], contractEntry: "tests/source/terminal-preview-entry.js" };
@@ -33,9 +35,10 @@ async function main() {
     toolchain: { node: process.version, esbuild: esbuild.version,
       packageLockSha256: reference.sha256(fs.readFileSync(path.join(root, "package-lock.json"))) },
     repeatedBuildIdentical: true, maintainedRuntimeUnchanged: true,
-    migratedBehavior: ["explicit Terminal-to-Graphs callback", "saved-image preview policy", "artifact container after clear/restore"],
+    migratedBehavior: ["explicit Terminal-to-Graphs callback", "saved-image preview policy", "artifact container after clear/restore",
+      "Windows MCP command probes use shell-free real executables and explicit cmd/bat shim fallback"],
     outputs: reference.describe(first),
-    scope: "Source migration stage 1; no bridge/lifecycle/checkpoint parity or licensed/native acceptance; not the VSIX runtime",
+    scope: "Source migration stage 1 plus isolated platform-process adapter; no bridge/lifecycle/checkpoint parity or licensed/native acceptance; not the VSIX runtime",
   };
   for (const [relative, data] of first) {
     const target = path.join(destination, relative);
