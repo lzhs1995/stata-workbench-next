@@ -242,6 +242,8 @@ class OperatorKitTests(unittest.TestCase):
         args = kit.build_parser().parse_args(["open", "--root", "C:\\run", "--no-activate"])
         self.assertTrue(args.no_activate)
         self.assertFalse(kit.build_parser().parse_args(["open", "--root", "C:\\run"]).no_activate)
+        self.assertEqual(kit.open_argv(state, True, 9335)[-2:], ["--remote-debugging-port", "9335"])
+        self.assertNotIn("--remote-debugging-port", kit.open_argv(state, True))
 
     def test_missing_code_cli_is_refused_before_root_is_created(self):
         code = self.parent / "VS Code" / "Code.exe"

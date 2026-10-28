@@ -128,6 +128,18 @@ class LauncherTests(unittest.TestCase):
         self.assertTrue(kwargs["creationflags"] & 0x8, "DETACHED_PROCESS")
         popen.return_value.wait.assert_not_called()
 
+    def test_devtools_port_is_opt_in_validated_and_precedes_the_workspace(self):
+        from pathlib import Path
+        with patch.object(v.host, "code_launch_command", return_value=["Code.exe"]):
+            plain = v.launch_argv("Code.exe", Path("/p"), "/w")
+            self.assertFalse(any(a.startswith("--remote-debugging-port") for a in plain))
+            cdp = v.launch_argv("Code.exe", Path("/p"), "/w", 9335)
+            self.assertEqual(cdp[-2], "--remote-debugging-port=9335")
+            self.assertEqual(cdp[-1], str(Path("/w").resolve()))
+            for bad in (80, 70000, "9335", True):
+                with self.assertRaises(ValueError):
+                    v.launch_argv("Code.exe", Path("/p"), "/w", bad)
+
     def test_mac_start_still_waits_for_the_cli_and_checks_its_result(self):
         with patch.object(v.subprocess, "Popen") as popen, patch.object(v.subprocess, "run") as run:
             v.start_code(["/usr/local/bin/code", "--new-window", "/w"], platform="darwin")
