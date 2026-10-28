@@ -185,7 +185,7 @@ def main():
         def launch():
             if not args.workspace.is_dir():
                 raise RuntimeError("workspace must exist")
-            subprocess.run([str(host.code_executable(CODE_CLI)), "--user-data-dir", str(PROFILE / "user-data"),
+            subprocess.run(host.code_launch_command(CODE_CLI) + ["--user-data-dir", str(PROFILE / "user-data"),
                 "--extensions-dir", str(PROFILE / "extensions"), "--new-window",
                 str(args.workspace.resolve())], check=True, timeout=30)
 

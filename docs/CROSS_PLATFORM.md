@@ -16,8 +16,10 @@ Both platforms retain these environment variables:
 
 - `STATA_WORKBENCH_PROFILE`: isolated profile root; default `~/.stata-workbench-shared`.
 - `STATA_WORKBENCH_PORT`: must match `stataMcp.visibleBridgePort`; default 17485.
-- `STATA_WORKBENCH_CODE`: Mac app CLI, Windows `Code.exe`, or its `bin/code.cmd`.
-  Windows resolves the latter to `Code.exe`, avoiding shell interpolation.
+- `STATA_WORKBENCH_CODE`: Mac app CLI, Windows `Code.exe`, or a `code.cmd`/`code.bat`
+  shim. Windows reads the shim to resolve an existing `Code.exe` and launches that
+  executable directly, so a user-local wrapper such as `%USERPROFILE%\\.local\\bin\\code.cmd`
+  works without `cmd.exe` interpolation. Unresolvable shims fail closed before launch.
 - `STATA_WORKBENCH_PYTHON`: installed Python executable used by the PowerShell wrapper.
 
 The pinned source bundle, installed extension and live bridge must match. A

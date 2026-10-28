@@ -93,6 +93,37 @@ class WindowsBindingTests(unittest.TestCase):
 
 
 class PortabilityTests(unittest.TestCase):
+    def test_windows_code_shim_resolves_without_shell(self):
+        with tempfile.TemporaryDirectory(prefix="VS Code wrapper ") as directory:
+            root = Path(directory)
+            install = root / "Microsoft VS Code"
+            (install / "bin").mkdir(parents=True)
+            executable = install / "Code.exe"
+            executable.write_bytes(b"synthetic executable")
+            shim = install / "bin" / "code.cmd"
+            shim.write_text('@echo off\n"%~dp0../Code.exe" %*\n', encoding="utf-8")
+            self.assertEqual(host.windows_code_target(shim), executable.resolve())
+            self.assertEqual(host.code_executable(shim, "win32"), executable.resolve())
+            self.assertEqual(host.code_launch_command(shim, "win32"), [str(executable.resolve())])
+
+    def test_windows_user_local_shim_can_name_absolute_target(self):
+        with tempfile.TemporaryDirectory(prefix="user local bin ") as directory:
+            root = Path(directory)
+            target = root / "real install" / "Code.exe"
+            target.parent.mkdir(parents=True)
+            target.write_bytes(b"synthetic executable")
+            shim = root / ".local" / "bin" / "code.cmd"
+            shim.parent.mkdir(parents=True)
+            shim.write_text(f'@echo off\n"{target}" %*\n', encoding="utf-8")
+            self.assertEqual(host.windows_code_target(shim), target.resolve())
+
+    def test_windows_code_shim_missing_target_fails_closed(self):
+        with tempfile.TemporaryDirectory(prefix="broken code shim ") as directory:
+            shim = Path(directory) / "code.cmd"
+            shim.write_text('@echo off\n"%~dp0../Code.exe" %*\n', encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "does not resolve"):
+                host.windows_code_target(shim)
+
     @unittest.skipUnless(sys.platform == "win32", "POSIX subprocess itself may import fcntl")
     def test_import_does_not_probe_or_import_fcntl_on_windows(self):
         script = "import sys; import verified_workbench,shared_stata; print('fcntl' in sys.modules)"

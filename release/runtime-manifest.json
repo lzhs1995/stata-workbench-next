@@ -327,12 +327,12 @@
       "bytes": 4729
     },
     "tools/verified_workbench.py": {
-      "sha256": "235bbd943d0fafd928c13615ea4ab8f3a912d74fe78901c77428470b8b570d36",
+      "sha256": "521bd0e0310800c6ab21c01333db411aaa0da8021b1290d497b5e436ab8737b1",
       "bytes": 9340
     },
     "tools/workbench_platform.py": {
-      "sha256": "abec304721eb7173b95fa6e51f5d8c4ca33ceebc8588d3a8cee86b4973ec42bb",
-      "bytes": 4524
+      "sha256": "1b436f1b5dc6401be22596de2bfeed42aeb90ea1b0d480e4847c873ee21ccd14",
+      "bytes": 8126
     },
     "tools/mac_permissions.py": {
       "sha256": "e50fa21039dcfbea92dc64b836041495235c6f5c3df177e0964f0a4783649f61",
