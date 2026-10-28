@@ -108,6 +108,19 @@ def observe(d):
             "status": status}
 
 
+def start_code(argv, platform=None):
+    """Start VS Code once. On Windows Code.exe is the GUI process itself and never
+    returns like the macOS `code` CLI, so it is started detached without inherited
+    pipes; open_once then waits for the bridge identity, not for the process."""
+    platform = platform or sys.platform
+    if platform == "win32":
+        flags = getattr(subprocess, "DETACHED_PROCESS", 0x8) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x200)
+        subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, close_fds=True, creationflags=flags)
+        return
+    subprocess.run(argv, check=True, timeout=30)
+
+
 def open_once(d, launch, foreground=True, timeout=120, sleep=time.sleep, clock=time.monotonic):
     before = observe(d)
     if before["launcherPid"] is not None:
@@ -185,9 +198,9 @@ def main():
         def launch():
             if not args.workspace.is_dir():
                 raise RuntimeError("workspace must exist")
-            subprocess.run(host.code_launch_command(CODE_CLI) + ["--user-data-dir", str(PROFILE / "user-data"),
+            start_code(host.code_launch_command(CODE_CLI) + ["--user-data-dir", str(PROFILE / "user-data"),
                 "--extensions-dir", str(PROFILE / "extensions"), "--new-window",
-                str(args.workspace.resolve())], check=True, timeout=30)
+                str(args.workspace.resolve())])
 
         result = open_once(d, launch, foreground=not args.no_activate)
         print(json.dumps(result, ensure_ascii=False))

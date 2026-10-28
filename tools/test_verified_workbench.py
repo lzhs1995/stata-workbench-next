@@ -113,6 +113,27 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(state["windowObservation"], window)
         w.launcher_window_count.assert_not_called()
 
+    def test_windows_start_is_detached_and_does_not_wait_for_the_gui(self):
+        # 10-28 Windows 实机：直接 subprocess.run(Code.exe, timeout=30) 等 GUI 退出，30 秒后超时 BLOCKED
+        argv = ["C:\\VS Code\\Code.exe", "--user-data-dir", "C:\\p\\user-data", "--new-window", "C:\\w"]
+        with patch.object(v.subprocess, "Popen") as popen, patch.object(v.subprocess, "run") as run:
+            v.start_code(argv, platform="win32")
+        run.assert_not_called()
+        popen.assert_called_once()
+        self.assertEqual(popen.call_args.args[0], argv)
+        kwargs = popen.call_args.kwargs
+        for stream in ("stdin", "stdout", "stderr"):
+            self.assertIs(kwargs[stream], v.subprocess.DEVNULL)
+        self.assertTrue(kwargs["close_fds"])
+        self.assertTrue(kwargs["creationflags"] & 0x8, "DETACHED_PROCESS")
+        popen.return_value.wait.assert_not_called()
+
+    def test_mac_start_still_waits_for_the_cli_and_checks_its_result(self):
+        with patch.object(v.subprocess, "Popen") as popen, patch.object(v.subprocess, "run") as run:
+            v.start_code(["/usr/local/bin/code", "--new-window", "/w"], platform="darwin")
+        popen.assert_not_called()
+        run.assert_called_once_with(["/usr/local/bin/code", "--new-window", "/w"], check=True, timeout=30)
+
 
 if __name__ == "__main__":
     unittest.main()
