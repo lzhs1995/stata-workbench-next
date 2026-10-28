@@ -98,5 +98,5 @@ The original byte-equality replay checks remain in `npm run check`.
 The next source step is checkpoint/finalizer and Terminal output behavior.
 Complete package identity,
 Mac FULL45 and Windows licensed desktop acceptance are required before changing
-the running entry point. Stage 1 is useful migration progress, not full feature
+the running entry point. Stage 3 is useful migration progress, not full feature
 parity or a release candidate to install.
