@@ -1,7 +1,17 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const { VERSION, createExecutionLifecycle } = require("../../src/shared-session/execution-lifecycle");
+const migration = require("../../src/migrations/terminal-preview");
+
+const root = path.resolve(__dirname, "../..");
+const extensionSource = fs.readFileSync(path.join(root, "upstream/stata-workbench/src/extension.js"), "utf8");
+const transformedExtension = migration.transform("extension.js", extensionSource);
+for (const marker of ["sourceLifecycle.begin", "sourceLifecycle.started", "sourceLifecycle.finish", "sourceLifecycle.fail"]) {
+  assert.equal(transformedExtension.split(marker).length - 1, 2, marker + " must cover selection and file paths");
+}
 
 let clock = 0;
 const published = [];
