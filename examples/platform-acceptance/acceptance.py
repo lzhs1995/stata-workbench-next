@@ -23,6 +23,10 @@ from verify_release import verify  # noqa: E402
 
 SCHEMA = "windows-workbench-acceptance/1"
 AGENT_FILES = ("02_agent_shared.do", "04_queue_first.do", "05_queue_second.do", "07_cleanup.do")
+# Free space kept for the Windows test machine itself (updates, temp files),
+# on top of the setup budget. Operators can override it with --reserve-bytes.
+DEFAULT_RESERVE_BYTES = 5_000_000_000
+SETUP_BUDGET_BYTES = 500_000_000
 
 
 def stamp():
@@ -58,7 +62,7 @@ def environment(root, port, code):
 
 
 def prepare(root, vsix, stata, code, *, port=17497, configure_only=False,
-            reserve_bytes=20_000_000_000):
+            reserve_bytes=DEFAULT_RESERVE_BYTES):
     # All preflight checks precede creating the new root or launching a process.
     root = Path(root).absolute()
     if os.path.lexists(root):
@@ -72,14 +76,18 @@ def prepare(root, vsix, stata, code, *, port=17497, configure_only=False,
         raise ValueError("VSIX, Stata and Code must be files")
     if not 1024 <= port <= 65535:
         raise ValueError("Use a private port between 1024 and 65535")
+    if reserve_bytes < 0:
+        raise ValueError("The disk reserve cannot be negative")
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", port))  # Availability observation, not a permanent reservation.
     ancestor = root.parent
     while not ancestor.exists():
         ancestor = ancestor.parent
     available = shutil.disk_usage(ancestor).free
-    if available < reserve_bytes + 500_000_000:
-        raise RuntimeError("Insufficient measured free space for reserve plus 500 MB setup budget")
+    required = reserve_bytes + SETUP_BUDGET_BYTES
+    if available < required:
+        raise RuntimeError(f"Insufficient measured free space: {available} bytes free, {required} required "
+                           f"({reserve_bytes} reserve + {SETUP_BUDGET_BYTES} setup budget)")
     source_check = verify()
     if source_check["verdict"] != "PASS":
         raise ValueError("Source runtime identity mismatch: " + str(source_check["failedChecks"]))
@@ -271,7 +279,7 @@ def collect(state):
             "nativeAcceptance": "NOT_INFERRED"}
 
 
-def main():
+def build_parser():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
     setup = sub.add_parser("prepare")
@@ -280,18 +288,25 @@ def main():
     setup.add_argument("--stata", type=Path, required=True)
     setup.add_argument("--code", type=Path, required=True)
     setup.add_argument("--port", type=int, default=17497)
+    setup.add_argument("--reserve-bytes", type=int, default=DEFAULT_RESERVE_BYTES,
+                       help="free space to keep for the machine, in bytes, on top of the 500 MB setup budget")
     setup.add_argument("--configure-only", action="store_true", help="write private config without installing or launching")
     for command in ("open", "collect", "run"):
         child = sub.add_parser(command)
         child.add_argument("--root", type=Path, required=True)
         if command == "run":
             child.add_argument("--fixture", choices=AGENT_FILES, required=True)
+    return parser
+
+
+def main():
+    parser = build_parser()
     args = parser.parse_args()
     if sys.platform != "win32":
         parser.error("The installed desktop workflow is Windows-only; portable helper tests do not certify Windows Stata")
     if args.command == "prepare":
         result = prepare(args.root, args.vsix, args.stata, args.code, port=args.port,
-                         configure_only=args.configure_only)
+                         configure_only=args.configure_only, reserve_bytes=args.reserve_bytes)
     else:
         state = load_state(args.root)
         if args.command == "collect":
