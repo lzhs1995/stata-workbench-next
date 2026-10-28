@@ -25,7 +25,10 @@ def powershell_json(script):
                             creationflags=subprocess.CREATE_NO_WINDOW)
     if result.returncode != 0:
         raise RuntimeError("Windows system query failed: " + result.stderr[-2000:])
-    return json.loads(result.stdout.lstrip("\ufeff"))
+    text = result.stdout.lstrip("\ufeff").strip()
+    # Windows PowerShell 5.1 prints nothing for `@() | ConvertTo-Json`; an empty
+    # pipeline (for example no listener before the first launch) is None, not an error.
+    return json.loads(text) if text else None
 
 
 def process_rows():
