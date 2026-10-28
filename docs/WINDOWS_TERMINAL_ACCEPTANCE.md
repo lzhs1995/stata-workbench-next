@@ -56,11 +56,13 @@ $Out = Join-Path $Root 'windows-baseline-terminal.json'
 Get-Content -Raw $Out
 ```
 
-Keep the JSON and the exact script hash in the acceptance evidence. The
-private setup requires at least 20.5 GB free on the target system (20 GB
-reserve plus 500 MB setup budget). If the measured value is lower, record the
-baseline and defer installation/launch; do not reclaim files or alter the
-research machine through the remote channel.
+Keep the JSON and the exact script hash in the acceptance evidence. By default
+the private setup requires 5.5 GB free on the target system (5 GB machine
+reserve plus 500 MB setup budget); `prepare --reserve-bytes N` changes the
+reserve. The 20 GB rule of the Mac research machine does not apply to the
+Windows test machine. If the measured value is lower, record the baseline and
+reclaim only regenerable caches with the machine owner's consent, listing what
+was removed and the bytes before and after. Never touch user documents.
 
 ## 3. Run the acceptance from the terminal
 

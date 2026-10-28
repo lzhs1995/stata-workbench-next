@@ -72,7 +72,8 @@ $Evidence = Join-Path $Acceptance 'evidence'
 `prepare --configure-only` verifies source/VSIX and writes configuration without
 installing or launching. It is a separate diagnostic mode; the existing-root
 refusal still applies. For normal preparation the tool requires measured free
-space of at least 20.5 GB (20 GB reserve plus 500 MB setup budget), checks the
+space of at least the reserve plus a 500 MB setup budget (default reserve 5 GB,
+so 5.5 GB; set another value with `--reserve-bytes`), checks the
 private port, and uses Python 3.11 / `mcp-stata==1.26.1` for the service. Every
 child command has an intent, log and outcome record. VSIX installation follows
 VS Code's official `Code.exe resources/app/out/cli.js` invocation with

@@ -117,12 +117,34 @@ class OperatorKitTests(unittest.TestCase):
         self.assertFalse(self.root.exists())
 
     def test_low_actual_free_space_refuses_before_writes(self):
+        # 4.34 GB 是 2026-10-28 实测的 Windows C: 可用空间，低于默认 5 GB + 500 MB。
         with patch.object(kit.shutil, "disk_usage") as usage:
-            usage.return_value.free = 20_000_000_000
-            with self.assertRaisesRegex(RuntimeError, "measured free space"):
+            usage.return_value.free = 4_340_000_000
+            with self.assertRaisesRegex(RuntimeError, "measured free space: 4340000000 bytes free, 5500000000 required"):
                 kit.prepare(self.root, self.vsix, sys.executable, sys.executable,
                             port=free_port(), configure_only=True)
         self.assertFalse(self.root.exists())
+
+    def test_free_space_exactly_at_reserve_plus_budget_is_accepted(self):
+        with patch.object(kit.shutil, "disk_usage") as usage:
+            usage.return_value.free = kit.DEFAULT_RESERVE_BYTES + kit.SETUP_BUDGET_BYTES
+            with patch.object(kit.subprocess, "run", side_effect=AssertionError("configure-only launched a process")):
+                result = kit.prepare(self.root, self.vsix, sys.executable, sys.executable,
+                                     port=free_port(), configure_only=True)
+        self.assertEqual(result["phase"], "CONFIGURED_NOT_INSTALLED")
+        self.assertEqual(kit.load_state(self.root)["reserveBytes"], kit.DEFAULT_RESERVE_BYTES)
+
+    def test_negative_reserve_is_refused_before_writes(self):
+        with self.assertRaisesRegex(ValueError, "cannot be negative"):
+            kit.prepare(self.root, self.vsix, sys.executable, sys.executable,
+                        port=free_port(), configure_only=True, reserve_bytes=-1)
+        self.assertFalse(self.root.exists())
+
+    def test_reserve_bytes_option_defaults_and_overrides(self):
+        base = ["prepare", "--root", "r", "--vsix", "v", "--stata", "s", "--code", "c"]
+        parser = kit.build_parser()
+        self.assertEqual(parser.parse_args(base).reserve_bytes, 5_000_000_000)
+        self.assertEqual(parser.parse_args(base + ["--reserve-bytes", "2000000000"]).reserve_bytes, 2_000_000_000)
 
     def test_changed_environment_is_not_rebound_silently(self):
         self.configured()
