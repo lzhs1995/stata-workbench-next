@@ -28,6 +28,8 @@ AGENT_FILES = ("02_agent_shared.do", "04_queue_first.do", "05_queue_second.do", 
 # on top of the setup budget. Operators can override it with --reserve-bytes.
 DEFAULT_RESERVE_BYTES = 5_000_000_000
 SETUP_BUDGET_BYTES = 500_000_000
+# The service's full dependency set from the passing Mac runtime; see the file header.
+SERVICE_CONSTRAINTS = Path(__file__).resolve().parent / "service-constraints.txt"
 
 
 def stamp():
@@ -164,7 +166,7 @@ def prepare(root, vsix, stata, code, *, port=17497, configure_only=False,
         try:
             run_logged(state, "venv", [uv, "venv", "--python", "3.11", str(profile / "runtime")])
             run_logged(state, "service-install", [uv, "pip", "install", "--python",
-                       str(runtime_python), "mcp-stata==1.26.1"])
+                       str(runtime_python), "-c", str(SERVICE_CONSTRAINTS), "mcp-stata==1.26.1"])
             run_logged(state, "service-packages", [uv, "pip", "freeze", "--python", str(runtime_python)])
             # Same invocation as VS Code's official bin/code.cmd, without cmd.exe
             # quoting/interpolation. Scope Electron's node mode to this call only.
