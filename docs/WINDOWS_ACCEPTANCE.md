@@ -1,5 +1,10 @@
 # Windows physical-machine acceptance
 
+Routine Windows preparation and test submission now use the [UU remote
+terminal runbook](WINDOWS_TERMINAL_ACCEPTANCE.md). The UU desktop stream is
+reserved for visual/consent evidence and the few steps that require a native
+window; this keeps the acceptance lane independent from streamed desktop input.
+
 Target: Windows 11 x64 and licensed Stata 18 MP. Record actual versions; other
 Windows/Stata combinations require their own results. Mac and Windows Server CI
 have already checked the shared client, Windows locks/process matching,

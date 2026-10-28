@@ -19,6 +19,7 @@ The evidence below separates versions and does not certify both desktops.
 | Build / package / audit | Versioned maintained bundle | ARM and Intel CI passed | x64 CI passed | 193 JS commands; operator-kit revision has 65 Python tests (4 Windows-only skips on Mac); 90 source/VSIX identity checks |
 | Reference source build | Separate migration in PR #9 | Repeated builds passed, ARM/Intel output matches | Same 15 outputs in CI | 27 pinned upstream files; feature parity with maintained runtime remains unproved |
 | Windows operator kit | Source-only `acceptance.py` | Portable setup/receipt/archive regressions | Private installation, one-shot fixture dispatch and bounded evidence ZIP | Windows CLI case runs in the OS matrix; licensed desktop remains operator-dependent |
+| UU terminal control | `uuyc-cli` + remote PowerShell | CLI 1.0.0, online Windows device, terminal marker and read-only baseline verified on 2026-10-28 | Windows-side baseline JSON written without GUI clicks | C: free space 4.34 GB; Stata, private profile and Workbench extension absent, so setup/launch is deferred |
 
 Three-platform dev.5/operator-kit CI, commit `66faf389a6da36c11e7b85fc2e9458eb7419d488`:
 https://github.com/lzhs1995/stata-workbench-shared-session/actions/runs/40449906494
