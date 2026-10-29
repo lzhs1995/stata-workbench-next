@@ -976,6 +976,16 @@ function compilePythonSources(root, sources, options = {}) {
   return { ok: true, status: "python-compile-ok", root, pythonCommand };
 }
 
+// Windows wheels/installs can carry CRLF. Anchors are LF, so patch an LF view
+// and write each file back with the line endings it had (see withOriginalEol).
+function lfSource(bytes) {
+  return bytes.toString("utf8").replace(/\r\n/g, "\n");
+}
+
+function withOriginalEol(original, source) {
+  return original.includes("\r\n") ? source.replace(/\r?\n/g, "\r\n") : source;
+}
+
 function atomicWrite(file, content, mode) {
   const stat = fs.statSync(file);
   const temporary = `${file}.stata-workbench-${process.pid}.tmp`;
@@ -1026,7 +1036,7 @@ function patchRuntime(options = {}) {
   }
 
   const sessionBytes = fs.readFileSync(located.sessionPath);
-  const sessionSource = sessionBytes.toString("utf8");
+  const sessionSource = lfSource(sessionBytes);
   let patchedSession = sessionSource;
   let sessionStatus = "already-applied";
   if (!sessionSource.includes(SESSION_BREAK_DRAIN_PATCH_MARKER)) {
@@ -1054,7 +1064,7 @@ function patchRuntime(options = {}) {
   }
 
   const serverBytes = fs.readFileSync(located.serverPath);
-  const serverSource = serverBytes.toString("utf8");
+  const serverSource = lfSource(serverBytes);
   let patchedServer = serverSource;
   let serverStatus = "already-applied";
   try {
@@ -1199,7 +1209,7 @@ function patchRuntime(options = {}) {
   }
 
   const clientBytes = fs.readFileSync(located.clientPath);
-  const clientSource = clientBytes.toString("utf8");
+  const clientSource = lfSource(clientBytes);
   let patchedClient = clientSource;
   let clientStatus = "already-applied";
   try {
@@ -1571,7 +1581,7 @@ function patchRuntime(options = {}) {
     : (options.dryRun ? "would-apply" : "applied");
 
   const graphDetectorBytes = fs.readFileSync(located.graphDetectorPath);
-  const graphDetectorSource = graphDetectorBytes.toString("utf8");
+  const graphDetectorSource = lfSource(graphDetectorBytes);
   let patchedGraphDetector = graphDetectorSource;
   let graphDetectorStatus = "already-applied";
   if (!graphDetectorSource.includes(GRAPH_PROBE_PATCH_MARKER)) {
@@ -1681,6 +1691,7 @@ function patchRuntime(options = {}) {
       source: patchedSession,
     },
   ];
+  for (const file of files) file.source = withOriginalEol(file.original, file.source);
   const preWriteCompile = compilePythonSources(
     located.root,
     files.map((file) => ({ path: file.path, source: file.source })),

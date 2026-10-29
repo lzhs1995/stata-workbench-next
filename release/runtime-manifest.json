@@ -31,8 +31,8 @@
       "bytes": 90032
     },
     "scripts/mcp_stata_runtime_patch.js": {
-      "sha256": "019419cb3ce0569389312d786364643a37f51f4c222dec5ca963798fdb9f5f8a",
-      "bytes": 75445
+      "sha256": "37b0cc124ca47f80f8a7e891f48c8e7078b333b8eeb2475dc68aa892c88c85f1",
+      "bytes": 75877
     },
     "scripts/manual_run_policy.js": {
       "sha256": "feaf9b71dca260f3fc2b671cf936db7cb9e7bcb1649a822b66f427fe3675a6ff",
