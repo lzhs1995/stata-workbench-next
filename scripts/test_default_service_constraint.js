@@ -9,6 +9,7 @@ const assert = require("node:assert/strict"), crypto = require("node:crypto");
 const acorn = require("acorn"), walk = require("acorn-walk");
 const patch = require("./apply_default_service_constraint_patch");
 const coldStart = require("./apply_backend_cold_start_patch");
+const later = require("./later_bundle_patches");
 const bundle = fs.readFileSync(path.join(__dirname, "..", "dist", "extension.js"), "utf8");
 const runtime = fs.readFileSync(path.join(__dirname, "mcp_stata_runtime_patch.js"), "utf8");
 function extract(source, names = ["_createClient", "_loadServerConfig", "_ensureLatestServerForMissingTool", "ORA", "jRA", "ZRA", "bRA", "qRA", "$_"]) {
@@ -32,16 +33,18 @@ const hash = data => crypto.createHash("sha256").update(data).digest("hex");
 
 // 补丁幂等、精确可逆（还原出 Windows 上验收过的 dev.6 字节），部分状态 fail closed。
 assert.equal(patch.patchBundle(bundle), bundle, "byte idempotence");
-const dev6 = patch.revertBundle(bundle);
+// Patches replayed after this one are reverted exactly first.
+const sealed = later.revertAfter(bundle, "./apply_default_service_constraint_patch");
+const dev6 = patch.revertBundle(sealed);
 assert.equal(hash(dev6), "7cd398d1aa92a9f1fa1885b425d3fa07a6f71dcf3be3c9b9a0da5cf64721c40b", "dev.6 bytes");
-assert.equal(patch.patchBundle(dev6), bundle, "maintenance replay reproduces the sealed bundle");
+assert.equal(patch.patchBundle(dev6), sealed, "maintenance replay reproduces the sealed bundle");
 assert.equal(patch.fromArrays(bundle).filter(a => a.constrained).length, patch.ARRAYS);
 assert.throws(() => patch.patchBundle(bundle.replace(patch.DEFAULT_AFTER, patch.DEFAULT_BEFORE)), /anchor/);
 const partial = dev6.replace('"--from",e,Ao]', '"--from",e' + patch.CONSTRAINT + ',Ao]');
 assert.notEqual(partial, dev6);
 assert.throws(() => patch.patchBundle(partial), /partial/);
 // Codex 候选 = bdb8359 + 这些改动；去掉冷启动补丁后应逐字节相同。
-const codexCandidate = coldStart.revertBundle(bundle);
+const codexCandidate = coldStart.revertBundle(sealed);
 const runtimeDiscovery = '"--from", packageSpec, "--with", "mcp<2", "python"';
 assert.equal(runtime.split(runtimeDiscovery).length - 1, 1, "runtime discovery shares the constraint");
 const results = [];

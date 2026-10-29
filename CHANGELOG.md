@@ -25,6 +25,22 @@ Preserves the Mac-accepted runtime; removes local maintenance credentials, adds 
 
 # Changelog
 
+## 0.1.3-rc.7.44-dev.8 — cancellation after connect, Stop wording, Data Browser frame
+
+- Windows dev.5 step 9 diagnosis: a pre-run snapshot cancelled while the backend
+  was still connecting ran once anyway, because `_enqueue` checked the token only
+  before `_ensureClient()`. The operation body now rechecks the same token after
+  connecting and rejects with `Request cancelled` through the existing cleanup.
+- Human-file cancellation messages name the cause recorded in
+  `__codexSupersedeHistory` (soft Stop, force reset, or soft Stop then force
+  reset) instead of always saying force reset. `error.code`, `resetGeneration`
+  and control flow are unchanged; `/status` adds `resetGenerationKind`.
+- The Data Browser header shows the frame returned by `/v1/dataset` instead of the
+  static `default` (`unknown` when the field is absent); source and packaged
+  webview files are patched together.
+- `firstLogAt` stays `null` when a run ends before its log is discovered; that is
+  an absent observation, not a defect, and is unchanged.
+
 ## 0.1.3-rc.7.44-dev.7 — default service stays on MCP 1.x
 
 - The default uvx/uv route resolved mcp-stata 1.26.1 with the newest MCP; MCP 2.x
