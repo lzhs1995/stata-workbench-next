@@ -25,19 +25,24 @@ const sourceLifecycle = createExecutionLifecycle({
 });
 const sourceBridge = createBridgeHttp({
   lifecycle: sourceLifecycle,
-  runCommand: payload => terminalRunCommand(payload.code, { runId: payload.runId }),
+  // Pass the received cwd; a transport error throws so the bridge keeps an unknown owner.
+  runCommand: payload => terminalRunCommand(payload.code, { runId: payload.runId,
+    cwd: typeof payload.cwd === "string" ? payload.cwd : undefined, rethrowTransportErrors: true }),
 });
 try { globalThis.__codexSourceBridge = sourceBridge; } catch (_) {}`;
 const RUN_START = "const runId = TerminalPanel.startStreamingEntry(text, filePath, terminalRunCommand, variableListProvider, cancelRequest, cancelTask, downloadGraphAsPdf);";
-const RUN_START_AFTER = RUN_START + "\n            if (runId) sourceLifecycle.begin({ runId, requestId: runId, sourceMode: 'selection' });";
+const RUN_START_AFTER = RUN_START.replace("terminalRunCommand", "sourceTerminalRunCommand") +
+  "\n            if (runId) sourceLifecycle.begin({ runId, requestId: runId, sourceMode: 'selection' });";
 const FILE_RUN_START = "const runId = TerminalPanel.startStreamingEntry(commandText, filePath, terminalRunCommand, variableListProvider, cancelRequest, cancelTask, downloadGraphAsPdf);";
-const FILE_RUN_START_AFTER = FILE_RUN_START + "\n                if (runId) sourceLifecycle.begin({ runId, requestId: runId, sourceMode: 'file' });";
+const FILE_RUN_START_AFTER = FILE_RUN_START.replace("terminalRunCommand", "sourceTerminalRunCommand") +
+  "\n                if (runId) sourceLifecycle.begin({ runId, requestId: runId, sourceMode: 'file' });";
 const STARTED = "TerminalPanel.updateStreamingStatus(runId, 'running');";
 const STARTED_AFTER = "sourceLifecycle.started(runId);\n                        " + STARTED;
 const FINISH = "TerminalPanel.finishStreamingEntry(runId, result);";
 const FINISH_AFTER = "sourceLifecycle.finish(runId, result);\n                    " + FINISH;
 const FAIL = "TerminalPanel.failStreamingEntry(runId, error?.message || String(error));";
-const FAIL_AFTER = "sourceLifecycle.fail(runId, error);\n                    " + FAIL;
+// A rejected MCP call is a transport/tool failure, not a Stata result: hold the owner.
+const FAIL_AFTER = "sourceLifecycle.unknown(runId, error);\n                    " + FAIL;
 const BRIDGE_START = "    outputChannel = vscode.window.createOutputChannel('Stata Workbench');";
 const BRIDGE_START_AFTER = BRIDGE_START + `
     sourceBridge.start(Number(settings.get('visibleBridgePort', 17485))).then(snapshot => {
@@ -45,6 +50,52 @@ const BRIDGE_START_AFTER = BRIDGE_START + `
     }).catch(error => appendLine('[Source bridge] ' + String(error?.message || error)));`;
 const BRIDGE_CLOSE = "async function deactivate() {";
 const BRIDGE_CLOSE_AFTER = BRIDGE_CLOSE + "\n    await sourceBridge.close();";
+// Terminal-panel commands enter the same lifecycle as selection/file/bridge runs.
+const TERMINAL_HANDLER = "        runCommand: terminalRunCommand,";
+const TERMINAL_HANDLER_AFTER = "        runCommand: sourceTerminalRunCommand,";
+const TERMINAL_STARTED = "                if (hooks?.runId) TerminalPanel.updateStreamingStatus(hooks.runId, 'running');";
+const TERMINAL_STARTED_AFTER = "                if (hooks?.runId) sourceLifecycle.started(hooks.runId);\n" + TERMINAL_STARTED;
+const TERMINAL_ADD_ENTRY = "TerminalPanel.addEntry(commandText, result, filePath, terminalRunCommand, variableListProvider);";
+const TERMINAL_CATCH = `    } catch (error) {
+        return {
+            success: false,
+            rc: -1,
+            stderr: error?.message || String(error),
+            error: { message: error?.message || String(error) }
+        };
+    }
+};
+
+// Clear-all convenience for terminal UI`;
+const TERMINAL_CATCH_AFTER = `    } catch (error) {
+        if (hooks?.rethrowTransportErrors) throw error;
+        return {
+            success: false,
+            rc: -1,
+            stderr: error?.message || String(error),
+            error: { message: error?.message || String(error) }
+        };
+    }
+};
+
+// The Terminal UI expects a result object. A transport error keeps the source
+// owner held as unknown; a returned result settles it.
+const sourceTerminalRunCommand = async (code, hooks) => {
+    const runId = hooks?.runId ? String(hooks.runId) : null;
+    if (!runId) return terminalRunCommand(code, hooks);
+    sourceLifecycle.begin({ runId, requestId: runId, sourceMode: 'terminal' });
+    let result;
+    try {
+        result = await terminalRunCommand(code, { ...hooks, rethrowTransportErrors: true });
+    } catch (error) {
+        sourceLifecycle.unknown(runId, error);
+        return { success: false, rc: -1, stderr: error?.message || String(error), error: { message: error?.message || String(error) } };
+    }
+    sourceLifecycle.finish(runId, result);
+    return result;
+};
+
+// Clear-all convenience for terminal UI`;
 
 // Run files through the product driver so the finalizer record and exact
 // completion marker settle rc (stage 4); the researcher's file is not edited.
@@ -138,6 +189,10 @@ const openGraphPreview = createManualGraphPreview({
     source = replace(source, FAIL, FAIL_AFTER, 2);
     source = replace(source, BRIDGE_START, BRIDGE_START_AFTER);
     source = replace(source, BRIDGE_CLOSE, BRIDGE_CLOSE_AFTER);
+    source = replace(source, TERMINAL_HANDLER, TERMINAL_HANDLER_AFTER, 2);
+    source = replace(source, TERMINAL_ADD_ENTRY, TERMINAL_ADD_ENTRY.replace("terminalRunCommand", "sourceTerminalRunCommand"));
+    source = replace(source, TERMINAL_CATCH, TERMINAL_CATCH_AFTER);
+    source = replace(source, TERMINAL_STARTED, TERMINAL_STARTED_AFTER);
     source = FINALIZER_REQUIRE + source;
     source = replace(source, FILE_RUN_CALL, FILE_RUN_CALL_AFTER);
     source = replace(source, FILE_RUN_END, FILE_RUN_END_AFTER);
@@ -179,5 +234,5 @@ module.exports = {
   MCP_PROBE_BEFORE, MCP_PROBE_AFTER, LIFECYCLE_REQUIRE, BRIDGE_REQUIRE, LIFECYCLE_INIT,
   LIFECYCLE_INIT_AFTER, BRIDGE_INIT_AFTER, RUN_START, RUN_START_AFTER, FILE_RUN_START,
   FILE_RUN_START_AFTER, STARTED, FINISH, FAIL, BRIDGE_START, BRIDGE_CLOSE,
-  FINALIZER_REQUIRE, FILE_RUN_CALL, FILE_RUN_END,
+  FINALIZER_REQUIRE, FILE_RUN_CALL, FILE_RUN_END, TERMINAL_HANDLER, TERMINAL_ADD_ENTRY, TERMINAL_CATCH, TERMINAL_STARTED,
 };
