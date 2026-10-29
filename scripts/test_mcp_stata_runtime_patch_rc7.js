@@ -1113,6 +1113,15 @@ asyncio.run(main())
   assert.strictEqual(selected.ok, true);
   assert.strictEqual(selected.root, path.resolve(fixedRoot));
   assert.notStrictEqual(selected.root, path.resolve(uvRuntimeRoot));
+  {
+    // Real interpreter, non-ASCII source: Windows text stdin decodes with the ANSI code
+    // page (10-29: cp936 -> '\udc94' surrogate -> pre-write-compile-failed).
+    const realPython = process.env.STATA_PATCH_TEST_PYTHON || (process.platform === "win32" ? "python" : "python3");
+    const compiled = runtimePatch.compilePythonSources(root, [
+      { path: "unicode_fixture.py", source: 'label = "合成样本 — O\'Brien"\nassert label\n' },
+    ], { pythonCommand: realPython });
+    assert.strictEqual(compiled.ok, true, JSON.stringify(compiled));
+  }
   console.log("MCP_STATA_RUNTIME_PATCH_RC7_PASS");
 } finally {
   fs.rmSync(root, { recursive: true, force: true });

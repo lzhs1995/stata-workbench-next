@@ -932,7 +932,9 @@ function compilePythonSources(root, sources, options = {}) {
   const spawnSync = options.compileSpawnSync || childProcess.spawnSync;
   const compiler = [
     "import json, sys",
-    "items = json.load(sys.stdin)",
+    // Read bytes: Windows text stdin uses the ANSI code page (cp936 on the test
+    // machine), which turns UTF-8 source into surrogates and fails compile().
+    "items = json.loads(sys.stdin.buffer.read())",
     "for item in items:",
     "    compile(item['source'], item['path'], 'exec')",
   ].join("\n");
