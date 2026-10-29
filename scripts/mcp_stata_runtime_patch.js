@@ -835,7 +835,7 @@ function runtimeRootFromUvCommand(command, options = {}) {
   try {
     const result = spawnSync(
       command,
-      [...prefix, "--from", packageSpec, "python", "-I", "-c", "import sys; print(sys.prefix)"],
+      [...prefix, "--from", packageSpec, "--with", "mcp<2", "python", "-I", "-c", "import sys; print(sys.prefix)"],
       { encoding: "utf8", timeout: options.timeoutMs || 15000, stdio: ["ignore", "pipe", "pipe"] }
     );
     if (result && result.status === 0) {

@@ -25,6 +25,21 @@ Preserves the Mac-accepted runtime; removes local maintenance credentials, adds 
 
 # Changelog
 
+## 0.1.3-rc.7.44-dev.7 — default service stays on MCP 1.x
+
+- The default uvx/uv route resolved mcp-stata 1.26.1 with the newest MCP; MCP 2.x
+  removed the FastMCP module that mcp-stata imports. All 11 generated `--from`
+  argument arrays (client default and fallback, version probes, refresh, Claude CLI /
+  Codex TOML / VS Code-Cursor generators) and runtime discovery now add
+  `--with "mcp<2"` after the package and before the executable.
+- Behavior change: an explicitly configured command with no `args` now gets `[]`
+  instead of inheriting the uvx arguments. Explicit `args` arrays, including `[]`,
+  are unchanged. Generators still replace the whole target server entry.
+- Acceptance constraints add the Windows-only packages installed by the tested
+  service (colorama 0.4.6, pywin32 312, tzdata 2026.6) as `sys_platform == "win32"`
+  constraints. Transformer and 58 behavior checks come from Codex's independent
+  review; Mac cold install passed there, Windows default-route install is untested.
+
 ## 0.1.3-rc.7.44-dev.6 — backend cold start outside pre-run budgets
 
 - Windows dev.5 acceptance step 9: after Reload Window the first Run Current File

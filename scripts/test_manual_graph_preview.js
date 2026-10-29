@@ -9,7 +9,8 @@ const patch = require('./apply_manual_graph_preview_patch');
 const fingerprint = require('./finalize_bundle_identity');
 const crypto = require('node:crypto');
 // Later bundle patches are reverted exactly; this chain pins the dev.4/dev.5 bytes.
-const sealed = require('./apply_backend_cold_start_patch').revertBundle(source);
+const sealed = require('./apply_backend_cold_start_patch').revertBundle(
+  require('./apply_default_service_constraint_patch').revertBundle(source));
 const beforeContainerFix = fingerprint.finalize(sealed.replace(patch.CLEAR_AFTER, patch.CLEAR_BEFORE)).text;
 assert.equal(crypto.createHash('sha256').update(beforeContainerFix).digest('hex'),
   'f26e06f9b42d650dff797f3ad44021d6826c02600bd94d41958fd40a5c653377', 'deployed dev.4 bundle is exact');

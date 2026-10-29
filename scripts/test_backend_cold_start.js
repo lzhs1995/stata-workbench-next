@@ -14,6 +14,7 @@ const walk = require("acorn-walk");
 const guard = require("./prerun_stage_guard");
 const patch = require("./apply_backend_cold_start_patch");
 const fingerprint = require("./finalize_bundle_identity");
+const constraint = require("./apply_default_service_constraint_patch");
 
 const bundle = fs.readFileSync(path.join(__dirname, "..", "dist", "extension.js"), "utf8");
 const sha = text => crypto.createHash("sha256").update(text).digest("hex");
@@ -22,9 +23,11 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 // 1. 补丁幂等、精确可逆（还原出 Windows 上部署的 dev.5 字节），锚点 fail closed。
 assert.equal(patch.patchBundle(bundle), bundle, "byte idempotence");
 assert.equal(fingerprint.verify(bundle).ok, true);
-const dev5 = patch.revertBundle(bundle);
+// Later patches are reverted exactly first; dev.6 is this patch on top of dev.5.
+const dev6 = constraint.revertBundle(bundle);
+const dev5 = patch.revertBundle(dev6);
 assert.equal(sha(dev5), "bf3e938134855456475754ceeca00600c9a295a4f1bd530b811f90377dfc23ca", "dev.5 bytes");
-assert.equal(patch.patchBundle(dev5), bundle, "maintenance replay reproduces the sealed bundle");
+assert.equal(patch.patchBundle(dev5), dev6, "maintenance replay reproduces the sealed dev.6 bundle");
 assert.throws(() => patch.patchBundle(bundle.replace("+ 120) * 1000", "+ 60) * 1000")), /modified/);
 assert.throws(() => patch.patchBundle(dev5.replace(patch.BEGIN_BEFORE, "")), /anchor/);
 assert.throws(() => patch.patchBundle(dev5 + patch.STATUS_BEFORE), /anchor/);

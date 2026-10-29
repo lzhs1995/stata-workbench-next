@@ -69,3 +69,9 @@ typing-extensions==4.16.0
 typing-inspection==0.4.2
 uvicorn==0.51.0
 wcwidth==0.8.2
+
+# Windows additions: stage 20261028-184807, Python 3.11.14 AMD64.
+# Observed by service-freeze-1 (job 93); conditional constraints, not requirements.
+colorama==0.4.6; sys_platform == "win32"
+pywin32==312; sys_platform == "win32"
+tzdata==2026.6; sys_platform == "win32"

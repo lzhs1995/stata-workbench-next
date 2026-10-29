@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "version": "0.1.3-rc.7.44-dev.6",
+  "version": "0.1.3-rc.7.44-dev.7",
   "files": {
     "scripts/wire_rc713b_remaining.js": {
       "sha256": "ebd9ff993b435ac55c5fe625fbf514938fe28b8f8d995c723044ae42898cbfaa",
@@ -31,8 +31,8 @@
       "bytes": 90032
     },
     "scripts/mcp_stata_runtime_patch.js": {
-      "sha256": "7b05bee3f99aedd3d0aa22142164a5b057bc2d01154bea37404031ef742d8883",
-      "bytes": 76052
+      "sha256": "8ed3572db92d98ca9f14464639c2e010cc1b94c0be296e4c275c650012405a33",
+      "bytes": 76071
     },
     "scripts/manual_run_policy.js": {
       "sha256": "feaf9b71dca260f3fc2b671cf936db7cb9e7bcb1649a822b66f427fe3675a6ff",
@@ -111,8 +111,8 @@
       "bytes": 5178
     },
     "scripts/apply_rc7_shared_execution_patch.js": {
-      "sha256": "05a96674074999b66aa5dff85d55226cdb411a6875003e05d41201a63557b71a",
-      "bytes": 336757
+      "sha256": "f8252dcb37a94a8f54fdb8bbd15cae05242950444cf39c4b092206fa78da5a0e",
+      "bytes": 336856
     },
     "scripts/apply_rc64_routes_patch.js": {
       "sha256": "b01e1225f5844b632e24d616957fb9e565541345a10d6f4fbc640a4b034070b2",
@@ -139,8 +139,8 @@
       "bytes": 11107
     },
     "dist/extension.js": {
-      "sha256": "7cd398d1aa92a9f1fa1885b425d3fa07a6f71dcf3be3c9b9a0da5cf64721c40b",
-      "bytes": 5601900
+      "sha256": "f463a539eb0352e9c62c9bd8df8dddd6c4e4cbce4b0cbf63ad35d3552a15d761",
+      "bytes": 5602102
     },
     "scripts/mac/png_compat_transform.js": {
       "sha256": "cdea12886a1d5bb5b4c2b3e38829de1c7e68ed70e7777e8d6e2eb02bb0ce3514",
@@ -310,6 +310,10 @@
       "sha256": "80466140b0733af2388694e4ab349350581944f58243a216c5c3a84272bfdcd5",
       "bytes": 6154
     },
+    "scripts/apply_default_service_constraint_patch.js": {
+      "sha256": "c2a01caf581b7e332a19998dc52e83faf606e765e7a74b918d1bf5115c1d368d",
+      "bytes": 3931
+    },
     "tools/verify_release.py": {
       "sha256": "9d64ae994081472ba252ea7a614c2f84032cc306a70addd9e3e44bad216bfc91",
       "bytes": 1839
@@ -331,7 +335,7 @@
       "bytes": 4729
     },
     "tools/verified_workbench.py": {
-      "sha256": "a7951f93765ec7e88cb5d83a2e9752e9eef452b671a69edb790f7fa68f09cd62",
+      "sha256": "c7ebf9b9f0f0a1cc1525a9212e7461a6e05d93fac9b425f9956de202f5ce8c04",
       "bytes": 10792
     },
     "tools/workbench_platform.py": {

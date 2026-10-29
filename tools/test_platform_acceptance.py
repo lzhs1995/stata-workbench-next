@@ -241,6 +241,9 @@ class OperatorKitTests(unittest.TestCase):
                     if line and not line.startswith("#"))
         self.assertEqual(pins["mcp-stata"], "1.26.1")
         self.assertTrue(pins["mcp"].startswith("1."), pins["mcp"])
+        # Windows-only packages are the installed versions from service-freeze-1, and stay conditional.
+        for name, version in {"colorama": "0.4.6", "pywin32": "312", "tzdata": "2026.6"}.items():
+            self.assertEqual(pins[name], version + '; sys_platform == "win32"')
         code = self.parent / "VS Code" / "Code.exe"
         code.parent.mkdir()
         code.write_bytes(b"test executable placeholder")
