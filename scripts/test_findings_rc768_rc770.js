@@ -101,7 +101,17 @@ assert.equal(wordingCases.escalated.message, "human-file cancelled by soft Stop 
 assert.equal(wordingCases.earlier.message, "human-file cancelled by soft Stop (generation 1)", "fence advances before this run are not its cause");
 assert.equal(wordingCases.unknown.message, "human-file cancelled by reset (generation 1)");
 assert.equal(wordingCases.same, null, "unchanged generation does not cancel");
-assert.ok(!wording.revertBundle(bundle).slice(guardStart, guardStart + 400).includes("soft Stop"), "legacy wording control");
+// Legacy control: locate the guard in the reverted text itself and run it under a soft Stop history.
+const legacyBundle = wording.revertBundle(bundle);
+const legacyHead = "if(Number(globalThis.__codexResetGeneration||0)!==__codexHumanFileResetGeneration){";
+assert.equal(legacyBundle.split(legacyHead).length - 1, 1, "one legacy human-file cancellation guard");
+const legacyStart = legacyBundle.indexOf(legacyHead);
+const legacyGuard = legacyBundle.slice(legacyStart, legacyBundle.indexOf("throw __codexResetError}", legacyStart) + "throw __codexResetError}".length);
+const legacyCtx = { __codexHumanFileResetGeneration: 0, __codexResetGeneration: 1, __codexSupersedeHistory: [rec("soft-stop", 0, 1)], Number, String, Error };
+vm.createContext(legacyCtx);
+assert.throws(() => vm.runInContext(legacyGuard, legacyCtx),
+  error => error.message === "human-file cancelled by force reset generation 1" && error.code === "CODEX_FORCE_RESET_CANCELLED",
+  "legacy wording reported force reset for a soft Stop (dev.5 step 7)");
 assert.equal(bundle.split(wording.STATUS_AFTER).length - 1, 1);
 
 // 3. Data Browser：取 src 与打包版的真实 initBrowser，/v1/dataset 返回 wb_platform。

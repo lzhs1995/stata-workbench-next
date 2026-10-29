@@ -51,14 +51,17 @@ function revertSource(rel, source) {
 }
 
 if (require.main === module) {
+  // --check: verify both webview files are already patched and write nothing.
+  const check = process.argv.includes("--check");
   const changed = [];
   for (const rel of Object.keys(TARGETS)) {
     const target = path.join(__dirname, "..", rel);
     const before = fs.readFileSync(target, "utf8");
     const after = patchSource(rel, before);
-    if (after !== before) { fs.writeFileSync(target, after); changed.push(rel); }
+    if (after !== before) { if (!check) fs.writeFileSync(target, after); changed.push(rel); }
   }
-  console.log(JSON.stringify({ changed, installed: false }));
+  console.log(JSON.stringify({ changed, installed: false, check }));
+  if (check && changed.length) process.exitCode = 1;
 }
 
 module.exports = { patchSource, revertSource, MARKER, TARGETS };

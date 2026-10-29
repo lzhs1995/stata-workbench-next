@@ -40,6 +40,14 @@ Preserves the Mac-accepted runtime; removes local maintenance credentials, adds 
   webview files are patched together.
 - `firstLogAt` stays `null` when a run ends before its log is discovered; that is
   an absent observation, not a defect, and is unchanged.
+- Verified on Windows x64 (stage 20261029-101315): cold first run 25.2 s, Data
+  Browser shows `wb_platform`, soft Stop shows `human-file cancelled by soft Stop
+  (generation 1)` with the backend unchanged. On Mac: cold first run 14.1 s, the Data
+  Browser frame and the same soft Stop message. The `_enqueue` recheck is
+  covered by the bundle-level test; the normal flow no longer reaches that timing.
+- dev.7 default route on Windows from an empty cache: `--with mcp<2` resolved
+  mcp 1.30.0 and imported the server; the same command without it resolved mcp 2.x
+  and failed with `No module named 'mcp.server.fastmcp'`.
 
 ## 0.1.3-rc.7.44-dev.7 — default service stays on MCP 1.x
 
