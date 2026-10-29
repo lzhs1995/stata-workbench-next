@@ -25,6 +25,17 @@ Preserves the Mac-accepted runtime; removes local maintenance credentials, adds 
 
 # Changelog
 
+## 0.1.3-rc.7.44-dev.6 — backend cold start outside pre-run budgets
+
+- Windows dev.5 acceptance step 9: after Reload Window the first Run Current File
+  started mcp-stata lazily (about 62 s) inside the 60 s pre-run snapshot budget,
+  so the run was refused before dispatch. `__codexBeginGraphRun` now waits for
+  the backend first, under its own bound (setup timeout + 120 s), for all four
+  execution entries. Timeout, failure and Stop during the wait refuse the run
+  with `payloadDispatched:false`; `/status.backendStart` records the wait.
+- `trueReady` is unchanged: it still means the extension accepts runs, and the
+  backend still starts on the first run. dev.6 needs one Windows rerun of step 9.
+
 ## 0.1.3-rc.7.44-dev.5 — cross-platform candidate
 
 - Share the Python receipt/client contract across Mac and Windows; native process,

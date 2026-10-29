@@ -18,7 +18,7 @@ const declarations = new Map();
 let wrap, outer, snapshotCatch;
 walk.simple(acorn.parse(bundle, { ecmaVersion: "latest", allowReturnOutsideFunction: true }), {
   FunctionDeclaration(node) {
-    if (["__codexCaptureGraphInventory", "__codexBeginGraphRun", "__codexFinishGraphRunNoExport",
+    if (["__codexCaptureGraphInventory", "__codexBeginGraphRun", "__codexEnsureBackendStarted", "__codexFinishGraphRunNoExport",
       "__codexExportCurrentGraphsForPanel", "__codexBuildGraphSignatureMap",
       "__codexParseGraphInventoryFile"].includes(node.id?.name)) {
       assert.ok(!declarations.has(node.id.name));
@@ -37,7 +37,7 @@ walk.simple(acorn.parse(bundle, { ecmaVersion: "latest", allowReturnOutsideFunct
     if (source.includes(preRun.MARKER) && node.param?.name === "__snapshotError") snapshotCatch = source;
   },
 });
-assert.equal(declarations.size, 6);
+assert.equal(declarations.size, 7);
 assert.ok(wrap && outer && snapshotCatch);
 const start = bundle.indexOf(preRun.START);
 const setup = bundle.slice(start, bundle.indexOf('let __os=require("node:os")', start));
