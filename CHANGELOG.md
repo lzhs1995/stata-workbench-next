@@ -25,6 +25,98 @@ Preserves the Mac-accepted runtime; removes local maintenance credentials, adds 
 
 # Changelog
 
+## 0.1.3-rc.7.44 — Stop in the pre-run window, probe timeouts under load
+
+- Windows Stop-cycle testing found that a soft Stop landing in the human-file
+  pre-run enrich window did not stop the payload. The checkpoint task had already
+  reported `task_done`, the enrich guard passed, and the `.do` file ran after the
+  Stop. Soft Stop then waited on that uncancelled payload transport and escalated to
+  force reset; one run ended in recovery-required. The gap is old (the same code
+  from public rc.7.39 through dev.8), and the Agent bridge path had it too.
+- rc.7.71 checks the reset generation before each pre-run dispatch (snapshot and the
+  Run File checkpoint fallback) and again after the enrich guard, with no `await`
+  between that check and the payload call. The Agent bridge takes its own generation
+  right after acquiring the run. A Stop in that window now returns 409
+  `PRE_RUN_CANCELLED_BY_STOP` with `payloadDispatched: false` and does not escalate.
+  A Stop while the checkpoint is still incomplete keeps the existing 500
+  `EXEC_REJECTED`.
+- The agent client (`tools/shared_stata.py`) observes again, at most 3 times, when a
+  read-only probe times out: `ps`/`lsof`, and on macOS the passive permission check
+  or the window query. A timed-out permission probe is now `PERMISSION_CHECK_TIMEOUT`
+  instead of `PERMISSION_CHECK_FAILED`, so it no longer gives permission advice.
+  Real permission answers are not retried and the POST is never repeated. Found by
+  the Mac stress run at load average about 200 (2 of 32 runs reported unconfirmed).
+- `examples/platform-acceptance/stress.py`: bounded stress driver for one acceptance
+  instance (sequential and concurrent agent runs; each must POST once, with unique
+  run ids, an unchanged backend and reset generation, and no overlapping
+  executions). Source-only; not packaged in the VSIX.
+- `scripts/patch_manager.js verify` also checks the rc.7.70 Data Browser frame patch
+  (source and packaged) and the rc.7.71 pre-run fence.
+- README rewritten in English with a matching Chinese README (`README.zh-CN.md`).
+
+## 0.1.3-rc.7.44-dev.8 — cancellation after connect, Stop wording, Data Browser frame
+
+- Windows dev.5 step 9 diagnosis: a pre-run snapshot cancelled while the backend
+  was still connecting ran once anyway, because `_enqueue` checked the token only
+  before `_ensureClient()`. The operation body now rechecks the same token after
+  connecting and rejects with `Request cancelled` through the existing cleanup.
+- Human-file cancellation messages name the cause recorded in
+  `__codexSupersedeHistory` (soft Stop, force reset, or soft Stop then force
+  reset) instead of always saying force reset. `error.code`, `resetGeneration`
+  and control flow are unchanged; `/status` adds `resetGenerationKind`.
+- The Data Browser header shows the frame returned by `/v1/dataset` instead of the
+  static `default` (`unknown` when the field is absent); source and packaged
+  webview files are patched together.
+- `firstLogAt` stays `null` when a run ends before its log is discovered; that is
+  an absent observation, not a defect, and is unchanged.
+- Verified on Windows x64 (stage 20261029-101315): cold first run 25.2 s, Data
+  Browser shows `wb_platform`, soft Stop shows `human-file cancelled by soft Stop
+  (generation 1)` with the backend unchanged. On Mac: cold first run 14.1 s, the Data
+  Browser frame and the same soft Stop message. The `_enqueue` recheck is
+  covered by the bundle-level test; the normal flow no longer reaches that timing.
+- dev.7 default route on Windows from an empty cache: `--with mcp<2` resolved
+  mcp 1.30.0 and imported the server; the same command without it resolved mcp 2.x
+  and failed with `No module named 'mcp.server.fastmcp'`.
+
+## 0.1.3-rc.7.44-dev.7 — default service stays on MCP 1.x
+
+- The default uvx/uv route resolved mcp-stata 1.26.1 with the newest MCP; MCP 2.x
+  removed the FastMCP module that mcp-stata imports. All 11 generated `--from`
+  argument arrays (client default and fallback, version probes, refresh, Claude CLI /
+  Codex TOML / VS Code-Cursor generators) and runtime discovery now add
+  `--with "mcp<2"` after the package and before the executable.
+- Behavior change: an explicitly configured command with no `args` now gets `[]`
+  instead of inheriting the uvx arguments. Explicit `args` arrays, including `[]`,
+  are unchanged. Generators still replace the whole target server entry.
+- Acceptance constraints add the Windows-only packages installed by the tested
+  service (colorama 0.4.6, pywin32 312, tzdata 2026.6) as `sys_platform == "win32"`
+  constraints. Transformer and 58 behavior checks come from Codex's independent
+  review; Mac cold install passed there, Windows default-route install is untested.
+
+## 0.1.3-rc.7.44-dev.6 — backend cold start outside pre-run budgets
+
+- Windows dev.5 acceptance step 9: after Reload Window the first Run Current File
+  started mcp-stata lazily (about 62 s) inside the 60 s pre-run snapshot budget,
+  so the run was refused before dispatch. `__codexBeginGraphRun` now waits for
+  the backend first, under its own bound (setup timeout + 120 s), for all four
+  execution entries. Timeout, failure and Stop during the wait refuse the run
+  with `payloadDispatched:false`; `/status.backendStart` records the wait.
+- `trueReady` is unchanged: it still means the extension accepts runs, and the
+  backend still starts on the first run. dev.6 needs one Windows rerun of step 9.
+
+## 0.1.3-rc.7.44-dev.5 — cross-platform candidate
+
+- Share the Python receipt/client contract across Mac and Windows; native process,
+  window and stable-lock adapters retain exact profile ownership. PowerShell
+  wrappers delegate to the single-POST client and reject automatic reset/retry.
+- Add Mac ARM, Mac Intel and Windows CI, including real Windows locks, CIM/TCP,
+  argv and PowerShell tests; fix DOCX ZIP replacement while its input was open.
+- Export the explicit Terminal → Graphs callback across bundle module scopes;
+  retain the artifact container after output clear/restore. Native Mac failures
+  and their regression controls are preserved; dev.5 passed the reloaded UI route.
+- Provide a Windows physical-machine runbook and seven synthetic session fixtures.
+  Evidence and remaining limits are in SYNC.md; no new universal/FULL45 acceptance.
+
 ## Unreleased
 
 - Prepared `0.1.3-rc.7.39` with the rc.7.38 Stop/checkpoint repair using a Stata-safe 21-character local macro name and a generator-level regression gate that rejects every emitted `__codex_*` identifier longer than Stata's observed 31-character limit.

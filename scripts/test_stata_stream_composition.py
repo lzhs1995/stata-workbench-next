@@ -23,12 +23,13 @@ async def exercise(method, initial, appends, marker, *, fail_notify=False):
     notices = []
     with tempfile.TemporaryDirectory() as root:
         log = Path(root) / "stream.smcl"
-        log.write_text(initial)
+        # Exercise exact stream bytes; the host must not translate LF to CRLF.
+        log.write_text(initial, encoding="utf-8", newline="")
 
         async def sleep(seconds):
             clock.value += seconds
             if appends:
-                with log.open("a") as out:
+                with log.open("a", encoding="utf-8", newline="") as out:
                     out.write(appends.pop(0))
 
         async def run_sync(fn):
@@ -73,12 +74,13 @@ async def main():
     assert any("saw_required_tail" in warning for warning in old[2]), old
 
     method = payload["candidate"]
-    ready = await exercise(method, marker + "\n", [], marker)
-    assert ready[0] == marker + "\n" and ready[1] == 0 and not ready[2], ready
+    for ending in ("\n", "\r\n"):
+        ready = await exercise(method, marker + ending, [], marker)
+        assert ready[0] == marker + ending and ready[1] == 0 and not ready[2], ready
+        split = await exercise(method, "", [marker[:12], marker[12:] + ending], marker)
+        assert split[0] == marker + ending and split[1] < 5 and not split[2], split
     delayed = await exercise(method, "header\n", ["tail\n", "{res}" + marker + "\n"], marker)
     assert marker in delayed[0] and 0 < delayed[1] < 5 and not delayed[2], delayed
-    split = await exercise(method, "", [marker[:12], marker[12:] + "\n"], marker)
-    assert split[0] == marker + "\n" and split[1] < 5 and not split[2], split
     echo = await exercise(method, '. display as text "' + marker + '"\n', [], marker)
     assert echo[1] >= 5 and not echo[2], echo
     no_marker = await exercise(method, "tail\n", [], None)
@@ -87,7 +89,7 @@ async def main():
         full = await exercise(method, "x" * 5000 + "\n", [marker + "\n"], marker, fail_notify=fail)
         assert len(full[0]) > 5000 and marker in full[0] and full[1] < 5 and not full[2], full
         assert len(full[3]) <= 4000, len(full[3])
-    print("STREAM_COMPOSED_BEHAVIOR_PASS: legacy failure plus 7 candidate cases")
+    print("STREAM_COMPOSED_BEHAVIOR_PASS: legacy failure plus 9 candidate cases (LF and CRLF)")
 
 
 asyncio.run(main())

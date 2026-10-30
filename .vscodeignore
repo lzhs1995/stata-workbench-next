@@ -50,3 +50,8 @@ mcp-stata-temp/**
 .env
 .env.*
 STATA.LIC
+# Acceptance orchestration needs the pinned source checkout and release manifest.
+# It is a source-only operator tool, not extension runtime.
+examples/platform-acceptance/acceptance.py
+examples/platform-acceptance/service-constraints.txt
+examples/platform-acceptance/stress.py

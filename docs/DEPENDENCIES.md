@@ -70,3 +70,12 @@ For a portable run, open `examples/taught-tasks/` as a workspace or set:
 ```
 
 A ready-to-copy example is provided at `examples/taught-tasks/.vscode/settings.example.json`.
+
+The packaging tool pins `@azure/identity` 4.13.0 through an npm override. Newer
+4.13.1–4.14.0 releases select MSAL Node 5/6 affected by GHSA-xcx6-jx8p-x3h5;
+4.13.0 retains the compatible MSAL 3 line. This is a development/packaging
+dependency, not a claim about embedded runtime libraries. Recheck before removing
+the pin; no Azure credentials or publishing are exercised by CI.
+The legacy MSAL dependency also pins `uuid` 11.1.1 (the CommonJS-compatible fixed
+line) for GHSA-w5hq-g745-h8pq. These explicit overrides are checked by package
+loading, VSIX creation and npm audit; live Azure publishing remains untested.

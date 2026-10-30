@@ -1,10 +1,25 @@
 name: Public Release Checks
-on: [push, pull_request]
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: release-checks-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   offline:
-    runs-on: macos-latest
+    name: Offline (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-15-intel, windows-2022]
+    env:
+      PYTHONUTF8: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -16,22 +31,21 @@ jobs:
         with:
           python-version: '3.14'
       - name: Install offline Python test dependencies
-        env:
-          STATA_CI_PYTHON: ${{ steps.python.outputs.python-path }}
-        run: |
-          "$STATA_CI_PYTHON" -m pip install anyio==4.15.1 idna==3.19 typing_extensions==4.16.0
-          echo "STATA_PATCH_TEST_PYTHON=$STATA_CI_PYTHON" >> "$GITHUB_ENV"
-          echo "PYTHON=$STATA_CI_PYTHON" >> "$GITHUB_ENV"
+        run: python -m pip install anyio==4.15.1 idna==3.19 typing_extensions==4.16.0
+      - name: Select the actual Python executable
+        run: python -c "import os,sys; f=open(os.environ['GITHUB_ENV'],'a',encoding='utf-8'); f.write('STATA_PATCH_TEST_PYTHON='+sys.executable+'\nPYTHON='+sys.executable+'\nSTATA_WORKBENCH_PYTHON='+sys.executable+'\n'); f.close()"
       - run: npm ci --ignore-scripts
       - run: npm audit
-      - run: npm run check
-      - run: python -B -m unittest discover -s tools -p 'test_*.py'
+      - name: Shared logic and platform regressions (no licensed Stata)
+        run: npm run check -- --keep-going
+      - name: Python client and actual OS tests
+        if: ${{ !cancelled() }}
+        run: python -B -m unittest discover -s tools -p 'test_*.py'
       - run: python -B tools/verify_release.py
       - run: npm run package
-      - run: |
-          candidate_version=$(node -p "require('./package.json').version")
-          python -B tools/verify_release.py --vsix "stata-workbench-shared-session-${candidate_version}.vsix"
+      - run: python -B tools/verify_release.py --packaged
       - uses: actions/upload-artifact@v4
         with:
-          name: public-candidate-vsix
+          name: candidate-${{ matrix.os }}-${{ github.sha }}
           path: '*.vsix'
+          retention-days: 7

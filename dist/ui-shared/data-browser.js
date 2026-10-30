@@ -55474,6 +55474,8 @@ return true;`);
       const datasetInfo = response.dataset || response;
       state.datasetId = datasetInfo.id;
       state.totalObs = datasetInfo.n || 0;
+      // codex patch rc.7.70: Data Browser shows the current frame
+      if (dom.frameName) dom.frameName.textContent = datasetInfo.frame ? String(datasetInfo.frame) : "unknown";
       log(`Dataset Info: ${JSON.stringify(response)}`);
       updateDataSummary(state.totalObs, 0);
       return apiCall("/v1/vars", "GET");

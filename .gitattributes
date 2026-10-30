@@ -2,5 +2,8 @@
 dist/** -text
 src/** -text
 scripts/** -text
-tests/fixtures/extension.js.* -text
+tests/** -text
 *.vsix binary
+# Python sources now travel with the cross-platform candidate and its receipts.
+tools/** -text
+examples/platform-acceptance/** -text
