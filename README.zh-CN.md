@@ -22,7 +22,8 @@
 
 | 版本 | 状态 | 平台证据 |
 | --- | --- | --- |
-| [`v0.1.3-rc.7.44`](https://github.com/lzhs1995/stata-workbench-shared-session/releases/tag/v0.1.3-rc.7.44) | 最新 pre-release（2026-10-30） | macOS 和 Windows，见[平台状态](#平台状态) |
+| [`v0.1.3-rc.7.45`](https://github.com/lzhs1995/stata-workbench-shared-session/releases/tag/v0.1.3-rc.7.45) | 最新 pre-release（2026-10-31） | macOS 和 Windows，见[平台状态](#平台状态) |
+| [`v0.1.3-rc.7.44`](https://github.com/lzhs1995/stata-workbench-shared-session/releases/tag/v0.1.3-rc.7.44) | 更早的 pre-release（2026-10-30） | macOS 和 Windows |
 | [`v0.1.3-rc.7.39-public.2`](https://github.com/lzhs1995/stata-workbench-shared-session/releases/tag/v0.1.3-rc.7.39-public.2) | 更早的 pre-release（2026-09-09） | 仅 macOS |
 
 本文档对应 `v0.1.3-rc.7.44`。下面的测量来自 `0.1.3-rc.7.44` 本身和候选版
@@ -85,8 +86,8 @@ dev.5 上通过。第 9 步在 dev.5 上失败（backend 冷启动超出 60 秒�
 
 ## 安装
 
-从 [v0.1.3-rc.7.44 发布页](https://github.com/lzhs1995/stata-workbench-shared-session/releases/tag/v0.1.3-rc.7.44)
-下载 `stata-workbench-shared-session-0.1.3-rc.7.44.vsix` 和 `SHA256SUMS`，放在同一个
+从 [v0.1.3-rc.7.45 发布页](https://github.com/lzhs1995/stata-workbench-shared-session/releases/tag/v0.1.3-rc.7.45)
+下载 `stata-workbench-shared-session-0.1.3-rc.7.45.vsix` 和 `SHA256SUMS`，放在同一个
 文件夹。安装前用 `SHA256SUMS` 核对 VSIX（见[验证下载文件](#验证下载文件)）；发布说明里列着同一个哈希。
 
 下面的命令装进一个单独、可识别的 profile，agent 工具按这个 profile 和端口找到会话。
@@ -100,7 +101,7 @@ export STATA_WORKBENCH_PORT=17485
 "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code" \
   --user-data-dir "$STATA_WORKBENCH_PROFILE/user-data" \
   --extensions-dir "$STATA_WORKBENCH_PROFILE/extensions" \
-  --install-extension ./stata-workbench-shared-session-0.1.3-rc.7.44.vsix
+  --install-extension ./stata-workbench-shared-session-0.1.3-rc.7.45.vsix
 ```
 
 在这个 profile 里把 `stataMcp.stataPath` 设为已授权的 Stata 可执行文件。
@@ -114,7 +115,7 @@ $env:STATA_WORKBENCH_PROFILE = Join-Path $HOME '.stata-workbench-shared'
 $env:STATA_WORKBENCH_PORT = '17485'
 code --user-data-dir "$env:STATA_WORKBENCH_PROFILE\user-data" `
   --extensions-dir "$env:STATA_WORKBENCH_PROFILE\extensions" `
-  --install-extension .\stata-workbench-shared-session-0.1.3-rc.7.44.vsix
+  --install-extension .\stata-workbench-shared-session-0.1.3-rc.7.45.vsix
 ```
 
 `code` 就是 VS Code 的 `bin\code.cmd`；不在 `PATH` 里时见[故障排查](#故障排查)。把
@@ -132,7 +133,7 @@ VSIX 一致：
 ```sh
 git clone https://github.com/lzhs1995/stata-workbench-shared-session.git
 cd stata-workbench-shared-session
-git checkout v0.1.3-rc.7.44
+git checkout v0.1.3-rc.7.45
 python3 -B tools/verified_workbench.py --doctor
 ```
 
@@ -257,7 +258,7 @@ shasum -a 256 -c SHA256SUMS --ignore-missing
 Windows PowerShell：
 
 ```powershell
-$f = 'stata-workbench-shared-session-0.1.3-rc.7.44.vsix'
+$f = 'stata-workbench-shared-session-0.1.3-rc.7.45.vsix'
 $expected = (Select-String -Path SHA256SUMS -SimpleMatch $f).Line.Split(' ')[0]
 (Get-FileHash $f -Algorithm SHA256).Hash.ToLower() -eq $expected
 ```
@@ -265,7 +266,7 @@ $expected = (Select-String -Path SHA256SUMS -SimpleMatch $f).Line.Split(' ')[0]
 最后一行必须输出 `True`。然后在按发布 tag 克隆的仓库里，用发布身份清单核对 VSIX 内容：
 
 ```sh
-python3 tools/verify_release.py --vsix /path/to/stata-workbench-shared-session-0.1.3-rc.7.44.vsix
+python3 tools/verify_release.py --vsix /path/to/stata-workbench-shared-session-0.1.3-rc.7.45.vsix
 ```
 
 包版本和每个钉住的运行时文件都一致时，它输出含 `"verdict": "PASS"` 的 JSON。这只核对运行时身份，
@@ -315,6 +316,7 @@ python3 tools/verify_release.py --vsix /path/to/stata-workbench-shared-session-0
 
 | Tag | 日期 | 类型 | 范围 |
 | --- | --- | --- | --- |
+| `v0.1.3-rc.7.45` | 2026-10-31 | Pre-release | macOS 和 Windows：冷启动后的第一次运行等 Stata 本身变成 running；等待期间按 Stop 仍是 soft Stop；Windows 上 force reset 等得起冷重连；agent 路径上的命名图形导出（`set more off` 前缀）；运行前 checkpoint 期间按 Stop 不再发送被拒的恢复命令 |
 | `v0.1.3-rc.7.44` | 2026-10-30 | Pre-release | macOS 和 Windows：Windows 适配层与验收工具、运行前窗口里的 Stop 不再让正文执行、只读探测超时会重新观测、backend 冷启动不计入运行前预算、默认服务保持在 MCP 1.x、连上后再查取消、Stop 提示文案、Data Browser frame、已保存图形预览、递归 DO 引用扫描 |
 | `v0.1.3-rc.7.39-public.2` | 2026-09-09 | Pre-release | macOS 权限诊断（Mac tools 1.1.0）；运行时不变 |
 | `v0.1.3-rc.7.39-public.1` | 2026-09-07 | Pre-release | 对 Mac 验收过的 `0.1.3-rc.7.39` 做公开打包；去掉本机维护 token |
