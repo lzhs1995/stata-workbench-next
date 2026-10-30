@@ -104,6 +104,27 @@ Integrates PR #11, #12, #13 and #14 on top of rc.7.44.
   payload was not admitted, Stata still holds the pre-run state and the Stop
   completes; otherwise the restore fails as before, without dispatching.
 
+### Successful prepared do-file runs no longer report a failure
+
+- A prepared do-file run (human-file, and since #13 the Agent `do "<file>"` path)
+  is driven by `scripts/runfile_finalizer_core.js`, which ended with
+  `exit <rc>`. mcp-stata wraps multi-line code in `capture noisily { … }` and
+  then reads `scalar <rc> = _rc`; pystata runs that bundle with `include`.
+  `exit 0` ends the include before the scalar line, so mcp-stata found no return
+  code and answered `success: false` for every run that returned 0. The error
+  text was then taken from the last red line in the log. A nonzero exit is caught
+  by the `capture`, so failures were reported correctly.
+- The Workbench usually settled the run from its exact completion marker first,
+  which hid the problem. In rc.7.45 FULL45 S20 (Mac) the `task_done` notice won
+  twice: two Agent runs that had finished with RUN_RC 0 came back as HTTP 500,
+  with "gopen: graph export failed …" (a user ado's `display as error` before
+  `exit 0`) and "not found)" as the error.
+- The driver now ends with `if <rc> != 0 exit <rc>`; rc 0 falls through.
+  Measured in the mcp-stata bundle shape with pystata on StataNow MP: the old
+  driver lost the rc for all three rc-0 bodies (plain, red line then `exit 0`,
+  captured r(601)); the new driver returns 0, 0, 0, 603 and 111 for those three
+  and two failing bodies. The failing bodies keep the author's own error text.
+
 ### Early Windows tooling accounted for, opt-in trust skip
 - [docs/LEGACY_WINDOWS.md](docs/LEGACY_WINDOWS.md) records, per file, what became
   of the early Windows-only scripts and settings (about 60 files that were never

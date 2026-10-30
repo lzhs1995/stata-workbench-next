@@ -31,7 +31,7 @@ try {
   ok(code.startsWith('capture noisily do "' + body.replace(/"/g, '""') + '"\nlocal __codex_body_rc = _rc\n'), "driver calls the body");
   ok(code.split(done).length - 1 === 1, "one completion marker");
   ok(code.indexOf("___CODEX_RUN_RC_" + runId) < code.indexOf(done), "record before marker");
-  ok(code.endsWith("exit `__codex_run_rc'\n"), "driver returns the run rc");
+  ok(code.endsWith("if `__codex_run_rc' != 0 exit `__codex_run_rc'\n"), "driver returns a nonzero run rc; rc 0 falls through");
   ok(!code.includes("save "), "no snapshot without a snapshot path");
   ok(fs.readFileSync(body, "utf8") === "exit 601\ndisplay 999\n", "researcher file unchanged");
   run.cleanup();

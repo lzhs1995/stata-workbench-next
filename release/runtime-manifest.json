@@ -199,8 +199,8 @@
       "bytes": 14865
     },
     "scripts/runfile_finalizer_core.js": {
-      "sha256": "1977d190bae9865dd55490b1e3104c84666f7c7ac88fad33526d0897d3dffae1",
-      "bytes": 1500
+      "sha256": "c836ebbe1627ea99f90021cca3341c24fedfe29dc873cd0638f35d6db14b814a",
+      "bytes": 1850
     },
     "scripts/apply_bridge_request_preservation_patch.js": {
       "sha256": "3fee117de430f054f61bda6145015d4b911fdc73e13b090ee81c351bc52f3b3a",
