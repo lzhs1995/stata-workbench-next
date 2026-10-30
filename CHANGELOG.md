@@ -75,6 +75,16 @@ Preserves the Mac-accepted runtime; removes local maintenance credentials, adds 
   `ok: false`. A non-empty list with no valid PID is still refused.
 - The runtime patch reads the pre-flight limit from `MCP_STATA_PREFLIGHT_TIMEOUT`
   (seconds, default 180, clamped to 60–900) instead of the hard-coded 60 s.
+- rc.7.74: a Stop during the pre-run checkpoint no longer leaves the instance
+  continuity-lost. In FULL45 S40 (Mac, rc.7.44) the Stop broke the checkpoint's
+  graph-save loop, `graphs.txt` ended in a half-written name, and the restore
+  code refused with its `exit 459` sentinel. Soft Stop sent that sentinel to
+  Stata, which answers a top-level exit with `--Break-- r(1)`; the Stop returned
+  500 and only a force reset cleared the state, although the payload had never
+  been dispatched. Each pre-run snapshot now records whether its run passed the
+  last pre-run Stop fence. A refused restore is never sent to Stata: when the
+  payload was not admitted, Stata still holds the pre-run state and the Stop
+  completes; otherwise the restore fails as before, without dispatching.
 
 ## 0.1.3-rc.7.45-dev.1 — early Windows tooling accounted for, opt-in trust skip
 

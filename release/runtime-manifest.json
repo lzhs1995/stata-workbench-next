@@ -11,8 +11,8 @@
       "bytes": 578
     },
     "scripts/stop_checkpoint_core.js": {
-      "sha256": "d307a4652a756f4c0c8592ee59765f0652eae27e1ee9a044888e44a1cb288394",
-      "bytes": 37840
+      "sha256": "b228fbdb4d3796f1b4c5ed18421d5f2a5475a3fb1b2fe4e71c79aeab296ca2a3",
+      "bytes": 39341
     },
     "scripts/static_windows_gate.js": {
       "sha256": "4db114e7153ca576767ace7d591bf9acc52217ac7ac8c29974ed36e1a73172f4",
@@ -27,8 +27,8 @@
       "bytes": 17618
     },
     "scripts/patch_manager.js": {
-      "sha256": "2215bd8f796808d508259383fbc9d0534207923c8e5bc6745a778dc5a67b51e0",
-      "bytes": 92215
+      "sha256": "6fe258cc1d942c17709bdd857a585a9e7be6875bb6453b38c77661da3ff078da",
+      "bytes": 92503
     },
     "scripts/mcp_stata_runtime_patch.js": {
       "sha256": "64013014e8598af5c7f70a276cd80a2f5c21d218eaa6fba59f079096c8f75ac9",
@@ -111,8 +111,8 @@
       "bytes": 5178
     },
     "scripts/apply_rc7_shared_execution_patch.js": {
-      "sha256": "7492fac80a7f7aaf39039f24fabc9fcde97aee3262500ac72bc74e792956109f",
-      "bytes": 337313
+      "sha256": "73ddb13b74bf31ccb639099d528fc022b6834dc58059ff45f6affea90ff7c994",
+      "bytes": 337498
     },
     "scripts/apply_rc64_routes_patch.js": {
       "sha256": "b01e1225f5844b632e24d616957fb9e565541345a10d6f4fbc640a4b034070b2",
@@ -139,8 +139,8 @@
       "bytes": 11107
     },
     "dist/extension.js": {
-      "sha256": "4ce953dbbd064099ddf28e5765dd219d31632e5bcd437b8ec45102d5dd477c39",
-      "bytes": 5613095
+      "sha256": "f02ae62736459e89f9bbefc2cfaa55d73edb6e9ef1af662e17d778157d2ceacd",
+      "bytes": 5613878
     },
     "scripts/mac/png_compat_transform.js": {
       "sha256": "cdea12886a1d5bb5b4c2b3e38829de1c7e68ed70e7777e8d6e2eb02bb0ce3514",
@@ -343,7 +343,7 @@
       "bytes": 4729
     },
     "tools/verified_workbench.py": {
-      "sha256": "aaeaf6d807034417873c2725bb3172a9db2677e2325267ce0dd98648af892acd",
+      "sha256": "d922d0489ee573c39ef7fa1e761f1ed780dd0bac6fa9ed26319e508bd64d185b",
       "bytes": 11672
     },
     "tools/workbench_platform.py": {
@@ -389,6 +389,10 @@
     "scripts/apply_single_do_pagination_patch.js": {
       "sha256": "c970dfb4f3547314466d87e32d9c462df28082cf89fa319f21cfe2489ea67c0e",
       "bytes": 5809
+    },
+    "scripts/apply_softstop_incomplete_checkpoint_patch.js": {
+      "sha256": "6a2d8722b68c1763d32d9dacf4c846b405e3f49daa6cddbc6b80060894e314df",
+      "bytes": 5490
     }
   },
   "acceptanceStatus": "PENDING_LICENSED_MAC_FULL_ACCEPTANCE",

@@ -3423,5 +3423,7 @@ text = require("./apply_stop_cancel_wording_patch").patchBundle(text, { finalize
 text = require("./apply_prerun_stop_fence_patch").patchBundle(text, { finalize: false });
 text = require("./apply_backend_warmup_patch").patchBundle(text, { finalize: false });
 text = require("./apply_single_do_pagination_patch").patchBundle(text, { finalize: false });
+// rc.7.74: soft Stop never dispatches a refused checkpoint restore (FULL45 S40).
+text = require("./apply_softstop_incomplete_checkpoint_patch").patchBundle(text, { finalize: false });
 fs.writeFileSync(target, text, "utf8");
 console.log(baseAlreadyApplied ? "RC7_SHARED_EXECUTION_UPDATED" : "RC7_SHARED_EXECUTION_APPLIED", target);

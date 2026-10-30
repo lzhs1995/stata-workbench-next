@@ -1589,6 +1589,12 @@ const AUXILIARY_MARKERS = [
     marker: "codex patch rc.7.73: single-do matchers skip the pagination prefix",
   },
   {
+    key: "softStopNeverDispatchesRefusedRestore",
+    label: "rc.7.74 soft Stop never dispatches a refused checkpoint restore",
+    relativePath: path.join("dist", "extension.js"),
+    marker: "codex patch rc.7.74: soft Stop never dispatches a refused checkpoint restore",
+  },
+  {
     key: "runtimePatchTargetsListenerLoop",
     label: "packaged mcp-stata patch targets the live listener loop",
     relativePath: path.join("scripts", "mcp_stata_runtime_patch.js"),
