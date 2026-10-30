@@ -7,3 +7,8 @@ tests/** -text
 # Python sources now travel with the cross-platform candidate and its receipts.
 tools/** -text
 examples/platform-acceptance/** -text
+
+# Preserve exact upstream input hashes on every checkout.
+upstream/** -text
+# The source-build manifest pins the dependency lock's exact bytes as well.
+package-lock.json -text
