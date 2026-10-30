@@ -6,6 +6,10 @@ TypeScript tree. Readable local patches, helpers and UI sources are included.
 Do not claim a clean upstream rebuild is byte-identical. Restoring that build
 pipeline is future work, not a completed gate.
 
+The existing maintained-baseline patch replay is still checked byte for byte.
+Bundle edits must update that patch chain; it is separate from a complete
+upstream TypeScript rebuild. Never weaken its equality tests to accept drift.
+
 1. Make scoped commits, preserving upstream attribution and Git history.
 2. Run `npm ci --ignore-scripts`, `npm run check`, Python tests and secret scan.
 3. Runtime edits need a package/lock version bump, fresh identities, targeted

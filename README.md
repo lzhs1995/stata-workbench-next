@@ -1,6 +1,6 @@
 # Stata Workbench Shared Session
 
-Toolchain guide revision **2026-10-01**: [explicit shared execution, permitted hiding and concurrency](docs/shared-execution-and-concurrency.md), plus [research handoff and archive lessons](docs/empirical-review-and-archive.md). The published public runtime remains **0.1.3-rc.7.39**. This branch is **0.1.3-rc.7.44-dev.1**, a candidate recursive DO/PNG compatibility fix, not installed or covered by historical FULL45 acceptance. See [candidate scope](docs/ACCEPTANCE.md#recursive-do-candidate).
+Toolchain guide revision **2026-10-01**: [explicit shared execution, permitted hiding and concurrency](docs/shared-execution-and-concurrency.md), plus [research handoff and archive lessons](docs/empirical-review-and-archive.md). The published public runtime remains **0.1.3-rc.7.39**. This branch is **0.1.3-rc.7.44-dev.2**, a candidate recursive DO/PNG compatibility and saved-graph preview fix, not installed or covered by historical FULL45 acceptance. See [candidate scope](docs/ACCEPTANCE.md#recursive-do-candidate).
 
 A VS Code extension for a visible Stata session shared sequentially by a human
 and AI agents. Human Run File/Selection and agent commands use the same backend,
@@ -14,6 +14,13 @@ Read [shared-session execution and delivery lessons](docs/shared-session-deliver
 for preserving author DO files, inventorying actual saved data, reconciling the
 original request, and distinguishing task budgets from user requirements.
 Graph recovery and candidate release evidence retain their stated limits.
+
+In this candidate, click an existing image artifact in Stata Terminal to open it
+in Stata Graphs. This previews the saved file without running Stata again.
+The panel shows that image alone; other exported files remain available from
+their Terminal links and on disk.
+Automatic graph batches continue to leave Terminal visible when no Graphs panel
+is open. Native acceptance of the new click route is still pending.
 
 ## Current Release
 

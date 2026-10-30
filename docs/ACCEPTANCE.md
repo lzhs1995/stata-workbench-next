@@ -48,3 +48,20 @@ The existing fixed-instance client still targets its documented accepted runtime
 this change does not silently retarget or restart it. Candidate installation and
 licensed Mac full acceptance remain pending. Do not publish a release/tag or
 claim that all macOS native graph initialization failures are eliminated.
+
+
+## Saved-graph preview candidate
+
+Version `0.1.3-rc.7.44-dev.2` adds an explicit Terminal image-artifact click route to
+Stata Graphs, with independent preview identifiers and no Stata execution. Help,
+non-image artifacts and missing files retain their existing handlers. Automatic
+batch delivery still does not create or reveal a new graph panel.
+An explicit image click replaces the displayed batch with a single-image preview;
+it does not remove exported files or rewrite the original run's artifacts.
+
+The new behavioral regression extracts the production message branch and graph
+functions, and stubs VS Code panel creation. It verifies routing and preserves the
+automatic-batch regression; it does not establish native panel rendering. Prior
+PNG/GPH evidence belongs to the earlier private runtime. Final loaded-runtime,
+native UI and full licensed acceptance remain pending; no public release or
+research-instance upgrade is established by these source changes.
