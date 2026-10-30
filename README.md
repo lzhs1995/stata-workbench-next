@@ -29,8 +29,9 @@ Derived from [tmonk/stata-workbench](https://github.com/tmonk/stata-workbench)
 | `v0.1.3-rc.7.44` | Pre-release, being prepared; not yet published | macOS and Windows, see [Platform status](#platform-status) |
 | [`v0.1.3-rc.7.39-public.2`](https://github.com/lzhs1995/stata-workbench-shared-session/releases/tag/v0.1.3-rc.7.39-public.2) | Latest published pre-release (2026-09-09) | macOS only |
 
-This README describes `v0.1.3-rc.7.44`. Its measurements were taken on the
-candidates `0.1.3-rc.7.44-dev.5` to `dev.8`; each result names its candidate.
+This README describes `v0.1.3-rc.7.44`. Its measurements were taken on
+`0.1.3-rc.7.44` itself and on the candidates `0.1.3-rc.7.44-dev.5` to `dev.8`;
+each result names the version it was measured on.
 
 ### Documentation
 
@@ -52,9 +53,9 @@ endings of bundled documents.
 
 | Platform | Tested environment | Result |
 | --- | --- | --- |
-| macOS, Apple Silicon | macOS 26.5 arm64, StataNow, VS Code 1.139.1, isolated profile | dev.8: cold-start first run 14.1 s, Data Browser shows the active frame, soft Stop message passed. Earlier `0.1.3-rc.7.39` passed FULL45 (45 scenarios / 632 steps) |
+| macOS, Apple Silicon | macOS 26.5 arm64, StataNow, VS Code 1.139.1, isolated profile | rc.7.44: stress run 32/32 (20 sequential and 3 groups of 4 concurrent agent runs, no overlapping executions, same backend); Stop timed into the pre-run window passed for Run File and agent runs (payload not run, same backend, no force reset). dev.8: cold-start first run 14.1 s, Data Browser shows the active frame, soft Stop message passed. Earlier `0.1.3-rc.7.39` passed FULL45 (45 scenarios / 632 steps) |
 | macOS, Intel | CI only (macOS 15 Intel) | Offline tests and packaging; no licensed Stata run |
-| Windows 11 x64 | Windows 11 Home 24H2 (build 26100), Stata 18 MP, VS Code 1.121.0, Windows PowerShell 5.1, isolated profile | Runbook steps 1–10 passed (dev.5–dev.6, see below). dev.7 default service constraint passed. dev.8: cold-start first run 25.2 s, Data Browser frame and soft Stop passed |
+| Windows 11 x64 | Windows 11 Home 24H2 (build 26100), Stata 18 MP, VS Code 1.121.0, Windows PowerShell 5.1, isolated profile | rc.7.44: cold-start first run (backend 20.3 s), graph preview, Data Browser frame, stress run 32/32, three Reload Window cold starts (19.5–24.8 s), and a Stop timed into the pre-run window passed. Runbook steps 1–10 passed on dev.5–dev.6 (see below); dev.7 default service constraint passed |
 | Windows, default install route | Same machine, empty `uv` cache | With `mcp<2` the service installed and imported; without it `uv` resolved MCP 2.x and the server failed to import |
 | Windows Server 2022 x64 | CI only | Offline tests, real file locks, process matching, PowerShell 5.1/7 entry points; no licensed Stata |
 | Windows 10, Windows on ARM, Linux | — | Not verified |
@@ -93,8 +94,8 @@ run on dev.6. Steps 1–8 were not repeated on dev.6–dev.8.
 
 Download `stata-workbench-shared-session-0.1.3-rc.7.44.vsix` and `SHA256SUMS`
 from the [v0.1.3-rc.7.44 release](https://github.com/lzhs1995/stata-workbench-shared-session/releases/tag/v0.1.3-rc.7.44)
-into one folder. The VSIX SHA256 is `@@RC744_VSIX_SHA256@@`. Check it before
-installing (see [Verifying a download](#verifying-a-download)).
+into one folder. Check the VSIX against `SHA256SUMS` before installing (see
+[Verifying a download](#verifying-a-download)); the release notes list the same hash.
 
 The commands below install into a separate, identifiable profile. The agent
 tools find the session by this profile and port. If you only use the editor,
@@ -202,8 +203,11 @@ Stata language) has focus.
 - **Stop.** A soft Stop cancels the current run, drains the task and keeps the
   same backend. The Terminal shows, for example,
   `human-file cancelled by soft Stop (generation 1)`, and `/status` reports
-  `resetGenerationKind: "soft-stop"`. Check that the session is ready again
-  before the next run.
+  `resetGenerationKind: "soft-stop"`. A Stop that lands while the run is still
+  saving its pre-run checkpoint stops it before your code starts: the payload is
+  not sent (`payloadDispatched: false`; HTTP 409 `PRE_RUN_CANCELLED_BY_STOP`, or
+  500 `EXEC_REJECTED` if the checkpoint was still incomplete). Check that the
+  session is ready again before the next run.
 
 ### Agent client
 
@@ -221,8 +225,11 @@ python3 tools/shared_stata.py --file analysis.do --cwd /absolute/workspace --bus
 - It never launches, activates, resets or retries Stata. It needs a running
   backend: after opening or reloading VS Code, start the service once from the
   editor or Terminal (any Run File, Run Selection or Terminal command).
-- A read-only process probe that times out on a heavily loaded machine is
-  repeated, at most three times in all. The POST itself is never repeated.
+- A read-only probe that times out on a heavily loaded machine (`ps`/`lsof`,
+  and on macOS the passive permission check or the window query) is repeated, at
+  most three times in all. A timed-out permission check is reported as
+  `PERMISSION_CHECK_TIMEOUT`, not as a permission failure. The POST itself is
+  never repeated.
 - Exit code 0 means verdict `PASS_VISIBLE_SHARED_RUN`: the execution and
   identity checks passed. It does not prove that anyone watched the source and
   Terminal. Any other result exits 2.
@@ -340,7 +347,7 @@ Dates are UTC. Full details are in the [changelog](CHANGELOG.md).
 
 | Tag | Date | Type | Scope |
 | --- | --- | --- | --- |
-| `v0.1.3-rc.7.44` | @@RC744_DATE@@ | Pre-release | macOS and Windows: Windows adapters and operator kit, backend cold start outside pre-run budgets, default service kept on MCP 1.x, cancellation recheck after connect, Stop wording, Data Browser frame, saved-graph preview, recursive DO-reference scanner |
+| `v0.1.3-rc.7.44` | @@RC744_DATE@@ | Pre-release | macOS and Windows: Windows adapters and operator kit, Stop in the pre-run window no longer runs the payload, read-only probe timeouts observed again, backend cold start outside pre-run budgets, default service kept on MCP 1.x, cancellation recheck after connect, Stop wording, Data Browser frame, saved-graph preview, recursive DO-reference scanner |
 | `v0.1.3-rc.7.39-public.2` | 2026-09-09 | Pre-release | macOS permission diagnostics (Mac tools 1.1.0); runtime unchanged |
 | `v0.1.3-rc.7.39-public.1` | 2026-09-07 | Pre-release | Public packaging of the Mac-accepted `0.1.3-rc.7.39`; local maintenance token removed |
 | `docs-2026.09.26` | 2026-09-26 | Documentation | Documentation only; runtime unchanged |

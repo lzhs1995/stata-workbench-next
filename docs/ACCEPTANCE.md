@@ -104,6 +104,10 @@ the artifact scanner. A top-level Code window count is not code/Terminal proof.
 Windows 11 x64 licensed execution and desktop checks (runbook steps 1–10,
 including lock/unlock and a cancelled UAC prompt) were run on 2026-10-28/29;
 see [SYNC](../SYNC.md) and the [README platform status](../README.md#platform-status).
+On 2026-10-30 `0.1.3-rc.7.44` passed, on Windows, a cold first run, graph preview,
+Data Browser frame, a 32-run stress test, three Reload Window cold starts, five soft
+Stop cycles and Stop timed into the pre-run window; on Mac, the same stress test and
+the timed Stop for Run File and agent runs. These are bounded checks, not FULL45.
 New FULL45 coverage, native Mac bitmap recovery, Windows 10, Windows on ARM and
 source-built feature parity remain pending. The research instance and
 scientific acceptance are unchanged.

@@ -25,8 +25,8 @@
 | `v0.1.3-rc.7.44` | Pre-release，准备中，尚未发布 | macOS 和 Windows，见[平台状态](#平台状态) |
 | [`v0.1.3-rc.7.39-public.2`](https://github.com/lzhs1995/stata-workbench-shared-session/releases/tag/v0.1.3-rc.7.39-public.2) | 已发布的最新 pre-release（2026-09-09） | 仅 macOS |
 
-本文档对应 `v0.1.3-rc.7.44`。下面的测量来自候选版 `0.1.3-rc.7.44-dev.5` 到
-`dev.8`，每条结果都写明是哪个候选版。
+本文档对应 `v0.1.3-rc.7.44`。下面的测量来自 `0.1.3-rc.7.44` 本身和候选版
+`0.1.3-rc.7.44-dev.5` 到 `dev.8`，每条结果都写明是在哪个版本上测的。
 
 ### 文档
 
@@ -47,9 +47,9 @@
 
 | 平台 | 测试环境 | 结果 |
 | --- | --- | --- |
-| macOS，Apple Silicon | macOS 26.5 arm64、StataNow、VS Code 1.139.1、隔离 profile | dev.8：冷启动首次运行 14.1 秒，Data Browser 显示当前 frame，soft Stop 提示文案通过。更早的 `0.1.3-rc.7.39` 通过 FULL45（45 个场景 / 632 步） |
+| macOS，Apple Silicon | macOS 26.5 arm64、StataNow、VS Code 1.139.1、隔离 profile | rc.7.44：压测 32/32（20 次顺序 + 3 组各 4 个并发的 agent 运行，执行窗口不重叠，backend 不变）；把 Stop 定点到运行前窗口，Run File 和 agent 运行都通过（正文没有执行、backend 不变、没有 force reset）。dev.8：冷启动首次运行 14.1 秒，Data Browser 显示当前 frame，soft Stop 提示文案通过。更早的 `0.1.3-rc.7.39` 通过 FULL45（45 个场景 / 632 步） |
 | macOS，Intel | 只有 CI（macOS 15 Intel） | 离线测试与打包；没有用授权 Stata 实跑 |
-| Windows 11 x64 | Windows 11 家庭中文版 24H2（build 26100）、Stata 18 MP、VS Code 1.121.0、Windows PowerShell 5.1、隔离 profile | 验收手册第 1–10 步通过（dev.5–dev.6，见下）。dev.7 默认服务约束通过。dev.8：冷启动首次运行 25.2 秒，Data Browser frame 和 soft Stop 通过 |
+| Windows 11 x64 | Windows 11 家庭中文版 24H2（build 26100）、Stata 18 MP、VS Code 1.121.0、Windows PowerShell 5.1、隔离 profile | rc.7.44：冷启动首次运行（backend 20.3 秒）、图形预览、Data Browser frame、压测 32/32、三次 Reload Window 冷启动（19.5–24.8 秒）、定点到运行前窗口的 Stop 通过。验收手册第 1–10 步在 dev.5–dev.6 上通过（见下）；dev.7 默认服务约束通过 |
 | Windows，默认安装路线 | 同一台机器，空的 `uv` 缓存 | 带 `mcp<2` 时服务装好并能导入；不带时 `uv` 解析到 MCP 2.x，服务导入失败 |
 | Windows Server 2022 x64 | 只有 CI | 离线测试、真实文件锁、进程匹配、PowerShell 5.1/7 入口；没有授权 Stata |
 | Windows 10、Windows on ARM、Linux | — | 未验证 |
@@ -87,7 +87,7 @@ dev.5 上通过。第 9 步在 dev.5 上失败（backend 冷启动超出 60 秒�
 
 从 [v0.1.3-rc.7.44 发布页](https://github.com/lzhs1995/stata-workbench-shared-session/releases/tag/v0.1.3-rc.7.44)
 下载 `stata-workbench-shared-session-0.1.3-rc.7.44.vsix` 和 `SHA256SUMS`，放在同一个
-文件夹。VSIX 的 SHA256 是 `@@RC744_VSIX_SHA256@@`。安装前先核对（见[验证下载文件](#验证下载文件)）。
+文件夹。安装前用 `SHA256SUMS` 核对 VSIX（见[验证下载文件](#验证下载文件)）；发布说明里列着同一个哈希。
 
 下面的命令装进一个单独、可识别的 profile，agent 工具按这个 profile 和端口找到会话。
 只在编辑器里用的话，在平常的 VS Code 里执行 **Extensions: Install from VSIX...** 就够了。
@@ -186,7 +186,9 @@ python3 tools/shared_stata.py --code 'scalar public_shared_demo = public_shared_
 - **Data Browser。** 显示行、变量和当前 frame（例如 `wb_platform`）。frame 名在浏览器打开时读取。
 - **Stop。** soft Stop 取消当前运行、排空任务，backend 不变。Terminal 会显示例如
   `human-file cancelled by soft Stop (generation 1)`，`/status` 报
-  `resetGenerationKind: "soft-stop"`。下一次运行前先确认会话重新就绪。
+  `resetGenerationKind: "soft-stop"`。如果 Stop 落在运行还在保存运行前 checkpoint 的时候，
+  运行在你的代码开始前就停下：正文不会发出（`payloadDispatched: false`；HTTP 409
+  `PRE_RUN_CANCELLED_BY_STOP`，checkpoint 还不完整时是 500 `EXEC_REJECTED`）。下一次运行前先确认会话重新就绪。
 
 ### agent 客户端
 
@@ -200,7 +202,8 @@ python3 tools/shared_stata.py --file analysis.do --cwd /absolute/workspace --bus
   `--busy-policy wait` 只在提交前等待，最多 `--max-wait` 秒。
 - 它从不启动、激活、重置或重试 Stata。它需要已经在运行的 backend：打开或重载 VS Code 后，
   先在编辑器或 Terminal 里运行一次（Run File、Run Selection 或 Terminal 命令都可以）。
-- 机器负载很高时只读的进程探测超时，会重新观测，总共最多 3 次；POST 本身从不重发。
+- 机器负载很高时只读探测超时（`ps`/`lsof`，以及 macOS 上的被动权限检查和窗口查询），会重新观测，
+  总共最多 3 次。权限检查超时报 `PERMISSION_CHECK_TIMEOUT`，不当作权限失败。POST 本身从不重发。
 - 退出码 0 表示结论 `PASS_VISIBLE_SHARED_RUN`：执行和身份检查通过；不证明有人同时看着源码和
   Terminal。其他结果退出码为 2。
 - 每次调用把请求、响应、实际提交的 `.do` 字节和运行日志写进 `.stata-receipts/`
@@ -306,7 +309,7 @@ python3 tools/verify_release.py --vsix /path/to/stata-workbench-shared-session-0
 
 | Tag | 日期 | 类型 | 范围 |
 | --- | --- | --- | --- |
-| `v0.1.3-rc.7.44` | @@RC744_DATE@@ | Pre-release | macOS 和 Windows：Windows 适配层与验收工具、backend 冷启动不计入运行前预算、默认服务保持在 MCP 1.x、连上后再查取消、Stop 提示文案、Data Browser frame、已保存图形预览、递归 DO 引用扫描 |
+| `v0.1.3-rc.7.44` | @@RC744_DATE@@ | Pre-release | macOS 和 Windows：Windows 适配层与验收工具、运行前窗口里的 Stop 不再让正文执行、只读探测超时会重新观测、backend 冷启动不计入运行前预算、默认服务保持在 MCP 1.x、连上后再查取消、Stop 提示文案、Data Browser frame、已保存图形预览、递归 DO 引用扫描 |
 | `v0.1.3-rc.7.39-public.2` | 2026-09-09 | Pre-release | macOS 权限诊断（Mac tools 1.1.0）；运行时不变 |
 | `v0.1.3-rc.7.39-public.1` | 2026-09-07 | Pre-release | 对 Mac 验收过的 `0.1.3-rc.7.39` 做公开打包；去掉本机维护 token |
 | `docs-2026.09.26` | 2026-09-26 | 文档 | 只有文档；运行时不变 |
