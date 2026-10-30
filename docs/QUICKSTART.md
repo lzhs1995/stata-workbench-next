@@ -1,5 +1,10 @@
 # Mac Quick Start
 
+This page covers the published macOS release `v0.1.3-rc.7.39-public.2`. For
+`v0.1.3-rc.7.44` on macOS and Windows, use the README [install](../README.md#install)
+and [quick start](../README.md#quick-start); Windows 11 x64 results are in its
+[platform status](../README.md#platform-status).
+
 For an identifiable shared profile, download the release VSIX into your current
 directory, then run:
 
