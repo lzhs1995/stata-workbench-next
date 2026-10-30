@@ -804,28 +804,35 @@ function softStopReadiness(restore, hardReset) {
   }
 }
 
-// Windows：完整 restore 的逐条重建比 macOS 慢得多。2026-10-31 integ smoke
-// （job 405，160 estimates + 80 graphs）L1 在 45 s 天花板被切断时还在图循环里
-// （exthost「run_selection cancelled after 45018ms」），于是 L2 只恢复数据集 +
-// 全局，丢掉全部 estimates/graphs。同一状态的 checkpoint 保存就用了 37.3 s。
-// win32 按条放宽、天花板随之提高；成功的 restore 不会因此变慢。macOS 与其他
-// 平台保持原公式（rc.7.44 S12 在 45 s 内完整恢复）。
+// Windows：完整 restore 的逐条重建比 macOS 慢得多，图尤其慢。2026-10-31 integ
+// smoke（job 405，160 estimates + 80 graphs）L1 在 45 s 天花板被切断
+// （exthost「run_selection cancelled after 45018ms」），L2 只恢复数据集 + 全局，
+// 丢掉全部 estimates/graphs。job 443 计数（mcp_stata_t8l4b220.log）：45 s 内
+// 160/160 个 estimates use + store 与 16 个 graph use 完成，第 17 个（t8_gc_j）
+// 被切。于是每个图至多 45/16 ≈ 2.8 s、每个 estimate 至多 0.28 s；完整 restore
+// 约 45 + 64×(2.3–2.8) ≈ 190–225 s。
+// win32 按类型计：30 s + 400 ms × estimates + 3000 ms × graphs，上限 300 s
+// （job 405 → 334 s → 封顶 300 s，为实测估计的 1.3–1.6 倍）。成功的 restore 不会
+// 因此变慢；挂住的 restore 照样在期限到时升级。macOS 与其他平台保持原公式
+// （rc.7.44 S12 在 45 s 内完整恢复）。L1 的 RECOVERY guard 默认 60 s，win32 上
+// 同步放宽到这个上限（execution_guard.js RECOVERY_LIMIT_MS_WIN32）。
 const RESTORE_BASE_MS = 30000;
 const RESTORE_MS_PER_ARTIFACT = 250;
 const RESTORE_CEILING_MS = 45000;
-const WIN32_RESTORE_MS_PER_ARTIFACT = 500;
-const WIN32_RESTORE_CEILING_MS = 180000;
+const WIN32_RESTORE_MS_PER_ESTIMATE = 400;
+const WIN32_RESTORE_MS_PER_GRAPH = 3000;
+const WIN32_RESTORE_CEILING_MS = 300000;
 
 function restoreTimeoutMs(snapshot, platform = process.platform) {
   const estimateCount = Number(snapshot && snapshot.estimateCount);
   const graphCount = Number(snapshot && snapshot.graphCount);
-  const artifacts =
-    (Number.isFinite(estimateCount) && estimateCount > 0 ? estimateCount : 0) +
-    (Number.isFinite(graphCount) && graphCount > 0 ? graphCount : 0);
+  const estimates = Number.isFinite(estimateCount) && estimateCount > 0 ? estimateCount : 0;
+  const graphs = Number.isFinite(graphCount) && graphCount > 0 ? graphCount : 0;
   if (platform === "win32") {
-    return Math.min(WIN32_RESTORE_CEILING_MS, RESTORE_BASE_MS + artifacts * WIN32_RESTORE_MS_PER_ARTIFACT);
+    return Math.min(WIN32_RESTORE_CEILING_MS,
+      RESTORE_BASE_MS + estimates * WIN32_RESTORE_MS_PER_ESTIMATE + graphs * WIN32_RESTORE_MS_PER_GRAPH);
   }
-  return Math.min(RESTORE_CEILING_MS, RESTORE_BASE_MS + artifacts * RESTORE_MS_PER_ARTIFACT);
+  return Math.min(RESTORE_CEILING_MS, RESTORE_BASE_MS + (estimates + graphs) * RESTORE_MS_PER_ARTIFACT);
 }
 
 // ===================================================================
@@ -971,6 +978,7 @@ module.exports = {
   restoreCode,
   restorePlan,
   restoreTimeoutMs,
+  WIN32_RESTORE_CEILING_MS,
   snapshotReadyRecord,
   snapshotCode,
   trackTransport,

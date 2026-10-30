@@ -75,14 +75,18 @@ Integrates PR #11, #12, #13 and #14 on top of rc.7.44.
   30 s bound always ended in recovery-required. A successful reconnect is not
   slowed down. macOS and other platforms keep 30 s.
 - On Windows the soft-Stop full restore of a large pre-run checkpoint gets more
-  time: 500 ms per saved estimate or graph above the 30 s base, up to 180 s.
-  Before, every platform got 250 ms per item, capped at 45 s. In the Windows integ
-  smoke of 2026-10-31 (160 estimates, 80 graphs), the restore was still in its
-  graph loop when the 45 s timer fired. The escalation then restored only the
-  dataset and globals, so the instance ended continuity-lost and the next run
-  was refused with 423. The escalation ladder scales with the new budget and stays
-  monotonic. A restore that finishes is not slowed down, and a hung one still
-  escalates when the budget runs out. macOS and other platforms are unchanged.
+  time. The budget is 30 s + 400 ms per saved estimate + 3 s per saved graph, up
+  to 300 s. Before, every platform got 250 ms per item, capped at 45 s, and the
+  recovery guard around the restore stopped it at 60 s whatever the budget. In the
+  Windows integ smoke of 2026-10-31 (160 estimates, 80 graphs) the restore had
+  finished all 160 estimates but only 16 of the 80 graphs when the 45 s timer fired.
+  A complete restore needs about 190–225 s. The escalation then restored only the
+  dataset and globals, so the instance ended continuity-lost and the next run was
+  refused with 423. On win32 the recovery guard's default limit is now the same
+  300 s. The escalation ladder scales with the new budget and stays monotonic. A
+  restore that finishes is not slowed down, and a hung one still escalates when the
+  budget runs out; a Stop of a large session can therefore take up to about 5
+  minutes on Windows before it falls back. macOS and other platforms are unchanged.
 - The force-reset process cleanup treats an empty owned-PID list as a no-op
   success. Before, the extension passed `-OwnedPidCsv ""` when no backend had
   been started, the script refused with exit 2, and the reset recorded cleanup

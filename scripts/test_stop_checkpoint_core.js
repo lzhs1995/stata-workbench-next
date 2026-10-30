@@ -94,8 +94,9 @@ try {
   assert.strictEqual(checkpoint.restoreTimeoutMs({ estimateCount: 60, graphCount: 60 }, "darwin"), 45000);
   assert.strictEqual(checkpoint.restoreTimeoutMs({ estimateCount: -1, graphCount: "bad" }, "darwin"), 30000);
   assert.strictEqual(checkpoint.restoreTimeoutMs({ estimateCount: 100000, graphCount: 100000 }, "darwin"), 45000);
-  assert.strictEqual(checkpoint.restoreTimeoutMs({ estimateCount: 160, graphCount: 80 }, "win32"), 150000);
-  assert.strictEqual(checkpoint.restoreTimeoutMs({ estimateCount: 100000, graphCount: 100000 }, "win32"), 180000);
+  assert.strictEqual(checkpoint.restoreTimeoutMs({ estimateCount: 160, graphCount: 80 }, "win32"), 300000);
+  assert.strictEqual(checkpoint.restoreTimeoutMs({ estimateCount: 4, graphCount: 8 }, "win32"), 55600);
+  assert.strictEqual(checkpoint.restoreTimeoutMs({ estimateCount: 100000, graphCount: 100000 }, "win32"), 300000);
   const unreadableOwnership = {};
   Object.defineProperty(unreadableOwnership, "stopOwned", {
     get() { throw new Error("ownership unavailable"); },
