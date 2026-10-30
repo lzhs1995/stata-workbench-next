@@ -7,6 +7,7 @@ const LATER = [
   "./apply_default_service_constraint_patch",
   "./apply_enqueue_cancel_recheck_patch",
   "./apply_stop_cancel_wording_patch",
+  "./apply_prerun_stop_fence_patch",
 ];
 
 function revertLaterPatches(source) {
