@@ -237,6 +237,46 @@ class SharedClientTests(unittest.TestCase):
             self.assertEqual(blocked["postCount"], 0)
             post.assert_not_called()
 
+    def test_timed_out_window_observation_is_reobserved_without_repeating_the_post(self):
+        # 2026-10-30 Mac stop-race run: the passive permission probe timed out under
+        # load and dispatch was blocked with permission advice.
+        def timed(status):
+            s = state()
+            s["windowObservation"] = {"ok": False, "count": None, "status": status}
+            s["axWindowCount"] = None
+            return s
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            log = root / "source.log"
+            client.write_once(log, b"___VERIFIED_CLIENT_token___\n___CODEX_RUN_DONE_new___\n")
+            body = {"ok": True, "rc": 0, "runId": "new", "requestId": "req-new", "logPath": str(log),
+                    "lifecycle": {"requestId": "req-new", "runId": "new", "sourceMode": "agent"}}
+            post = Mock(return_value=(200, body))
+            d = SimpleNamespace(w=SimpleNamespace(http_post=post))
+            sleep = Mock()
+            with patch.object(client.uuid, "uuid4", return_value=SimpleNamespace(hex="token")):
+                result = client.execute_once(d, {"code": "display 1"}, root / "receipt", sleep=sleep,
+                    observe=Mock(side_effect=[timed("PERMISSION_CHECK_TIMEOUT"), state(),
+                                              timed("WINDOW_QUERY_TIMEOUT"), state("new")]))
+            self.assertEqual(result["verdict"], "PASS_VISIBLE_SHARED_RUN")
+            self.assertEqual(post.call_count, 1)
+            self.assertEqual(result["observationRetries"], ["PERMISSION_CHECK_TIMEOUT", "WINDOW_QUERY_TIMEOUT"])
+            # Still timed out after the last attempt: blocked before the POST, status kept.
+            post.reset_mock()
+            observe = Mock(return_value=timed("PERMISSION_CHECK_TIMEOUT"))
+            blocked = client.execute_once(d, {"code": "display 1"}, root / "blocked", sleep=Mock(), observe=observe)
+            self.assertEqual(blocked["verdict"], "BLOCKED_NO_DISPATCH")
+            self.assertEqual(blocked["postCount"], 0)
+            self.assertEqual(blocked["windowObservation"]["status"], "PERMISSION_CHECK_TIMEOUT")
+            self.assertEqual(observe.call_count, client.OBSERVE_ATTEMPTS)
+            post.assert_not_called()
+        # Real permission answers are never retried.
+        for status in ("PERMISSION_CHECK_FAILED", "AUTOMATION_DENIED", "WINDOW_QUERY_FAILED"):
+            observe, sleep = Mock(return_value=timed(status)), Mock()
+            self.assertEqual(client.observe_settled(SimpleNamespace(), observe, sleep)["windowObservation"]["status"], status)
+            self.assertEqual(observe.call_count, 1)
+            sleep.assert_not_called()
+
     def test_other_observation_errors_are_not_retried(self):
         observe = Mock(side_effect=RuntimeError("bridge listener does not belong to the exact Workbench instance"))
         sleep = Mock()

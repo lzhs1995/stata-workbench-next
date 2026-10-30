@@ -43,24 +43,37 @@ def ready(instance):
 
 
 OBSERVE_ATTEMPTS = 3
+# Window observations that ran past their limit: consent or the window count is
+# unmeasured, not denied. Every other status is a real answer and is kept.
+TIMED_OUT_WINDOW_OBSERVATIONS = ("PERMISSION_CHECK_TIMEOUT", "WINDOW_QUERY_TIMEOUT")
 
 
 def observe_settled(d, observe=entry.observe, sleep=time.sleep, retries=None):
-    """Read-only observation that tolerates a timed-out process probe.
+    """Read-only observation that tolerates a timed-out probe.
 
-    Only subprocess.TimeoutExpired is retried (a ps/lsof call that ran past its
-    limit on a heavily loaded host). Identity, permission and status results are
-    returned or raised unchanged. This never repeats a dispatch.
+    Retried: subprocess.TimeoutExpired (a ps/lsof call that ran past its limit on
+    a heavily loaded host) and a window observation whose permission check or
+    window query timed out. Identity, permission and status results are returned
+    or raised unchanged; after the last attempt the timed-out observation is
+    returned as is. This never repeats a dispatch.
     """
     for attempt in range(1, OBSERVE_ATTEMPTS + 1):
         try:
-            return observe(d)
+            state = observe(d)
         except subprocess.TimeoutExpired as exc:
             if retries is not None:
                 retries.append(repr(exc))
             if attempt == OBSERVE_ATTEMPTS:
                 raise
             sleep(1)
+            continue
+        window = state.get("windowObservation") if isinstance(state, dict) else None
+        status = window.get("status") if isinstance(window, dict) else None
+        if status not in TIMED_OUT_WINDOW_OBSERVATIONS or attempt == OBSERVE_ATTEMPTS:
+            return state
+        if retries is not None:
+            retries.append(status)
+        sleep(1)
 
 
 def response_diagnostics(body):
