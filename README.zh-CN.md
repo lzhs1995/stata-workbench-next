@@ -22,8 +22,8 @@
 
 | 版本 | 状态 | 平台证据 |
 | --- | --- | --- |
-| `v0.1.3-rc.7.44` | Pre-release，准备中，尚未发布 | macOS 和 Windows，见[平台状态](#平台状态) |
-| [`v0.1.3-rc.7.39-public.2`](https://github.com/lzhs1995/stata-workbench-shared-session/releases/tag/v0.1.3-rc.7.39-public.2) | 已发布的最新 pre-release（2026-09-09） | 仅 macOS |
+| [`v0.1.3-rc.7.44`](https://github.com/lzhs1995/stata-workbench-shared-session/releases/tag/v0.1.3-rc.7.44) | 最新 pre-release（2026-10-30） | macOS 和 Windows，见[平台状态](#平台状态) |
+| [`v0.1.3-rc.7.39-public.2`](https://github.com/lzhs1995/stata-workbench-shared-session/releases/tag/v0.1.3-rc.7.39-public.2) | 更早的 pre-release（2026-09-09） | 仅 macOS |
 
 本文档对应 `v0.1.3-rc.7.44`。下面的测量来自 `0.1.3-rc.7.44` 本身和候选版
 `0.1.3-rc.7.44-dev.5` 到 `dev.8`，每条结果都写明是在哪个版本上测的。
@@ -309,7 +309,7 @@ python3 tools/verify_release.py --vsix /path/to/stata-workbench-shared-session-0
 
 | Tag | 日期 | 类型 | 范围 |
 | --- | --- | --- | --- |
-| `v0.1.3-rc.7.44` | @@RC744_DATE@@ | Pre-release | macOS 和 Windows：Windows 适配层与验收工具、运行前窗口里的 Stop 不再让正文执行、只读探测超时会重新观测、backend 冷启动不计入运行前预算、默认服务保持在 MCP 1.x、连上后再查取消、Stop 提示文案、Data Browser frame、已保存图形预览、递归 DO 引用扫描 |
+| `v0.1.3-rc.7.44` | 2026-10-30 | Pre-release | macOS 和 Windows：Windows 适配层与验收工具、运行前窗口里的 Stop 不再让正文执行、只读探测超时会重新观测、backend 冷启动不计入运行前预算、默认服务保持在 MCP 1.x、连上后再查取消、Stop 提示文案、Data Browser frame、已保存图形预览、递归 DO 引用扫描 |
 | `v0.1.3-rc.7.39-public.2` | 2026-09-09 | Pre-release | macOS 权限诊断（Mac tools 1.1.0）；运行时不变 |
 | `v0.1.3-rc.7.39-public.1` | 2026-09-07 | Pre-release | 对 Mac 验收过的 `0.1.3-rc.7.39` 做公开打包；去掉本机维护 token |
 | `docs-2026.09.26` | 2026-09-26 | 文档 | 只有文档；运行时不变 |

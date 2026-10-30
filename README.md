@@ -26,8 +26,8 @@ Derived from [tmonk/stata-workbench](https://github.com/tmonk/stata-workbench)
 
 | Version | State | Platform evidence |
 | --- | --- | --- |
-| `v0.1.3-rc.7.44` | Pre-release, being prepared; not yet published | macOS and Windows, see [Platform status](#platform-status) |
-| [`v0.1.3-rc.7.39-public.2`](https://github.com/lzhs1995/stata-workbench-shared-session/releases/tag/v0.1.3-rc.7.39-public.2) | Latest published pre-release (2026-09-09) | macOS only |
+| [`v0.1.3-rc.7.44`](https://github.com/lzhs1995/stata-workbench-shared-session/releases/tag/v0.1.3-rc.7.44) | Latest pre-release (2026-10-30) | macOS and Windows, see [Platform status](#platform-status) |
+| [`v0.1.3-rc.7.39-public.2`](https://github.com/lzhs1995/stata-workbench-shared-session/releases/tag/v0.1.3-rc.7.39-public.2) | Earlier pre-release (2026-09-09) | macOS only |
 
 This README describes `v0.1.3-rc.7.44`. Its measurements were taken on
 `0.1.3-rc.7.44` itself and on the candidates `0.1.3-rc.7.44-dev.5` to `dev.8`;
@@ -347,7 +347,7 @@ Dates are UTC. Full details are in the [changelog](CHANGELOG.md).
 
 | Tag | Date | Type | Scope |
 | --- | --- | --- | --- |
-| `v0.1.3-rc.7.44` | @@RC744_DATE@@ | Pre-release | macOS and Windows: Windows adapters and operator kit, Stop in the pre-run window no longer runs the payload, read-only probe timeouts observed again, backend cold start outside pre-run budgets, default service kept on MCP 1.x, cancellation recheck after connect, Stop wording, Data Browser frame, saved-graph preview, recursive DO-reference scanner |
+| `v0.1.3-rc.7.44` | 2026-10-30 | Pre-release | macOS and Windows: Windows adapters and operator kit, Stop in the pre-run window no longer runs the payload, read-only probe timeouts observed again, backend cold start outside pre-run budgets, default service kept on MCP 1.x, cancellation recheck after connect, Stop wording, Data Browser frame, saved-graph preview, recursive DO-reference scanner |
 | `v0.1.3-rc.7.39-public.2` | 2026-09-09 | Pre-release | macOS permission diagnostics (Mac tools 1.1.0); runtime unchanged |
 | `v0.1.3-rc.7.39-public.1` | 2026-09-07 | Pre-release | Public packaging of the Mac-accepted `0.1.3-rc.7.39`; local maintenance token removed |
 | `docs-2026.09.26` | 2026-09-26 | Documentation | Documentation only; runtime unchanged |
