@@ -57,6 +57,7 @@ out/**
 # Acceptance orchestration needs the pinned source checkout and release manifest.
 # It is a source-only operator tool, not extension runtime.
 examples/platform-acceptance/acceptance.py
+examples/platform-acceptance/service-constraints.txt
 
 # Source migration stage 1 is built for comparison, not shipped as runtime.
 src/shared-session/**

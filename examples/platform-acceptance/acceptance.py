@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import socket
 import subprocess
@@ -27,6 +28,8 @@ AGENT_FILES = ("02_agent_shared.do", "04_queue_first.do", "05_queue_second.do", 
 # on top of the setup budget. Operators can override it with --reserve-bytes.
 DEFAULT_RESERVE_BYTES = 5_000_000_000
 SETUP_BUDGET_BYTES = 500_000_000
+# The service's full dependency set from the passing Mac runtime; see the file header.
+SERVICE_CONSTRAINTS = Path(__file__).resolve().parent / "service-constraints.txt"
 
 
 def stamp():
@@ -59,6 +62,29 @@ def environment(root, port, code):
         "TMP": str(profile / "tmp"), "TEMP": str(profile / "tmp"),
         "PYTHONNOUSERSITE": "1", "PYTHONDONTWRITEBYTECODE": "1",
     }
+
+
+def code_cli_path(code):
+    """Return the cli.js that the installed VS Code launcher itself uses.
+
+    Older Windows builds keep resources beside Code.exe. Newer builds put them
+    in a commit-named folder (for example ``f6cfa2ea24/resources``) that
+    bin/code.cmd names; during an update two such folders can coexist, so the
+    launcher is the authority and an ambiguous folder scan is refused.
+    """
+    base = Path(code).parent
+    legacy = base / "resources" / "app" / "out" / "cli.js"
+    if legacy.is_file():
+        return legacy
+    launcher = base / "bin" / "code.cmd"
+    if launcher.is_file():
+        text = launcher.read_text(encoding="utf-8", errors="replace")
+        for folder in re.findall(r'%~dp0\.\.\\([^\\"]+)\\resources\\app\\out\\cli\.js', text):
+            candidate = base / folder / "resources" / "app" / "out" / "cli.js"
+            if candidate.is_file():
+                return candidate
+    found = [p for p in base.glob("*/resources/app/out/cli.js") if p.is_file()]
+    return found[0] if len(found) == 1 else None
 
 
 def prepare(root, vsix, stata, code, *, port=17497, configure_only=False,
@@ -97,9 +123,9 @@ def prepare(root, vsix, stata, code, *, port=17497, configure_only=False,
     uv = shutil.which("uv")
     if not configure_only and not uv:
         raise FileNotFoundError("Install uv before preparing the private Stata service")
-    code_cli = paths["code"].parent / "resources" / "app" / "out" / "cli.js"
-    if not configure_only and not code_cli.is_file():
-        raise FileNotFoundError("VS Code CLI missing beside the selected Code.exe: " + str(code_cli))
+    code_cli = code_cli_path(paths["code"])
+    if not configure_only and code_cli is None:
+        raise FileNotFoundError("VS Code CLI missing beside the selected Code.exe: " + str(paths["code"].parent))
     root.parent.mkdir(parents=True, exist_ok=True)
     root.mkdir()  # Atomic refusal if another process created the same root.
     profile = root / "profile"
@@ -140,7 +166,7 @@ def prepare(root, vsix, stata, code, *, port=17497, configure_only=False,
         try:
             run_logged(state, "venv", [uv, "venv", "--python", "3.11", str(profile / "runtime")])
             run_logged(state, "service-install", [uv, "pip", "install", "--python",
-                       str(runtime_python), "mcp-stata==1.26.1"])
+                       str(runtime_python), "-c", str(SERVICE_CONSTRAINTS), "mcp-stata==1.26.1"])
             run_logged(state, "service-packages", [uv, "pip", "freeze", "--python", str(runtime_python)])
             # Same invocation as VS Code's official bin/code.cmd, without cmd.exe
             # quoting/interpolation. Scope Electron's node mode to this call only.
@@ -296,7 +322,23 @@ def build_parser():
         child.add_argument("--root", type=Path, required=True)
         if command == "run":
             child.add_argument("--fixture", choices=AGENT_FILES, required=True)
+        if command == "open":
+            # Windows refuses SetForegroundWindow from a background controller (for
+            # example a remote terminal). Identity and the single-window check still apply.
+            child.add_argument("--no-activate", action="store_true",
+                               help="open or reuse the exact instance without bringing it to the foreground")
+            child.add_argument("--cdp-port", type=int, default=None,
+                               help="new launch only: 127.0.0.1 DevTools port for driving the editor UI remotely")
     return parser
+
+
+def open_argv(state, no_activate=False, cdp_port=None):
+    argv = [sys.executable, "-B", str(REPO / "tools/verified_workbench.py"), "--open", "--workspace", state["work"]]
+    if no_activate:
+        argv.append("--no-activate")
+    if cdp_port is not None:
+        argv += ["--remote-debugging-port", str(int(cdp_port))]
+    return argv
 
 
 def main():
@@ -314,8 +356,8 @@ def main():
         elif args.command == "run":
             result = {"log": run_agent(state, args.fixture)}
         else:
-            result = {"log": run_logged(state, "open", [sys.executable, "-B", str(REPO / "tools/verified_workbench.py"),
-                        "--open", "--workspace", state["work"]]), "nativeAcceptance": "NOT_INFERRED"}
+            result = {"log": run_logged(state, "open", open_argv(state, args.no_activate, args.cdp_port)),
+                      "nativeAcceptance": "NOT_INFERRED"}
     print(json.dumps(result, indent=2))
 
 

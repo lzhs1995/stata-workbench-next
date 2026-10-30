@@ -90,6 +90,19 @@ class WindowsBindingTests(unittest.TestCase):
             owner = adapter.bridge_owner()
             self.assertEqual(owner["pid"], os.getpid())
             self.assertFalse(owner["launcher"])
+            port = listener.getsockname()[1]
+        # 端口释放后无监听：PowerShell 5.1 的空管道不输出任何 JSON（10-28 Windows 实机 open 首启即 BLOCKED）
+        adapter = win.WindowsWorkbench(Path.home() / "absent-test-profile", self.exe, port)
+        self.assertIsNone(adapter.bridge_owner())
+
+    def test_empty_powershell_output_is_none_not_a_parse_error(self):
+        done = subprocess.CompletedProcess([], 0, stdout="\ufeff\r\n", stderr="")
+        with patch.object(win.sys, "platform", "win32"), patch.dict(os.environ, {"SystemRoot": "C:\\Windows"}), \
+                patch.object(win.subprocess, "run", return_value=done), \
+                patch.object(win.subprocess, "CREATE_NO_WINDOW", 0x08000000, create=True):
+            self.assertIsNone(win.powershell_json("@() | ConvertTo-Json -Compress"))
+            done.stdout = '[4242]'
+            self.assertEqual(win.powershell_json("@(4242) | ConvertTo-Json -Compress"), [4242])
 
 
 class PortabilityTests(unittest.TestCase):

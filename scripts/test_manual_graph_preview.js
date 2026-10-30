@@ -8,19 +8,22 @@ const source = fs.readFileSync(path.join(__dirname, '../dist/extension.js'), 'ut
 const patch = require('./apply_manual_graph_preview_patch');
 const fingerprint = require('./finalize_bundle_identity');
 const crypto = require('node:crypto');
-const beforeContainerFix = fingerprint.finalize(source.replace(patch.CLEAR_AFTER, patch.CLEAR_BEFORE)).text;
+// Later bundle patches are reverted exactly; this chain pins the dev.4/dev.5 bytes.
+const sealed = require('./apply_backend_cold_start_patch').revertBundle(
+  require('./later_bundle_patches').revertLaterPatches(source));
+const beforeContainerFix = fingerprint.finalize(sealed.replace(patch.CLEAR_AFTER, patch.CLEAR_BEFORE)).text;
 assert.equal(crypto.createHash('sha256').update(beforeContainerFix).digest('hex'),
   'f26e06f9b42d650dff797f3ad44021d6826c02600bd94d41958fd40a5c653377', 'deployed dev.4 bundle is exact');
-assert.equal(patch.patchBundle(beforeContainerFix), source, 'upgrade the deployed Terminal restore path');
+assert.equal(patch.patchBundle(beforeContainerFix), sealed, 'upgrade the deployed Terminal restore path');
 const previous = fingerprint.finalize(beforeContainerFix.replace(patch.HELPER, '').replace(patch.AFTER, patch.BEFORE)).text;
 assert.equal(crypto.createHash('sha256').update(previous).digest('hex'),
   '5519c6f04a0ca6a46ea81d8f2e6e2c293a006b7d620214eec6bef7bfff63fbea', 'previous bundle fixture must be exact');
-assert.equal(patch.patchBundle(previous), source, 'maintenance replay must reproduce sealed bundle');
+assert.equal(patch.patchBundle(previous), sealed, 'maintenance replay must reproduce sealed bundle');
 const legacy = fingerprint.finalize(previous.replace(patch.BEFORE, patch.LEGACY_AFTER)
   .replace(patch.ANCHOR, patch.LEGACY_HELPER + patch.ANCHOR)).text;
 assert.equal(crypto.createHash('sha256').update(legacy).digest('hex'),
   '23ba6d13cd0d5711b07d62fefbd0a6a9e02e55dd69639fc8596b3d8e99f579fc', 'deployed legacy candidate is exact');
-assert.equal(patch.patchBundle(legacy), source, 'upgrade the exact deployed helper and route together');
+assert.equal(patch.patchBundle(legacy), sealed, 'upgrade the exact deployed helper and route together');
 assert.equal(patch.patchBundle(source), source, 'patch must be idempotent');
 assert.throws(() => patch.patchBundle(previous.replace(patch.BEFORE, 'missingRoute')), /anchor/);
 assert.throws(() => patch.patchBundle(previous + patch.BEFORE), /anchor/);

@@ -835,7 +835,7 @@ function runtimeRootFromUvCommand(command, options = {}) {
   try {
     const result = spawnSync(
       command,
-      [...prefix, "--from", packageSpec, "python", "-I", "-c", "import sys; print(sys.prefix)"],
+      [...prefix, "--from", packageSpec, "--with", "mcp<2", "python", "-I", "-c", "import sys; print(sys.prefix)"],
       { encoding: "utf8", timeout: options.timeoutMs || 15000, stdio: ["ignore", "pipe", "pipe"] }
     );
     if (result && result.status === 0) {
@@ -932,7 +932,9 @@ function compilePythonSources(root, sources, options = {}) {
   const spawnSync = options.compileSpawnSync || childProcess.spawnSync;
   const compiler = [
     "import json, sys",
-    "items = json.load(sys.stdin)",
+    // Read bytes: Windows text stdin uses the ANSI code page (cp936 on the test
+    // machine), which turns UTF-8 source into surrogates and fails compile().
+    "items = json.loads(sys.stdin.buffer.read())",
     "for item in items:",
     "    compile(item['source'], item['path'], 'exec')",
   ].join("\n");
@@ -974,6 +976,16 @@ function compilePythonSources(root, sources, options = {}) {
     };
   }
   return { ok: true, status: "python-compile-ok", root, pythonCommand };
+}
+
+// Windows wheels/installs can carry CRLF. Anchors are LF, so patch an LF view
+// and write each file back with the line endings it had (see withOriginalEol).
+function lfSource(bytes) {
+  return bytes.toString("utf8").replace(/\r\n/g, "\n");
+}
+
+function withOriginalEol(original, source) {
+  return original.includes("\r\n") ? source.replace(/\r?\n/g, "\r\n") : source;
 }
 
 function atomicWrite(file, content, mode) {
@@ -1026,7 +1038,7 @@ function patchRuntime(options = {}) {
   }
 
   const sessionBytes = fs.readFileSync(located.sessionPath);
-  const sessionSource = sessionBytes.toString("utf8");
+  const sessionSource = lfSource(sessionBytes);
   let patchedSession = sessionSource;
   let sessionStatus = "already-applied";
   if (!sessionSource.includes(SESSION_BREAK_DRAIN_PATCH_MARKER)) {
@@ -1054,7 +1066,7 @@ function patchRuntime(options = {}) {
   }
 
   const serverBytes = fs.readFileSync(located.serverPath);
-  const serverSource = serverBytes.toString("utf8");
+  const serverSource = lfSource(serverBytes);
   let patchedServer = serverSource;
   let serverStatus = "already-applied";
   try {
@@ -1199,7 +1211,7 @@ function patchRuntime(options = {}) {
   }
 
   const clientBytes = fs.readFileSync(located.clientPath);
-  const clientSource = clientBytes.toString("utf8");
+  const clientSource = lfSource(clientBytes);
   let patchedClient = clientSource;
   let clientStatus = "already-applied";
   try {
@@ -1571,7 +1583,7 @@ function patchRuntime(options = {}) {
     : (options.dryRun ? "would-apply" : "applied");
 
   const graphDetectorBytes = fs.readFileSync(located.graphDetectorPath);
-  const graphDetectorSource = graphDetectorBytes.toString("utf8");
+  const graphDetectorSource = lfSource(graphDetectorBytes);
   let patchedGraphDetector = graphDetectorSource;
   let graphDetectorStatus = "already-applied";
   if (!graphDetectorSource.includes(GRAPH_PROBE_PATCH_MARKER)) {
@@ -1681,6 +1693,7 @@ function patchRuntime(options = {}) {
       source: patchedSession,
     },
   ];
+  for (const file of files) file.source = withOriginalEol(file.original, file.source);
   const preWriteCompile = compilePythonSources(
     located.root,
     files.map((file) => ({ path: file.path, source: file.source })),

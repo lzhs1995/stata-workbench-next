@@ -204,9 +204,36 @@ try {
     "utf8"
   );
 
+  // Windows installs carry CRLF (10-29 Windows: every LF anchor missed -> unsupported-source,
+  // then the unpatched graph name() rewrite mangled st_isname(...) in the checkpoint).
+  const runtimeFiles = [serverPath, clientPath, graphDetectorPath, sessionPath];
+  const lfOriginals = runtimeFiles.map(file => fs.readFileSync(file, "utf8"));
   const first = runtimePatch.patchRuntime(patchOptions);
   assert.strictEqual(first.ok, true, JSON.stringify(first));
   assert.strictEqual(first.status, "applied");
+  {
+    const crlfRoot = fs.mkdtempSync(path.join(os.tmpdir(), "mcp-stata-runtime-crlf-"));
+    try {
+      const crlfDir = path.join(crlfRoot, "lib", "python3.12", "site-packages", "mcp_stata");
+      fs.mkdirSync(crlfDir, { recursive: true });
+      const names = ["server.py", "stata_client.py", "graph_detector.py", "sessions.py"];
+      names.forEach((name, i) => fs.writeFileSync(path.join(crlfDir, name), lfOriginals[i].replace(/\n/g, "\r\n"), "utf8"));
+      const crlf = runtimePatch.patchRuntime({ ...patchOptions, runtimeRoot: crlfRoot });
+      assert.strictEqual(crlf.ok, true, JSON.stringify(crlf));
+      assert.strictEqual(crlf.status, "applied");
+      const lfPatched = runtimeFiles.map(file => fs.readFileSync(file, "utf8"));
+      names.forEach((name, i) => {
+        const text = fs.readFileSync(path.join(crlfDir, name), "utf8");
+        assert.ok(!/[^\r]\n/.test(text), name + " keeps CRLF line endings");
+        assert.strictEqual(text.replace(/\r\n/g, "\n"), lfPatched[i], name + " gets the same patch as LF");
+      });
+      assert.ok(fs.readFileSync(path.join(crlfDir, "stata_client.py"), "utf8").includes("(?<![\\w.])name\\("));
+      const again = runtimePatch.patchRuntime({ ...patchOptions, runtimeRoot: crlfRoot });
+      assert.strictEqual(again.status, "already-applied", JSON.stringify(again));
+    } finally {
+      fs.rmSync(crlfRoot, { recursive: true, force: true });
+    }
+  }
   const firstBytes = fs.readFileSync(serverPath);
   assert.ok(firstBytes.toString("utf8").includes(runtimePatch.PATCH_MARKER));
   assert.ok(firstBytes.toString("utf8").includes("listener_task.get_loop()"));
@@ -1086,6 +1113,15 @@ asyncio.run(main())
   assert.strictEqual(selected.ok, true);
   assert.strictEqual(selected.root, path.resolve(fixedRoot));
   assert.notStrictEqual(selected.root, path.resolve(uvRuntimeRoot));
+  {
+    // Real interpreter, non-ASCII source: Windows text stdin decodes with the ANSI code
+    // page (10-29: cp936 -> '\udc94' surrogate -> pre-write-compile-failed).
+    const realPython = process.env.STATA_PATCH_TEST_PYTHON || (process.platform === "win32" ? "python" : "python3");
+    const compiled = runtimePatch.compilePythonSources(root, [
+      { path: "unicode_fixture.py", source: 'label = "合成样本 — O\'Brien"\nassert label\n' },
+    ], { pythonCommand: realPython });
+    assert.strictEqual(compiled.ok, true, JSON.stringify(compiled));
+  }
   console.log("MCP_STATA_RUNTIME_PATCH_RC7_PASS");
 } finally {
   fs.rmSync(root, { recursive: true, force: true });

@@ -17,14 +17,14 @@ import urllib.error
 
 WORK = Path(__file__).resolve().parents[1]
 PROFILE = Path(os.environ.get("STATA_WORKBENCH_PROFILE", str(Path.home() / ".stata-workbench-shared"))).expanduser().resolve()
-EXTENSION = PROFILE / "extensions/lzhs1995.stata-workbench-shared-session-0.1.3-rc.7.44-dev.5"
+EXTENSION = PROFILE / "extensions/lzhs1995.stata-workbench-shared-session-0.1.3-rc.7.44-dev.8"
 try:
     PORT = int(os.environ.get("STATA_WORKBENCH_PORT", "17485"))
 except ValueError:
     PORT = 0  # Doctor can report the bad setting before any connection or launch.
 CODE_CLI = host.default_code()
-VERSION = "0.1.3-rc.7.44-dev.5"
-BUNDLE_SHA256 = "bf3e938134855456475754ceeca00600c9a295a4f1bd530b811f90377dfc23ca"
+VERSION = "0.1.3-rc.7.44-dev.8"
+BUNDLE_SHA256 = "ada946f6ac1e1370333063033c7a60a56ee0e3b14b5fb0ac39ce3fea9f5a30b2"
 PINS = {
     WORK / "dist/extension.js": BUNDLE_SHA256,
 }
@@ -108,6 +108,32 @@ def observe(d):
             "status": status}
 
 
+def launch_argv(code, profile, workspace, cdp_port=None):
+    """VS Code argv for the exact private profile. cdp_port opts in to a
+    127.0.0.1-only DevTools endpoint so a remote operator can drive the real
+    editor UI when Windows refuses foreground input from a background process."""
+    argv = host.code_launch_command(code) + ["--user-data-dir", str(profile / "user-data"),
+        "--extensions-dir", str(profile / "extensions"), "--new-window"]
+    if cdp_port is not None:
+        if type(cdp_port) is not int or not 1024 <= cdp_port <= 65535:
+            raise ValueError("invalid DevTools port")
+        argv.append("--remote-debugging-port=" + str(cdp_port))
+    return argv + [str(Path(workspace).resolve())]
+
+
+def start_code(argv, platform=None):
+    """Start VS Code once. On Windows Code.exe is the GUI process itself and never
+    returns like the macOS `code` CLI, so it is started detached without inherited
+    pipes; open_once then waits for the bridge identity, not for the process."""
+    platform = platform or sys.platform
+    if platform == "win32":
+        flags = getattr(subprocess, "DETACHED_PROCESS", 0x8) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x200)
+        subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, close_fds=True, creationflags=flags)
+        return
+    subprocess.run(argv, check=True, timeout=30)
+
+
 def open_once(d, launch, foreground=True, timeout=120, sleep=time.sleep, clock=time.monotonic):
     before = observe(d)
     if before["launcherPid"] is not None:
@@ -160,6 +186,8 @@ def main():
     mode.add_argument("--doctor", action="store_true", help="non-prompting host/permission/window diagnosis")
     mode.add_argument("--request-permissions", action="store_true", help="one read-only System Events query; may show macOS consent")
     parser.add_argument("--no-activate", action="store_true")
+    parser.add_argument("--remote-debugging-port", type=int, default=None,
+                        help="with --open on a new launch only: 127.0.0.1 DevTools port for UI automation")
     parser.add_argument("--workspace", type=Path, default=Path.cwd())
     args = parser.parse_args()
     os.environ["WS_FG_ALLOWED"] = "1" if args.open and not args.no_activate else "0"
@@ -185,9 +213,7 @@ def main():
         def launch():
             if not args.workspace.is_dir():
                 raise RuntimeError("workspace must exist")
-            subprocess.run(host.code_launch_command(CODE_CLI) + ["--user-data-dir", str(PROFILE / "user-data"),
-                "--extensions-dir", str(PROFILE / "extensions"), "--new-window",
-                str(args.workspace.resolve())], check=True, timeout=30)
+            start_code(launch_argv(CODE_CLI, PROFILE, args.workspace, args.remote_debugging_port))
 
         result = open_once(d, launch, foreground=not args.no_activate)
         print(json.dumps(result, ensure_ascii=False))

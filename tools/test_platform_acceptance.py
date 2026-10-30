@@ -214,6 +214,66 @@ class OperatorKitTests(unittest.TestCase):
         self.assertEqual(install.kwargs["extra_env"], {"ELECTRON_RUN_AS_NODE": "1", "VSCODE_DEV": ""})
         self.assertNotIn("ELECTRON_RUN_AS_NODE", kit.load_state(self.root)["environment"])
 
+    def test_code_cli_follows_versioned_folder_named_by_launcher(self):
+        # VS Code 1.121 on the Windows test machine: resources live in a commit folder
+        # (f6cfa2ea24) named by bin\code.cmd, not beside Code.exe.
+        code = self.parent / "VS Code" / "Code.exe"
+        (code.parent / "bin").mkdir(parents=True)
+        code.write_bytes(b"test executable placeholder")
+        for folder in ("0ld0000000", "f6cfa2ea24"):
+            cli = code.parent / folder / "resources/app/out/cli.js"
+            cli.parent.mkdir(parents=True)
+            cli.write_bytes(b"test CLI placeholder")
+        # 两个版本目录并存且没有 launcher：拒绝猜测
+        self.assertIsNone(kit.code_cli_path(code))
+        (code.parent / "bin/code.cmd").write_text(
+            '@echo off\r\nset ELECTRON_RUN_AS_NODE=1\r\n'
+            '"%~dp0..\\Code.exe" "%~dp0..\\f6cfa2ea24\\resources\\app\\out\\cli.js" %*\r\n')
+        self.assertEqual(kit.code_cli_path(code), code.parent / "f6cfa2ea24/resources/app/out/cli.js")
+        with patch.object(kit.shutil, "which", return_value="uv.exe"), patch.object(kit, "run_logged") as run:
+            kit.prepare(self.root, self.vsix, sys.executable, code, port=free_port(), reserve_bytes=0)
+        install = next(c for c in run.call_args_list if c.args[1] == "vsix-install")
+        self.assertEqual(install.args[2][:2], [str(code), str(code.parent / "f6cfa2ea24/resources/app/out/cli.js")])
+
+    def test_service_install_is_constrained_to_the_tested_mcp_1x_set(self):
+        # 10-28 Windows: unconstrained mcp-stata==1.26.1 pulled mcp 2.x -> FastMCP import error
+        pins = dict(line.split("==", 1) for line in kit.SERVICE_CONSTRAINTS.read_text(encoding="utf-8").splitlines()
+                    if line and not line.startswith("#"))
+        self.assertEqual(pins["mcp-stata"], "1.26.1")
+        self.assertTrue(pins["mcp"].startswith("1."), pins["mcp"])
+        # Windows-only packages are the installed versions from service-freeze-1, and stay conditional.
+        for name, version in {"colorama": "0.4.6", "pywin32": "312", "tzdata": "2026.6"}.items():
+            self.assertEqual(pins[name], version + '; sys_platform == "win32"')
+        code = self.parent / "VS Code" / "Code.exe"
+        code.parent.mkdir()
+        code.write_bytes(b"test executable placeholder")
+        (code.parent / "resources/app/out").mkdir(parents=True)
+        (code.parent / "resources/app/out/cli.js").write_bytes(b"test CLI placeholder")
+        with patch.object(kit.shutil, "which", return_value="uv.exe"), patch.object(kit, "run_logged") as run:
+            kit.prepare(self.root, self.vsix, sys.executable, code, port=free_port(), reserve_bytes=0)
+        install = next(c for c in run.call_args_list if c.args[1] == "service-install").args[2]
+        self.assertEqual(install[install.index("-c") + 1], str(kit.SERVICE_CONSTRAINTS))
+        self.assertEqual(install[-1], "mcp-stata==1.26.1")
+
+    def test_open_no_activate_is_forwarded_and_default_still_activates(self):
+        state = {"work": "C:\\run\\workspace"}
+        self.assertNotIn("--no-activate", kit.open_argv(state))
+        self.assertEqual(kit.open_argv(state, True)[-1], "--no-activate")
+        args = kit.build_parser().parse_args(["open", "--root", "C:\\run", "--no-activate"])
+        self.assertTrue(args.no_activate)
+        self.assertFalse(kit.build_parser().parse_args(["open", "--root", "C:\\run"]).no_activate)
+        self.assertEqual(kit.open_argv(state, True, 9335)[-2:], ["--remote-debugging-port", "9335"])
+        self.assertNotIn("--remote-debugging-port", kit.open_argv(state, True))
+
+    def test_missing_code_cli_is_refused_before_root_is_created(self):
+        code = self.parent / "VS Code" / "Code.exe"
+        code.parent.mkdir()
+        code.write_bytes(b"test executable placeholder")
+        with patch.object(kit.shutil, "which", return_value="uv.exe"):
+            with self.assertRaisesRegex(FileNotFoundError, "VS Code CLI missing"):
+                kit.prepare(self.root, self.vsix, sys.executable, code, port=free_port(), reserve_bytes=0)
+        self.assertFalse(self.root.exists())
+
     def test_collector_does_not_follow_external_links_or_invent_acceptance(self):
         state = self.configured()
         outside = self.parent / "outside"
