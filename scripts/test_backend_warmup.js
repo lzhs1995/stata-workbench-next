@@ -22,12 +22,14 @@ const bundle = fs.readFileSync(path.join(__dirname, "..", "dist", "extension.js"
 const sha = text => crypto.createHash("sha256").update(text).digest("hex");
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-// 1. 幂等、精确可逆，锚点 fail closed；是 LATER 链的最后一层。
+// 1. 幂等、精确可逆，锚点 fail closed；在 LATER 链里紧跟 prerun stop fence。
+// 之后追加的层（例如 rc.7.73 单 do 分页）先撤掉，得到本补丁封口的那一层。
 assert.equal(patch.patchBundle(bundle), bundle, "byte idempotence");
 assert.equal(fingerprint.verify(bundle).ok, true);
-const before = patch.revertBundle(bundle);
-assert.equal(before, revertAfter(bundle, "./apply_prerun_stop_fence_patch"), "this patch is the newest later layer");
-assert.equal(patch.patchBundle(before), bundle, "replay reproduces the sealed bundle");
+const sealed = revertAfter(bundle, "./apply_backend_warmup_patch");
+const before = patch.revertBundle(sealed);
+assert.equal(before, revertAfter(bundle, "./apply_prerun_stop_fence_patch"), "this patch directly follows the prerun stop fence");
+assert.equal(patch.patchBundle(before), sealed, "replay reproduces the sealed layer");
 assert.ok(!before.includes("__codexEnsureBackendWarm"), "negative control: unpatched bundle has no warm-up");
 assert.throws(() => patch.patchBundle(before.replace(patch.CALL_BEFORE, "")), /anchor/);
 assert.throws(() => patch.patchBundle(before + patch.STATUS_BEFORE), /anchor/);

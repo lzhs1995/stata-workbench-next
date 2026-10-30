@@ -27,8 +27,8 @@
       "bytes": 17618
     },
     "scripts/patch_manager.js": {
-      "sha256": "a2b3c37f509c1d707caa4815a69b83855016ce854d09b032c469f5efcf1e1efe",
-      "bytes": 91941
+      "sha256": "2215bd8f796808d508259383fbc9d0534207923c8e5bc6745a778dc5a67b51e0",
+      "bytes": 92215
     },
     "scripts/mcp_stata_runtime_patch.js": {
       "sha256": "64013014e8598af5c7f70a276cd80a2f5c21d218eaa6fba59f079096c8f75ac9",
@@ -111,8 +111,8 @@
       "bytes": 5178
     },
     "scripts/apply_rc7_shared_execution_patch.js": {
-      "sha256": "c49f264b66b6b44b3fb498668e6173581868ecc3c2eaf0c1e8471e3fa951d300",
-      "bytes": 337220
+      "sha256": "7492fac80a7f7aaf39039f24fabc9fcde97aee3262500ac72bc74e792956109f",
+      "bytes": 337313
     },
     "scripts/apply_rc64_routes_patch.js": {
       "sha256": "b01e1225f5844b632e24d616957fb9e565541345a10d6f4fbc640a4b034070b2",
@@ -139,8 +139,8 @@
       "bytes": 11107
     },
     "dist/extension.js": {
-      "sha256": "e5d64ff8fc2228c13dfe89e5570b41dd961137c70e3eb34beae73fd8a709ff1f",
-      "bytes": 5611339
+      "sha256": "4ce953dbbd064099ddf28e5765dd219d31632e5bcd437b8ec45102d5dd477c39",
+      "bytes": 5613095
     },
     "scripts/mac/png_compat_transform.js": {
       "sha256": "cdea12886a1d5bb5b4c2b3e38829de1c7e68ed70e7777e8d6e2eb02bb0ce3514",
@@ -343,7 +343,7 @@
       "bytes": 4729
     },
     "tools/verified_workbench.py": {
-      "sha256": "fac93e3685a6cb938716b6480dc422d65d1d5af0db509526735a4612a1f09d16",
+      "sha256": "aaeaf6d807034417873c2725bb3172a9db2677e2325267ce0dd98648af892acd",
       "bytes": 11672
     },
     "tools/workbench_platform.py": {
@@ -385,6 +385,10 @@
     "scripts/stata_preflight_timeout_patch.js": {
       "sha256": "0f4bee092c4d32d8c08fc424a95c5de543cf784d0ec369ad4147d9b37218e37c",
       "bytes": 2263
+    },
+    "scripts/apply_single_do_pagination_patch.js": {
+      "sha256": "c970dfb4f3547314466d87e32d9c462df28082cf89fa319f21cfe2489ea67c0e",
+      "bytes": 5809
     }
   },
   "acceptanceStatus": "PENDING_LICENSED_MAC_FULL_ACCEPTANCE",

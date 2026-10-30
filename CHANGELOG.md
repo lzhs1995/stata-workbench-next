@@ -25,6 +25,23 @@ Preserves the Mac-accepted runtime; removes local maintenance credentials, adds 
 
 # Changelog
 
+## Unreleased — named graph exports on the Agent path (macOS)
+
+- On macOS an Agent request `do "<file>"` reaches the visible bridge with
+  `set more off` in front: the compatibility layer adds it (`ensurePaginationOff`).
+  Both single-do checks in the bridge matched only the whole request, so the
+  prefixed request was not treated as one do-file. The bridge skipped the human-file
+  graph preparation and `__codexResolveSingleDoFilePath` returned null. Named graph
+  exports were never activated, and `graph export …, name(g)` for a graph that was
+  not the current one failed with r(693) "could not find Graph window". rc.7.44
+  FULL45 hit this on taught_task5/7/8 over the Agent path (S8, S25, S28).
+- rc.7.73 skips leading `set more off` / `capture set more off` lines before both
+  checks and keeps them in front of the prepared code. Any other code before or
+  after the `do` line still does not count as a single do-file.
+- New test `scripts/test_single_do_pagination.js` runs the real bundle checks
+  against the real compatibility layer. It fails on the rc.7.44 bundle.
+- Version unchanged; the bump is done at integration.
+
 ## Unreleased — wait for Stata itself on cold start
 
 - Windows rc.7.44 refused the first run after opening or reloading in 4 of 10 cold
