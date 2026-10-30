@@ -39,6 +39,13 @@ Preserves the Mac-accepted runtime; removes local maintenance credentials, adds 
   failed session returns 500 and is stopped so the next run starts a fresh engine.
   All refusals carry `payloadDispatched: false`. `/status.backendWarmup` records the
   wait. Servers without `list_sessions` keep the rc.7.67 behaviour.
+- A soft Stop during that wait no longer escalates to a force reset. With no
+  dataset snapshot, soft Stop used to run a 5 s quiescence probe, which queued
+  behind Stata start-up and timed out. The force reset then hit its own 30 s
+  reconnect limit and left the instance recovery-required (Windows, 2026-10-30).
+  The probe is now skipped only while this run's warm-up is waiting, or was
+  cancelled before Stata reported `running`. In that window no payload has been
+  dispatched.
 - The runtime patch reads the pre-flight limit from `MCP_STATA_PREFLIGHT_TIMEOUT`
   (seconds, default 180, clamped to 60–900) instead of the hard-coded 60 s.
 

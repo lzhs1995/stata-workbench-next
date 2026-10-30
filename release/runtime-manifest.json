@@ -139,8 +139,8 @@
       "bytes": 11107
     },
     "dist/extension.js": {
-      "sha256": "68d712ce74e696f850df3082f0b85becf1a91678c45c8f32aa6c9670fc56d56d",
-      "bytes": 5610599
+      "sha256": "e5d64ff8fc2228c13dfe89e5570b41dd961137c70e3eb34beae73fd8a709ff1f",
+      "bytes": 5611339
     },
     "scripts/mac/png_compat_transform.js": {
       "sha256": "cdea12886a1d5bb5b4c2b3e38829de1c7e68ed70e7777e8d6e2eb02bb0ce3514",
@@ -343,7 +343,7 @@
       "bytes": 4729
     },
     "tools/verified_workbench.py": {
-      "sha256": "e0553f95f203b036bf4729779884daf00c9908ae26809a63988418c42643e195",
+      "sha256": "94079f0d1949dcfc6a5eb2e4d7bc319549afa22f1dd7f9e8da923a58936a9441",
       "bytes": 10780
     },
     "tools/workbench_platform.py": {
@@ -379,8 +379,8 @@
       "bytes": 6922
     },
     "scripts/apply_backend_warmup_patch.js": {
-      "sha256": "4e3e72aa5d142dca6fd39a02ece235e9961a3a6d0a3f3ae4430705589f1d71eb",
-      "bytes": 8694
+      "sha256": "49f32d8588db1080f97f3e703623332b469889d791294658941ab172a46129bb",
+      "bytes": 10136
     },
     "scripts/stata_preflight_timeout_patch.js": {
       "sha256": "0f4bee092c4d32d8c08fc424a95c5de543cf784d0ec369ad4147d9b37218e37c",

@@ -23,6 +23,14 @@ const CALL_AFTER = CALL_BEFORE
 const STATUS_BEFORE = 'backendStart:(typeof globalThis.__codexBackendStartSummary==="function"?globalThis.__codexBackendStartSummary():null),';
 const STATUS_AFTER = 'backendWarmup:(typeof globalThis.__codexBackendWarmupSummary==="function"?globalThis.__codexBackendWarmupSummary():null),'
   + STATUS_BEFORE;
+// Snapshotless soft Stop: while this run's warm-up never saw "running", nothing
+// was dispatched and the quiescence probe can only queue behind Stata start-up,
+// time out and force a reset (Windows 2026-10-30 13:58Z: reset, then reconnect
+// timed out at 30 s and left recovery-required). Skip the probe in that case.
+const STOP_BEFORE = '}}else{let __quiescenceCode=';
+const STOP_AFTER = '}}else if(typeof globalThis.__codexWarmupSkipsQuiescence==="function"&&globalThis.__codexWarmupSkipsQuiescence(__runId)){'
+  + '__restore={ok:true,skipped:"no pre-run dataset snapshot",quiescenceProbe:{skipped:"Stata was still starting; no payload dispatched"}}'
+  + STOP_BEFORE.slice(1);
 const HELPER = String.raw`
 ${MARKER}
 // One read-only list_sessions probe per poll; the transport that reached
@@ -104,6 +112,14 @@ async function __codexEnsureBackendWarm(runId, source) {
     recovery: state.recovery, timeoutMs, elapsedMs: state.elapsedMs, stageStartedAt: state.startedAt, message: state.error } });
 }
 globalThis.__codexEnsureBackendWarm = __codexEnsureBackendWarm;
+// True only while this run's warm-up is waiting or was cancelled before Stata
+// reported "running": the run then throws before any payload is dispatched.
+function __codexWarmupSkipsQuiescence(runId) {
+  const state = __codexBackendWarmup;
+  return !!state && runId != null && state.runId === String(runId)
+    && (state.outcome === "WAITING" || state.outcome === "CANCELLED") && state.lastStatus !== "running";
+}
+globalThis.__codexWarmupSkipsQuiescence = __codexWarmupSkipsQuiescence;
 `;
 
 function uniqueAt(source, needle) {
@@ -119,15 +135,19 @@ function patchBundle(source, options = {}) {
     uniqueAt(source, HELPER_ANCHOR + HELPER);
     uniqueAt(source, CALL_AFTER);
     uniqueAt(source, STATUS_AFTER);
+    uniqueAt(source, STOP_AFTER);
   } else {
-    if (source.includes("__codexEnsureBackendWarm") || source.includes("__codexBackendWarmup")) {
+    if (source.includes("__codexEnsureBackendWarm") || source.includes("__codexBackendWarmup")
+      || source.includes("__codexWarmupSkipsQuiescence")) {
       throw new Error("partial backend warm-up patch");
     }
     uniqueAt(source, HELPER_ANCHOR);
     uniqueAt(source, CALL_BEFORE);
     uniqueAt(source, STATUS_BEFORE);
+    uniqueAt(source, STOP_BEFORE);
     source = source.replace(HELPER_ANCHOR, () => HELPER_ANCHOR + HELPER)
-      .replace(CALL_BEFORE, () => CALL_AFTER).replace(STATUS_BEFORE, () => STATUS_AFTER);
+      .replace(CALL_BEFORE, () => CALL_AFTER).replace(STATUS_BEFORE, () => STATUS_AFTER)
+      .replace(STOP_BEFORE, () => STOP_AFTER);
   }
   return options.finalize === false ? source : fingerprint.finalize(source).text;
 }
@@ -137,8 +157,10 @@ function revertBundle(source) {
   uniqueAt(source, HELPER_ANCHOR + HELPER);
   uniqueAt(source, CALL_AFTER);
   uniqueAt(source, STATUS_AFTER);
+  uniqueAt(source, STOP_AFTER);
   return fingerprint.finalize(source.replace(HELPER_ANCHOR + HELPER, () => HELPER_ANCHOR)
-    .replace(CALL_AFTER, () => CALL_BEFORE).replace(STATUS_AFTER, () => STATUS_BEFORE)).text;
+    .replace(CALL_AFTER, () => CALL_BEFORE).replace(STATUS_AFTER, () => STATUS_BEFORE)
+    .replace(STOP_AFTER, () => STOP_BEFORE)).text;
 }
 
 if (require.main === module) {
@@ -149,4 +171,4 @@ if (require.main === module) {
   console.log(JSON.stringify({ changed: before !== after, target, installed: false }));
 }
 
-module.exports = { patchBundle, revertBundle, MARKER, HELPER, HELPER_ANCHOR, CALL_BEFORE, CALL_AFTER, STATUS_BEFORE, STATUS_AFTER };
+module.exports = { patchBundle, revertBundle, MARKER, HELPER, HELPER_ANCHOR, CALL_BEFORE, CALL_AFTER, STATUS_BEFORE, STATUS_AFTER, STOP_BEFORE, STOP_AFTER };

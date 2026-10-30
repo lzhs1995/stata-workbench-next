@@ -43,8 +43,16 @@ assert.ok(begin.includes(patch.CALL_AFTER));
 assert.ok(begin.indexOf("__codexEnsureBackendStarted(") < begin.indexOf("__codexEnsureBackendWarm(")
   && begin.indexOf("__codexEnsureBackendWarm(") < begin.indexOf("__codexCaptureGraphInventory(cwd)"));
 assert.equal(bundle.split(patch.STATUS_AFTER).length - 1, 1);
-const helper = bundle.slice(bundle.indexOf(patch.MARKER), bundle.indexOf("globalThis.__codexEnsureBackendWarm = __codexEnsureBackendWarm;"))
-  + "globalThis.__codexEnsureBackendWarm = __codexEnsureBackendWarm;";
+const helperEnd = "globalThis.__codexWarmupSkipsQuiescence = __codexWarmupSkipsQuiescence;";
+const helper = bundle.slice(bundle.indexOf(patch.MARKER), bundle.indexOf(helperEnd)) + helperEnd;
+// 无快照的 soft Stop：warm-up 未见 running 时跳过 quiescence 探针（否则排在 Stata 启动之后超时、升级 force reset）。
+// 跳过分支恰在原 quiescence 分支之前、同一个 __codexSoftStop 里；revert 后的包没有它（负对照）。
+assert.equal(bundle.split(patch.STOP_AFTER).length - 1, 1);
+const softStop = bundle.slice(bundle.indexOf("globalThis.__codexSoftStop=async __reason=>{"), bundle.indexOf(patch.STOP_AFTER) + patch.STOP_AFTER.length);
+assert.ok(softStop.length < 40000 && !softStop.slice(1).includes("globalThis.__codexSoftStop=async"), "skip lives in __codexSoftStop");
+assert.ok(softStop.includes("__runId=__life.runId||__s.runId||null"));
+assert.ok(!before.includes("__codexWarmupSkipsQuiescence") && before.split(patch.STOP_BEFORE).length - 1 === 1, "negative control: original probe only");
+assert.ok(bundle.includes("soft-stop escalation: snapshotless backend not quiescent"), "probe and escalation kept for every other case");
 const coldHelper = bundle.slice(bundle.indexOf(coldStart.MARKER), bundle.indexOf(coldStart.ANCHOR));
 assert.equal(coldHelper, coldStart.HELPER, "rc.7.67 helper bytes untouched");
 
@@ -186,9 +194,26 @@ async function snapshot(client) {
     assert.equal(e.__codexPreRunTimeout.payloadDispatched, false);
     assert.ok(!client.calls.includes("stop_session"));
     assert.equal(h.calls.inventory, 0);
+    const skips = h.ctx.__codexWarmupSkipsQuiescence;
+    assert.equal(skips("run-stop"), true, "cancelled before running: soft Stop skips the probe");
+    assert.equal(skips("run-other"), false);
+    assert.equal(skips(null), false);
     await h.run("run-after-stop");
     assert.equal(h.ctx.__codexBackendWarmupSummary().outcome, "READY");
+    assert.equal(skips("run-after-stop"), false, "READY: payload may run, keep the probe");
     cases.cancelled = e.__codexPreRunTimeout.reasonCode;
+    // 等待中（Stop 刚点、warm-up 还没醒来）同样跳过；见过 running 的取消不跳过。
+    const c2 = new FakeClient({ initMs: 1e12 });
+    const h2 = harness(c2);
+    const pending2 = h2.fail("run-waiting");
+    await delay(30);
+    assert.equal(h2.ctx.__codexBackendWarmupSummary().outcome, "WAITING");
+    assert.equal(h2.ctx.__codexWarmupSkipsQuiescence("run-waiting"), true);
+    h2.ctx.__codexResetGeneration = 1;
+    await pending2;
+    Object.assign(h2.ctx.__codexBackendWarmupSummary(), { outcome: "CANCELLED", lastStatus: "running" });
+    assert.equal(h2.ctx.__codexWarmupSkipsQuiescence("run-waiting"), false);
+    cases.quiescenceSkip = "WAITING/CANCELLED-before-running only";
   }
   // e. 一直 "starting"：自身上限到期 → 504，未派发。
   {
