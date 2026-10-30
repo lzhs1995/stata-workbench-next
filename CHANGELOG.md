@@ -25,7 +25,7 @@ Preserves the Mac-accepted runtime; removes local maintenance credentials, adds 
 
 # Changelog
 
-## 0.1.3-rc.7.45-dev.1 — cold start waits for Stata, Agent-path named graphs, soft Stop during the pre-run checkpoint
+## 0.1.3-rc.7.45 — cold start waits for Stata, Agent-path named graphs, soft Stop during the pre-run checkpoint
 
 Integrates PR #11, #12, #13 and #14 on top of rc.7.44.
 
