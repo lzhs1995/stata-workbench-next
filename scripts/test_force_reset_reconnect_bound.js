@@ -4,11 +4,10 @@
 // force reset 的 reconnect 期限：Windows 冷启动 connect 34.6–42.5 s，原 30 s 必然
 // 超时（2026-10-30 13:59Z stage 211343 → recovery-required）。期限与 warm-up 同源，
 // macOS 不变。离线：取 dist 里真实的 reconnect 竞速语句，在 vm 里用假 connect 跑；
-// 计时器缩小 1000 倍。负对照 = HEAD 版本的 stop_checkpoint_core（同一段 dist 代码）。
+// 计时器缩小 1000 倍。负对照 = 修复前的期限：修复前所有平台都是 max(30 s, 15 s)，
+// 即现在非 win32 的取值（不取版本库 HEAD：CI 检出的合并提交已含修复）。
 const assert = require("node:assert/strict");
-const childProcess = require("node:child_process");
 const fs = require("node:fs");
-const os = require("node:os");
 const path = require("node:path");
 const vm = require("node:vm");
 const C = require("./stop_checkpoint_core");
@@ -52,15 +51,16 @@ async function reconnect(checkpoint, platform, connectMs) {
   return vm.runInContext(`(async () => { ${race} return __reconnect; })()`, ctx);
 }
 
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "fr-reconnect-"));
-const headFile = path.join(tmp, "stop_checkpoint_core.head.js");
-fs.writeFileSync(headFile, childProcess.execFileSync("git", ["show", "HEAD:scripts/stop_checkpoint_core.js"], { cwd: root }));
-const head = require(headFile);
+// 修复前的函数体只有这一行；它现在只作为非 win32 的基值保留。
+const src = fs.readFileSync(path.join(__dirname, "stop_checkpoint_core.js"), "utf8");
+assert.equal(src.split("const base = Math.max(FORCE_RESET_RECONNECT_MS, RECONNECT_FLOOR_MS);").length - 1, 1);
+const PRE_FIX_MS = C.forceResetReconnectTimeoutMs("linux", { STATA_SETUP_TIMEOUT: "900" });
+assert.equal(PRE_FIX_MS, 30000);
 
 (async () => {
   const cases = {};
   // 负对照：HEAD 的期限在 Windows 实测 42.5 s connect 下超时（复现 13:59Z）。
-  const legacy = await reconnect({ forceResetReconnectTimeoutMs: () => head.forceResetReconnectTimeoutMs() }, "win32", 42500);
+  const legacy = await reconnect({ forceResetReconnectTimeoutMs: () => PRE_FIX_MS }, "win32", 42500);
   assert.equal(legacy.ok, false);
   assert.equal(legacy.timeout, true);
   assert.equal(legacy.timeoutMs, 30000);
@@ -84,6 +84,5 @@ const head = require(headFile);
   assert.equal(winHang.ok, false);
   assert.equal(winHang.timeoutMs, 300000);
   cases.winHang = "TIMED_OUT at 300 s";
-  fs.rmSync(tmp, { recursive: true, force: true });
   console.log(JSON.stringify({ verdict: "FORCE_RESET_RECONNECT_BOUND_PASS", cases, liveStata: false }));
-})().catch(error => { fs.rmSync(tmp, { recursive: true, force: true }); console.error(error); process.exitCode = 1; });
+})().catch(error => { console.error(error); process.exitCode = 1; });
