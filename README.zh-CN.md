@@ -31,7 +31,7 @@
 ### 文档
 
 - [跨平台开发与配置](docs/CROSS_PLATFORM.md)
-- [Windows 实机验收手册](docs/WINDOWS_ACCEPTANCE.md)
+- [Windows 实机验收手册](docs/WINDOWS_ACCEPTANCE.md)、[早期 Windows 工具的去向](docs/LEGACY_WINDOWS.md)
 - [能力与证据台账](SYNC.md)、[验收范围](docs/ACCEPTANCE.md)
 - [macOS 权限](docs/MAC_PERMISSIONS.md)、[故障排查](docs/TROUBLESHOOTING.md)
 - [共享执行与并发](docs/shared-execution-and-concurrency.md)

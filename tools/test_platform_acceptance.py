@@ -265,6 +265,16 @@ class OperatorKitTests(unittest.TestCase):
         self.assertEqual(kit.open_argv(state, True, 9335)[-2:], ["--remote-debugging-port", "9335"])
         self.assertNotIn("--remote-debugging-port", kit.open_argv(state, True))
 
+    def test_open_workspace_trust_prompt_is_kept_unless_requested(self):
+        state = {"work": "C:\\run\\workspace"}
+        self.assertNotIn("--disable-workspace-trust", kit.open_argv(state, True, 9335))
+        self.assertEqual(kit.open_argv(state, True, 9335, True)[-1], "--disable-workspace-trust")
+        parse = kit.build_parser().parse_args
+        self.assertFalse(parse(["open", "--root", "C:\\run"]).disable_workspace_trust)
+        self.assertTrue(parse(["open", "--root", "C:\\run", "--disable-workspace-trust"]).disable_workspace_trust)
+        with self.assertRaises(SystemExit):
+            parse(["collect", "--root", "C:\\run", "--disable-workspace-trust"])
+
     def test_missing_code_cli_is_refused_before_root_is_created(self):
         code = self.parent / "VS Code" / "Code.exe"
         code.parent.mkdir()

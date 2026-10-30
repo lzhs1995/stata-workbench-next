@@ -36,7 +36,7 @@ each result names the version it was measured on.
 ### Documentation
 
 - [Cross-platform development and configuration](docs/CROSS_PLATFORM.md)
-- [Windows physical-machine runbook](docs/WINDOWS_ACCEPTANCE.md)
+- [Windows physical-machine runbook](docs/WINDOWS_ACCEPTANCE.md) and [early Windows tooling](docs/LEGACY_WINDOWS.md)
 - [Capability and evidence ledger](SYNC.md) and [acceptance scope](docs/ACCEPTANCE.md)
 - [macOS permissions](docs/MAC_PERMISSIONS.md) and [troubleshooting](docs/TROUBLESHOOTING.md)
 - [Shared execution and concurrency](docs/shared-execution-and-concurrency.md)
