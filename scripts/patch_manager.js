@@ -1559,6 +1559,12 @@ const AUXILIARY_MARKERS = [
     marker: "codex patch rc.7.71: Stop in the pre-run window refuses the payload",
   },
   {
+    key: "singleDoMatchersSkipPaginationPrefix",
+    label: "rc.7.73 single-do matchers skip the compat pagination prefix",
+    relativePath: path.join("dist", "extension.js"),
+    marker: "codex patch rc.7.73: single-do matchers skip the pagination prefix",
+  },
+  {
     key: "runtimePatchTargetsListenerLoop",
     label: "packaged mcp-stata patch targets the live listener loop",
     relativePath: path.join("scripts", "mcp_stata_runtime_patch.js"),

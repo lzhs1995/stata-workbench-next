@@ -3421,5 +3421,6 @@ text = require("./apply_default_service_constraint_patch").patchBundle(text, { f
 text = require("./apply_enqueue_cancel_recheck_patch").patchBundle(text, { finalize: false });
 text = require("./apply_stop_cancel_wording_patch").patchBundle(text, { finalize: false });
 text = require("./apply_prerun_stop_fence_patch").patchBundle(text, { finalize: false });
+text = require("./apply_single_do_pagination_patch").patchBundle(text, { finalize: false });
 fs.writeFileSync(target, text, "utf8");
 console.log(baseAlreadyApplied ? "RC7_SHARED_EXECUTION_UPDATED" : "RC7_SHARED_EXECUTION_APPLIED", target);
