@@ -25,7 +25,11 @@ Preserves the Mac-accepted runtime; removes local maintenance credentials, adds 
 
 # Changelog
 
-## Unreleased — named graph exports on the Agent path (macOS)
+## 0.1.3-rc.7.45-dev.1 — cold start waits for Stata, Agent-path named graphs, soft Stop during the pre-run checkpoint
+
+Integrates PR #11, #12, #13 and #14 on top of rc.7.44.
+
+### Named graph exports on the Agent path (macOS and Windows)
 
 - On macOS an Agent request `do "<file>"` reaches the visible bridge with
   `set more off` in front: the compatibility layer adds it (`ensurePaginationOff`).
@@ -40,9 +44,10 @@ Preserves the Mac-accepted runtime; removes local maintenance credentials, adds 
   after the `do` line still does not count as a single do-file.
 - New test `scripts/test_single_do_pagination.js` runs the real bundle checks
   against the real compatibility layer. It fails on the rc.7.44 bundle.
-- Version unchanged; the bump is done at integration.
+- Windows (stage 211343, job 384): before the fix taught_task5 failed the same way (500,
+  r(693)); after it, 200 rc 0 with the named exports activated.
 
-## Unreleased — wait for Stata itself on cold start
+### Wait for Stata itself on cold start
 
 - Windows rc.7.44 refused the first run after opening or reloading in 4 of 10 cold
   starts (504 `PRE_RUN_SNAPSHOT_TIMEOUT`, or 500 after mcp-stata's pre-flight timed
@@ -86,8 +91,7 @@ Preserves the Mac-accepted runtime; removes local maintenance credentials, adds 
   payload was not admitted, Stata still holds the pre-run state and the Stop
   completes; otherwise the restore fails as before, without dispatching.
 
-## 0.1.3-rc.7.45-dev.1 — early Windows tooling accounted for, opt-in trust skip
-
+### Early Windows tooling accounted for, opt-in trust skip
 - [docs/LEGACY_WINDOWS.md](docs/LEGACY_WINDOWS.md) records, per file, what became
   of the early Windows-only scripts and settings (about 60 files that were never
   under version control): merged, replaced, not needed, or open.
