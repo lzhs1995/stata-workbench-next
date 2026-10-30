@@ -198,7 +198,9 @@ python3 tools/shared_stata.py --file analysis.do --cwd /absolute/workspace --bus
 - 每次调用一次 POST，不自动重试。超时或结果不明不能证明 Stata 没有执行；再提交前先查回执和会话。
 - 遇到 bundle 或监听方不对、重复的启动器、会话忙或在恢复、backend 变了，都会拒绝。
   `--busy-policy wait` 只在提交前等待，最多 `--max-wait` 秒。
-- 它从不启动、激活、重置或重试 Stata。
+- 它从不启动、激活、重置或重试 Stata。它需要已经在运行的 backend：打开或重载 VS Code 后，
+  先在编辑器或 Terminal 里运行一次（Run File、Run Selection 或 Terminal 命令都可以）。
+- 机器负载很高时只读的进程探测超时，会重新观测，总共最多 3 次；POST 本身从不重发。
 - 退出码 0 表示结论 `PASS_VISIBLE_SHARED_RUN`：执行和身份检查通过；不证明有人同时看着源码和
   Terminal。其他结果退出码为 2。
 - 每次调用把请求、响应、实际提交的 `.do` 字节和运行日志写进 `.stata-receipts/`
@@ -273,6 +275,7 @@ python3 tools/verify_release.py --vsix /path/to/stata-workbench-shared-session-0
 | Terminal 长时间显示忙 | 先查 bridge 状态（`python3 tools/verified_workbench.py --status`）再运行别的代码；不要再排一个长任务 |
 | 长脚本卡住或超时 | 先核对原请求、原始日志和输出。超时不能证明 Stata 没有执行。见[存储与日志恢复](docs/storage-and-log-recovery.md) |
 | 端口已被占用 | 别的编辑器占着。另选空闲的 `stataMcp.visibleBridgePort`，`STATA_WORKBENCH_PORT` 设成同一个值 |
+| 状态栏显示 **Stata: STALE**，运行返回 HTTP 423 `recovery-required` | force reset 后没能确认 backend。运行一次经验证的恢复：`curl -X POST http://127.0.0.1:17485/recovery-smoke`（Windows：`Invoke-WebRequest -UseBasicParsing -Method Post -Uri http://127.0.0.1:17485/recovery-smoke`；端口换成你的）。它运行一条固定的标记命令，确认 rc 0 且日志里有标记后才解锁。不要杀 Stata，也不要删会话 |
 | 图形不出现 | 给图命名；多个未命名的图会互相覆盖唯一的 `Graph` 窗口 |
 | Windows：`code` 装不上 VSIX | 运行 `Get-Command code` 和 `code --version`；把 `PATH` 改成指向 VS Code 的 `bin\code.cmd`，或用 **Extensions: Install from VSIX...** |
 | macOS：错误 `-1743` 或找不到窗口 | 在与 agent 相同的宿主里运行 `--doctor`，再运行一次 `--request-permissions`。见 [macOS 权限](docs/MAC_PERMISSIONS.md) |

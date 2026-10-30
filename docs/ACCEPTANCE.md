@@ -101,6 +101,9 @@ pass. New files can follow the focused Terminal group until arranged explicitly.
 `graph use` alone is not currently recognized as a graph-producing command by
 the artifact scanner. A top-level Code window count is not code/Terminal proof.
 
-Windows licensed execution/desktop acceptance, consent and lock/unlock behavior,
-new FULL45 coverage, native Mac bitmap recovery, and source-built feature parity
-remain pending. The research instance and scientific acceptance are unchanged.
+Windows 11 x64 licensed execution and desktop checks (runbook steps 1–10,
+including lock/unlock and a cancelled UAC prompt) were run on 2026-10-28/29;
+see [SYNC](../SYNC.md) and the [README platform status](../README.md#platform-status).
+New FULL45 coverage, native Mac bitmap recovery, Windows 10, Windows on ARM and
+source-built feature parity remain pending. The research instance and
+scientific acceptance are unchanged.

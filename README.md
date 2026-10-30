@@ -218,7 +218,11 @@ python3 tools/shared_stata.py --file analysis.do --cwd /absolute/workspace --bus
 - It refuses a wrong bundle or listener owner, a duplicate launcher, a busy or
   recovering session, or a changed backend. `--busy-policy wait` only waits
   before submitting, up to `--max-wait` seconds.
-- It never launches, activates, resets or retries Stata.
+- It never launches, activates, resets or retries Stata. It needs a running
+  backend: after opening or reloading VS Code, start the service once from the
+  editor or Terminal (any Run File, Run Selection or Terminal command).
+- A read-only process probe that times out on a heavily loaded machine is
+  repeated, at most three times in all. The POST itself is never repeated.
 - Exit code 0 means verdict `PASS_VISIBLE_SHARED_RUN`: the execution and
   identity checks passed. It does not prove that anyone watched the source and
   Terminal. Any other result exits 2.
@@ -298,6 +302,7 @@ pinned runtime file match. This checks runtime identity only, not live acceptanc
 | The Terminal looks busy for a long time | Check bridge status (`python3 tools/verified_workbench.py --status`) before running more code; do not queue another long run |
 | A long script stalls or times out | Reconcile the original request, raw log and outputs first. A timeout is not proof that Stata did not run. See [storage and log recovery](docs/storage-and-log-recovery.md) |
 | Port already in use | Another editor owns it. Choose a free `stataMcp.visibleBridgePort` and the same `STATA_WORKBENCH_PORT` |
+| Status bar shows **Stata: STALE**; runs return HTTP 423 `recovery-required` | A force reset could not confirm the backend. Run the verified recovery once: `curl -X POST http://127.0.0.1:17485/recovery-smoke` (Windows: `Invoke-WebRequest -UseBasicParsing -Method Post -Uri http://127.0.0.1:17485/recovery-smoke`; use your port). It runs a fixed marker command and unlocks only after rc 0 and the marker in the log. Do not kill Stata or delete the session |
 | Graphs do not appear | Name graphs; several unnamed graphs can overwrite the single `Graph` window |
 | Windows: `code` cannot install the VSIX | Run `Get-Command code` and `code --version`; fix `PATH` to VS Code's `bin\code.cmd`, or use **Extensions: Install from VSIX...** |
 | macOS: error `-1743` or no windows found | Run `--doctor`, then `--request-permissions` once, in the same host as the agent. See [macOS permissions](docs/MAC_PERMISSIONS.md) |
