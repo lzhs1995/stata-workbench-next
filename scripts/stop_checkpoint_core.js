@@ -804,13 +804,28 @@ function softStopReadiness(restore, hardReset) {
   }
 }
 
-function restoreTimeoutMs(snapshot) {
+// Windows：完整 restore 的逐条重建比 macOS 慢得多。2026-10-31 integ smoke
+// （job 405，160 estimates + 80 graphs）L1 在 45 s 天花板被切断时还在图循环里
+// （exthost「run_selection cancelled after 45018ms」），于是 L2 只恢复数据集 +
+// 全局，丢掉全部 estimates/graphs。同一状态的 checkpoint 保存就用了 37.3 s。
+// win32 按条放宽、天花板随之提高；成功的 restore 不会因此变慢。macOS 与其他
+// 平台保持原公式（rc.7.44 S12 在 45 s 内完整恢复）。
+const RESTORE_BASE_MS = 30000;
+const RESTORE_MS_PER_ARTIFACT = 250;
+const RESTORE_CEILING_MS = 45000;
+const WIN32_RESTORE_MS_PER_ARTIFACT = 500;
+const WIN32_RESTORE_CEILING_MS = 180000;
+
+function restoreTimeoutMs(snapshot, platform = process.platform) {
   const estimateCount = Number(snapshot && snapshot.estimateCount);
   const graphCount = Number(snapshot && snapshot.graphCount);
   const artifacts =
     (Number.isFinite(estimateCount) && estimateCount > 0 ? estimateCount : 0) +
     (Number.isFinite(graphCount) && graphCount > 0 ? graphCount : 0);
-  return Math.min(45000, 30000 + artifacts * 250);
+  if (platform === "win32") {
+    return Math.min(WIN32_RESTORE_CEILING_MS, RESTORE_BASE_MS + artifacts * WIN32_RESTORE_MS_PER_ARTIFACT);
+  }
+  return Math.min(RESTORE_CEILING_MS, RESTORE_BASE_MS + artifacts * RESTORE_MS_PER_ARTIFACT);
 }
 
 // ===================================================================
@@ -842,14 +857,14 @@ const RECONNECT_DIVISOR = 3;
 // ≥ RECONNECT_FLOOR_MS 与最坏情况下 L2 的 reconnect 预算。
 const FORCE_RESET_RECONNECT_MS = 30000;
 
-function hardRestoreTimeoutMs(snapshot) {
-  return Math.ceil(restoreTimeoutMs(snapshot) * ESCALATION_SLACK);
+function hardRestoreTimeoutMs(snapshot, platform = process.platform) {
+  return Math.ceil(restoreTimeoutMs(snapshot, platform) * ESCALATION_SLACK);
 }
 
-function reconnectTimeoutMs(snapshot) {
+function reconnectTimeoutMs(snapshot, platform = process.platform) {
   return Math.max(
     RECONNECT_FLOOR_MS,
-    Math.ceil(restoreTimeoutMs(snapshot) / RECONNECT_DIVISOR)
+    Math.ceil(restoreTimeoutMs(snapshot, platform) / RECONNECT_DIVISOR)
   );
 }
 
@@ -874,11 +889,11 @@ function forceResetReconnectTimeoutMs(platform = process.platform, env = process
 }
 
 /** 阶梯全貌 + 单调性谓词。dist 与静态判据都从这里取值，避免两处各写一份。 */
-function escalationLadder(snapshot) {
-  const l1RestoreMs = restoreTimeoutMs(snapshot);
-  const l2ReconnectMs = reconnectTimeoutMs(snapshot);
-  const l2RestoreMs = hardRestoreTimeoutMs(snapshot);
-  const l3ReconnectMs = forceResetReconnectTimeoutMs();
+function escalationLadder(snapshot, platform = process.platform, env = process.env) {
+  const l1RestoreMs = restoreTimeoutMs(snapshot, platform);
+  const l2ReconnectMs = reconnectTimeoutMs(snapshot, platform);
+  const l2RestoreMs = hardRestoreTimeoutMs(snapshot, platform);
+  const l3ReconnectMs = forceResetReconnectTimeoutMs(platform, env);
   return {
     l1RestoreMs,
     l2ReconnectMs,

@@ -74,6 +74,15 @@ Integrates PR #11, #12, #13 and #14 on top of rc.7.44.
   a fresh cold start, and Windows cold connects took 34.6–42.5 s, so the old
   30 s bound always ended in recovery-required. A successful reconnect is not
   slowed down. macOS and other platforms keep 30 s.
+- On Windows the soft-Stop full restore of a large pre-run checkpoint gets more
+  time: 500 ms per saved estimate or graph above the 30 s base, up to 180 s.
+  Before, every platform got 250 ms per item, capped at 45 s. In the Windows integ
+  smoke of 2026-10-31 (160 estimates, 80 graphs), the restore was still in its
+  graph loop when the 45 s timer fired. The escalation then restored only the
+  dataset and globals, so the instance ended continuity-lost and the next run
+  was refused with 423. The escalation ladder scales with the new budget and stays
+  monotonic. A restore that finishes is not slowed down, and a hung one still
+  escalates when the budget runs out. macOS and other platforms are unchanged.
 - The force-reset process cleanup treats an empty owned-PID list as a no-op
   success. Before, the extension passed `-OwnedPidCsv ""` when no backend had
   been started, the script refused with exit 2, and the reset recorded cleanup

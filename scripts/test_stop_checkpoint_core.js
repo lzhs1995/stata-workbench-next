@@ -89,11 +89,13 @@ try {
   assert.strictEqual(checkpoint.shouldCleanupAfterFailure(null), true);
   assert.strictEqual(checkpoint.shouldCleanupAfterFailure(Object.freeze({ stopOwned: false })), true);
   assert.strictEqual(checkpoint.shouldCleanupAfterFailure(Object.freeze({ stopOwned: true })), false);
-  assert.strictEqual(checkpoint.restoreTimeoutMs(null), 30000);
-  assert.strictEqual(checkpoint.restoreTimeoutMs({ estimateCount: 4, graphCount: 8 }), 33000);
-  assert.strictEqual(checkpoint.restoreTimeoutMs({ estimateCount: 60, graphCount: 60 }), 45000);
-  assert.strictEqual(checkpoint.restoreTimeoutMs({ estimateCount: -1, graphCount: "bad" }), 30000);
-  assert.strictEqual(checkpoint.restoreTimeoutMs({ estimateCount: 100000, graphCount: 100000 }), 45000);
+  assert.strictEqual(checkpoint.restoreTimeoutMs(null, "darwin"), 30000);
+  assert.strictEqual(checkpoint.restoreTimeoutMs({ estimateCount: 4, graphCount: 8 }, "darwin"), 33000);
+  assert.strictEqual(checkpoint.restoreTimeoutMs({ estimateCount: 60, graphCount: 60 }, "darwin"), 45000);
+  assert.strictEqual(checkpoint.restoreTimeoutMs({ estimateCount: -1, graphCount: "bad" }, "darwin"), 30000);
+  assert.strictEqual(checkpoint.restoreTimeoutMs({ estimateCount: 100000, graphCount: 100000 }, "darwin"), 45000);
+  assert.strictEqual(checkpoint.restoreTimeoutMs({ estimateCount: 160, graphCount: 80 }, "win32"), 150000);
+  assert.strictEqual(checkpoint.restoreTimeoutMs({ estimateCount: 100000, graphCount: 100000 }, "win32"), 180000);
   const unreadableOwnership = {};
   Object.defineProperty(unreadableOwnership, "stopOwned", {
     get() { throw new Error("ownership unavailable"); },

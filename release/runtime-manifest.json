@@ -11,8 +11,8 @@
       "bytes": 578
     },
     "scripts/stop_checkpoint_core.js": {
-      "sha256": "b228fbdb4d3796f1b4c5ed18421d5f2a5475a3fb1b2fe4e71c79aeab296ca2a3",
-      "bytes": 39341
+      "sha256": "39461f3b47d2e78e4a534fdf916b28c4056b876518e1f27b330e9ee80a7c30fc",
+      "bytes": 40458
     },
     "scripts/static_windows_gate.js": {
       "sha256": "4db114e7153ca576767ace7d591bf9acc52217ac7ac8c29974ed36e1a73172f4",
