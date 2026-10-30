@@ -25,6 +25,35 @@ Preserves the Mac-accepted runtime; removes local maintenance credentials, adds 
 
 # Changelog
 
+## 0.1.3-rc.7.44 — Stop in the pre-run window, probe timeouts under load
+
+- Windows Stop-cycle testing found that a soft Stop landing in the human-file
+  pre-run enrich window did not stop the payload. The checkpoint task had already
+  reported `task_done`, the enrich guard passed, and the `.do` file ran after the
+  Stop. Soft Stop then waited on that uncancelled payload transport and escalated to
+  force reset; one run ended in recovery-required. The gap is old (the same code
+  from public rc.7.39 through dev.8), and the Agent bridge path had it too.
+- rc.7.71 checks the reset generation before each pre-run dispatch (snapshot and the
+  Run File checkpoint fallback) and again after the enrich guard, with no `await`
+  between that check and the payload call. The Agent bridge takes its own generation
+  right after acquiring the run. A Stop in that window now returns 409
+  `PRE_RUN_CANCELLED_BY_STOP` with `payloadDispatched: false` and does not escalate.
+  A Stop while the checkpoint is still incomplete keeps the existing 500
+  `EXEC_REJECTED`.
+- The agent client (`tools/shared_stata.py`) observes again, at most 3 times, when a
+  read-only probe times out: `ps`/`lsof`, and on macOS the passive permission check
+  or the window query. A timed-out permission probe is now `PERMISSION_CHECK_TIMEOUT`
+  instead of `PERMISSION_CHECK_FAILED`, so it no longer gives permission advice.
+  Real permission answers are not retried and the POST is never repeated. Found by
+  the Mac stress run at load average about 200 (2 of 32 runs reported unconfirmed).
+- `examples/platform-acceptance/stress.py`: bounded stress driver for one acceptance
+  instance (sequential and concurrent agent runs; each must POST once, with unique
+  run ids, an unchanged backend and reset generation, and no overlapping
+  executions). Source-only; not packaged in the VSIX.
+- `scripts/patch_manager.js verify` also checks the rc.7.70 Data Browser frame patch
+  (source and packaged) and the rc.7.71 pre-run fence.
+- README rewritten in English with a matching Chinese README (`README.zh-CN.md`).
+
 ## 0.1.3-rc.7.44-dev.8 — cancellation after connect, Stop wording, Data Browser frame
 
 - Windows dev.5 step 9 diagnosis: a pre-run snapshot cancelled while the backend

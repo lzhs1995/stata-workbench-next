@@ -1553,6 +1553,12 @@ const AUXILIARY_MARKERS = [
     marker: "codex patch rc.7.70: Data Browser shows the current frame",
   },
   {
+    key: "preRunStopFenceRefusesPayload",
+    label: "rc.7.71 refuses the payload when Stop lands in the pre-run window",
+    relativePath: path.join("dist", "extension.js"),
+    marker: "codex patch rc.7.71: Stop in the pre-run window refuses the payload",
+  },
+  {
     key: "runtimePatchTargetsListenerLoop",
     label: "packaged mcp-stata patch targets the live listener loop",
     relativePath: path.join("scripts", "mcp_stata_runtime_patch.js"),
