@@ -9,6 +9,7 @@ const LATER = [
   "./apply_stop_cancel_wording_patch",
   "./apply_prerun_stop_fence_patch",
   "./apply_backend_warmup_patch",
+  "./apply_softstop_incomplete_checkpoint_patch",
 ];
 
 function revertLaterPatches(source) {

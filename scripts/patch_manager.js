@@ -1583,6 +1583,12 @@ const AUXILIARY_MARKERS = [
     marker: "IsNullOrWhiteSpace($OwnedPidCsv)",
   },
   {
+    key: "softStopNeverDispatchesRefusedRestore",
+    label: "rc.7.74 soft Stop never dispatches a refused checkpoint restore",
+    relativePath: path.join("dist", "extension.js"),
+    marker: "codex patch rc.7.74: soft Stop never dispatches a refused checkpoint restore",
+  },
+  {
     key: "runtimePatchTargetsListenerLoop",
     label: "packaged mcp-stata patch targets the live listener loop",
     relativePath: path.join("scripts", "mcp_stata_runtime_patch.js"),

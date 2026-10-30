@@ -539,7 +539,7 @@ function restoreCode(snapshot, stataString, options = {}) {
   const ready = snapshotReadyRecord(snapshot);
   if (!ready) return "";
   const defaultGraphObjectPreexisting = readBinaryFlag(paths.defaultGraphObjectPath);
-  if (defaultGraphObjectPreexisting === null) return "exit 459\n";
+  if (defaultGraphObjectPreexisting === null) return REFUSED_RESTORE_CODE;
   // datasetOnly：升级路径（L2）专用的降级恢复。只做数据集 + 全局，
   // 跳过 estimates/graphs 的逐条重建 —— 那是 PF-4 里真正耗时的部分。
   const datasetOnly = options && options.datasetOnly === true;
@@ -550,7 +550,7 @@ function restoreCode(snapshot, stataString, options = {}) {
     globalLines = globalRestoreLines(paths.globalsPath);
   } catch {
     // Validate even degraded restores before emitting clear/use/discard.
-    return "exit 459\n";
+    return REFUSED_RESTORE_CODE;
   }
   if (!datasetOnly) {
     // Do not reset live state unless every declared saved component remains
@@ -560,7 +560,7 @@ function restoreCode(snapshot, stataString, options = {}) {
       ...estimateNames.map((name) => path.join(paths.stateDir, `estimate_${name}.ster`)),
       ...graphNames.map((name) => path.join(paths.stateDir, `graph_${name}.gph`))];
     if (required.some((file) => !fs.existsSync(file) || !fs.statSync(file).isFile())) {
-      return "exit 459\n";
+      return REFUSED_RESTORE_CODE;
     }
   }
   const lines = [...globalLines.preflight, ready.kind === "empty"
@@ -637,6 +637,41 @@ function restoreCode(snapshot, stataString, options = {}) {
 }
 
 /** L2 降级恢复的工作量证据：跳过了多少条 estimates/graphs 重建。 */
+// restoreCode() answers "exit 459\n" (or "") when the checkpoint cannot be
+// restored as a whole, e.g. a Stop that broke the checkpoint's graph-save loop
+// left graphs.txt cut off mid-name (FULL45 S40, rc.7.44). Sending that
+// sentinel to Stata only fails: embedded Stata answers a top-level exit with
+// "--Break-- r(1)", and soft Stop recorded continuity-lost.
+const REFUSED_RESTORE_CODE = "exit 459\n";
+
+// What soft Stop does with a pre-run checkpoint. `payloadAdmitted` is the
+// snapshot's flag at Stop entry: false only when the run registered the
+// snapshot and had not passed its last pre-run Stop fence. Soft Stop advances
+// the reset generation before its first await, so such a run can no longer
+// dispatch its payload, and Stata state is the pre-run state (every pre-run
+// command keeps its holds and cleanup under nobreak). Anything else
+// (true, missing) means the payload may have run.
+function restorePlan(code, payloadAdmitted) {
+  const refused = code === REFUSED_RESTORE_CODE || !String(code || "").trim();
+  if (!refused) return { dispatch: true };
+  if (payloadAdmitted === false) {
+    return {
+      dispatch: false,
+      restore: {
+        ok: true,
+        skipped: "pre-run checkpoint incomplete; payload not dispatched",
+      },
+    };
+  }
+  return {
+    dispatch: false,
+    restore: {
+      ok: false,
+      error: "pre-run checkpoint incomplete; restore refused without dispatch",
+    },
+  };
+}
+
 function restoreDowngradeSummary(snapshot) {
   if (!snapshot?.path) return null;
   const paths = checkpointPaths(snapshot);
@@ -917,7 +952,9 @@ module.exports = {
   shouldCleanupAfterFailure,
   publicSummary,
   readNames,
+  REFUSED_RESTORE_CODE,
   restoreCode,
+  restorePlan,
   restoreTimeoutMs,
   snapshotReadyRecord,
   snapshotCode,
