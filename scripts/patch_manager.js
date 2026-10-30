@@ -1571,6 +1571,18 @@ const AUXILIARY_MARKERS = [
     marker: "Workbench pre-flight timeout follows MCP_STATA_PREFLIGHT_TIMEOUT",
   },
   {
+    key: "forceResetReconnectFollowsSetupBudget",
+    label: "Windows force-reset reconnect bound follows the Stata setup budget",
+    relativePath: path.join("scripts", "stop_checkpoint_core.js"),
+    marker: "function setupBudgetMs(env = process.env)",
+  },
+  {
+    key: "cleanupEmptyOwnedPidsIsNoop",
+    label: "force-reset cleanup with no owned backend PIDs is a no-op success",
+    relativePath: path.join("scripts", "cleanup_mcp_stata_processes.ps1"),
+    marker: "IsNullOrWhiteSpace($OwnedPidCsv)",
+  },
+  {
     key: "runtimePatchTargetsListenerLoop",
     label: "packaged mcp-stata patch targets the live listener loop",
     relativePath: path.join("scripts", "mcp_stata_runtime_patch.js"),

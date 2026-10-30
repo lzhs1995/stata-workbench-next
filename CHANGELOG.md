@@ -46,6 +46,16 @@ Preserves the Mac-accepted runtime; removes local maintenance credentials, adds 
   The probe is now skipped only while this run's warm-up is waiting, or was
   cancelled before Stata reported `running`. In that window no payload has been
   dispatched.
+- On Windows the force-reset reconnect now waits as long as a cold start may
+  take: setup budget + 120 s, the same formula the warm-up uses (300 s by
+  default; follows `STATA_SETUP_TIMEOUT`). After a force reset the reconnect is
+  a fresh cold start, and Windows cold connects took 34.6–42.5 s, so the old
+  30 s bound always ended in recovery-required. A successful reconnect is not
+  slowed down. macOS and other platforms keep 30 s.
+- The force-reset process cleanup treats an empty owned-PID list as a no-op
+  success. Before, the extension passed `-OwnedPidCsv ""` when no backend had
+  been started, the script refused with exit 2, and the reset recorded cleanup
+  `ok: false`. A non-empty list with no valid PID is still refused.
 - The runtime patch reads the pre-flight limit from `MCP_STATA_PREFLIGHT_TIMEOUT`
   (seconds, default 180, clamped to 60–900) instead of the hard-coded 60 s.
 

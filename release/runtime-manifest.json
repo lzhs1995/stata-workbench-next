@@ -11,8 +11,8 @@
       "bytes": 578
     },
     "scripts/stop_checkpoint_core.js": {
-      "sha256": "3a49546ed3a33ef1371b63c0ed183aca098f98826c60d0b10df95584b7d5f8df",
-      "bytes": 36919
+      "sha256": "d307a4652a756f4c0c8592ee59765f0652eae27e1ee9a044888e44a1cb288394",
+      "bytes": 37840
     },
     "scripts/static_windows_gate.js": {
       "sha256": "4db114e7153ca576767ace7d591bf9acc52217ac7ac8c29974ed36e1a73172f4",
@@ -27,8 +27,8 @@
       "bytes": 17618
     },
     "scripts/patch_manager.js": {
-      "sha256": "d4cd5b9b251f3c56056a21e8d81aad52d0265401489b524172505adb59a929d3",
-      "bytes": 91413
+      "sha256": "a2b3c37f509c1d707caa4815a69b83855016ce854d09b032c469f5efcf1e1efe",
+      "bytes": 91941
     },
     "scripts/mcp_stata_runtime_patch.js": {
       "sha256": "64013014e8598af5c7f70a276cd80a2f5c21d218eaa6fba59f079096c8f75ac9",

@@ -818,8 +818,24 @@ function reconnectTimeoutMs(snapshot) {
   );
 }
 
-function forceResetReconnectTimeoutMs() {
-  return Math.max(FORCE_RESET_RECONNECT_MS, RECONNECT_FLOOR_MS);
+// Windows：force reset 之后的 reconnect 就是一次冷启动（mcp-stata 先等 worker
+// 至多 30 s，再握手），实测 connect 34.6–42.5 s（2026-10-30 stage 211343），
+// 30 s 必然超时、落到 recovery-required。期限与冷启动 / warm-up 同源：
+// 1000 × (max(180, STATA_SETUP_TIMEOUT) + 120)。成功的重连不会因此变慢。
+// macOS 与其他平台保持 30 s 不变。
+const SETUP_BUDGET_FLOOR_S = 180;
+const SETUP_BUDGET_MARGIN_S = 120;
+
+function setupBudgetMs(env = process.env) {
+  let setupSeconds = SETUP_BUDGET_FLOOR_S;
+  const configured = Number(env && env.STATA_SETUP_TIMEOUT);
+  if (Number.isFinite(configured) && configured > setupSeconds) setupSeconds = configured;
+  return 1000 * (setupSeconds + SETUP_BUDGET_MARGIN_S);
+}
+
+function forceResetReconnectTimeoutMs(platform = process.platform, env = process.env) {
+  const base = Math.max(FORCE_RESET_RECONNECT_MS, RECONNECT_FLOOR_MS);
+  return platform === "win32" ? Math.max(base, setupBudgetMs(env)) : base;
 }
 
 /** 阶梯全貌 + 单调性谓词。dist 与静态判据都从这里取值，避免两处各写一份。 */
@@ -891,6 +907,7 @@ module.exports = {
   finalizeCheckpoint,
   forceResetReconnectTimeoutMs,
   hardRestoreTimeoutMs,
+  setupBudgetMs,
   initializeCheckpoint,
   isRestoreCapable,
   isSnapshotReady,
