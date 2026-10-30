@@ -10,6 +10,7 @@ const path = require("path");
 const sessionOriginal = fs.readFileSync(path.join(__dirname, "../tests/fixtures/stata_sessions.original.py"), "utf8");
 const runtimePatch = require("./mcp_stata_runtime_patch");
 const graphNameBoundary = require("./stata_graph_name_boundary_patch");
+const preflightTimeout = require("./stata_preflight_timeout_patch");
 require("./test_stata_graph_name_boundary_patch");
 const graphTaskDrain = require("./stata_graph_task_drain_patch");
 const graphErrors = require("./stata_graph_error_patch");
@@ -175,6 +176,7 @@ try {
       "# fixture",
       runtimePatch.ORIGINAL_STATA_BREAK_REQUEST,
       ...graphNameBoundary.BLOCKS.map(block => block.original),
+      preflightTimeout.ORIGINAL,
       streamStateFixture,
       graphTaskDrain.ORIGINAL_POLL,
       graphTaskDrain.ORIGINAL_EXIT,
@@ -616,6 +618,7 @@ try {
       "# fixture",
       runtimePatch.PATCHED_STATA_BREAK_REQUEST,
       ...graphNameBoundary.BLOCKS.map(block => block.original),
+      preflightTimeout.ORIGINAL,
       streamStateFixture,
       graphTaskDrain.ORIGINAL_POLL,
       graphTaskDrain.ORIGINAL_EXIT,
@@ -648,6 +651,7 @@ try {
       "# fixture",
       runtimePatch.PATCHED_STATA_BREAK_REQUEST,
       ...graphNameBoundary.BLOCKS.map(block => block.original),
+      preflightTimeout.ORIGINAL,
       streamStateFixture,
       graphTaskDrain.ORIGINAL_POLL,
       graphTaskDrain.ORIGINAL_EXIT,
@@ -680,6 +684,7 @@ try {
       "# fixture",
       runtimePatch.PATCHED_STATA_BREAK_REQUEST,
       ...graphNameBoundary.BLOCKS.map(block => block.original),
+      preflightTimeout.ORIGINAL,
       streamStateFixture,
       graphTaskDrain.ORIGINAL_POLL,
       graphTaskDrain.ORIGINAL_EXIT,

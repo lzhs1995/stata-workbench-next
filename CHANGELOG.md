@@ -25,6 +25,40 @@ Preserves the Mac-accepted runtime; removes local maintenance credentials, adds 
 
 # Changelog
 
+## Unreleased — wait for Stata itself on cold start
+
+- Windows rc.7.44 refused the first run after opening or reloading in 4 of 10 cold
+  starts (504 `PRE_RUN_SNAPSHOT_TIMEOUT`, or 500 after mcp-stata's pre-flight timed
+  out). mcp-stata 1.26.1 answers the MCP handshake after waiting at most 30 s for its
+  worker, while the worker still starts Stata twice: a pre-flight subprocess with a
+  hard 60 s limit, then the in-process `stata_setup.config`. rc.7.67 waited only for
+  the handshake, so the remaining start-up landed in the 60 s snapshot guard.
+- rc.7.72 waits, before any pre-run stage, until `list_sessions` reports the default
+  session as `running`, under its own bound (setup timeout + 120 s). A Stop during
+  the wait returns 409 `PRE_RUN_BACKEND_WARMUP_CANCELLED`; a timeout returns 504; a
+  failed session returns 500 and is stopped so the next run starts a fresh engine.
+  All refusals carry `payloadDispatched: false`. `/status.backendWarmup` records the
+  wait. Servers without `list_sessions` keep the rc.7.67 behaviour.
+- A soft Stop during that wait no longer escalates to a force reset. With no
+  dataset snapshot, soft Stop used to run a 5 s quiescence probe, which queued
+  behind Stata start-up and timed out. The force reset then hit its own 30 s
+  reconnect limit and left the instance recovery-required (Windows, 2026-10-30).
+  The probe is now skipped only while this run's warm-up is waiting, or was
+  cancelled before Stata reported `running`. In that window no payload has been
+  dispatched.
+- On Windows the force-reset reconnect now waits as long as a cold start may
+  take: setup budget + 120 s, the same formula the warm-up uses (300 s by
+  default; follows `STATA_SETUP_TIMEOUT`). After a force reset the reconnect is
+  a fresh cold start, and Windows cold connects took 34.6–42.5 s, so the old
+  30 s bound always ended in recovery-required. A successful reconnect is not
+  slowed down. macOS and other platforms keep 30 s.
+- The force-reset process cleanup treats an empty owned-PID list as a no-op
+  success. Before, the extension passed `-OwnedPidCsv ""` when no backend had
+  been started, the script refused with exit 2, and the reset recorded cleanup
+  `ok: false`. A non-empty list with no valid PID is still refused.
+- The runtime patch reads the pre-flight limit from `MCP_STATA_PREFLIGHT_TIMEOUT`
+  (seconds, default 180, clamped to 60–900) instead of the hard-coded 60 s.
+
 ## 0.1.3-rc.7.45-dev.1 — early Windows tooling accounted for, opt-in trust skip
 
 - [docs/LEGACY_WINDOWS.md](docs/LEGACY_WINDOWS.md) records, per file, what became

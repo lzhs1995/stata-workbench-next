@@ -21,6 +21,22 @@ $ownedPids = @(
     }
 )
 
+# The force-reset caller passes the owned backend PIDs it knows about; an empty
+# list (no backend was started yet) means there is nothing of ours to clean.
+# That is a no-op success, never a global cleanup. A non-empty list without any
+# valid PID is still refused.
+if ($Force -and [string]::IsNullOrWhiteSpace($OwnedPidCsv)) {
+  [pscustomobject]@{
+    ok = $true
+    mode = "owned-pids"
+    noop = "no owned backend PIDs"
+    candidateCount = 0
+    killedCount = 0
+    failedCount = 0
+  } | ConvertTo-Json -Depth 4
+  exit 0
+}
+
 if ($Force -and $ownedPids.Count -eq 0) {
   [pscustomobject]@{
     ok = $false
