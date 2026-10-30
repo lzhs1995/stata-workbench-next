@@ -153,7 +153,8 @@ profile 和端口、Stata 候选路径、已安装和正在运行的身份），
    **Stata: Run Current File**。Terminal 打印 `STATA_WORKBENCH_SMOKE_OK`。
 
 打开或重载后的第一次运行还要启动 Stata 服务。dev.8 的测试机上分别用了 14.1 秒（macOS）
-和 25.2 秒（Windows）。等它跑完，不要重复提交。
+和 25.2 秒（Windows）。等它跑完，不要重复提交。唯一的例外是 `PRE_RUN_SNAPSHOT_TIMEOUT`
+（见[故障排查](#故障排查)）：那次运行在代码发出之前就被拒绝了，再运行一次是安全的。
 
 ### 共享会话
 
@@ -275,6 +276,7 @@ python3 tools/verify_release.py --vsix /path/to/stata-workbench-shared-session-0
 | 现象 | 处理 |
 | --- | --- |
 | 第一次运行很慢 | 打开或重载后的第一次运行还要启动 Stata 服务。等它，不要重复提交 |
+| 打开或重载后的第一次运行报 `PRE_RUN_SNAPSHOT_TIMEOUT`（HTTP 504） | 机器繁忙时 Stata 启动超过了 60 秒。这次运行在派发前就被拒绝（`payloadDispatched:false`），你的代码没有执行。再运行一次 |
 | Terminal 长时间显示忙 | 先查 bridge 状态（`python3 tools/verified_workbench.py --status`）再运行别的代码；不要再排一个长任务 |
 | 长脚本卡住或超时 | 先核对原请求、原始日志和输出。超时不能证明 Stata 没有执行。见[存储与日志恢复](docs/storage-and-log-recovery.md) |
 | 端口已被占用 | 别的编辑器占着。另选空闲的 `stataMcp.visibleBridgePort`，`STATA_WORKBENCH_PORT` 设成同一个值 |
@@ -283,6 +285,7 @@ python3 tools/verify_release.py --vsix /path/to/stata-workbench-shared-session-0
 | Windows：`code` 装不上 VSIX | 运行 `Get-Command code` 和 `code --version`；把 `PATH` 改成指向 VS Code 的 `bin\code.cmd`，或用 **Extensions: Install from VSIX...** |
 | macOS：错误 `-1743` 或找不到窗口 | 在与 agent 相同的宿主里运行 `--doctor`，再运行一次 `--request-permissions`。见 [macOS 权限](docs/MAC_PERMISSIONS.md) |
 | `No module named 'mcp.server.fastmcp'` | 服务装成了 MCP 2.x。默认路线会加 `mcp<2`；自定义的服务命令也要加这个约束 |
+| `Failed to connect to mcp-stata`，并有 `No solution found when resolving tool dependencies` 和 “the network was disabled” | uv 处在离线模式（例如 `~/.config/uv/uv.toml` 里的 `offline = true`，或设置了 `UV_OFFLINE`），默认的 `uvx` 路线只能用缓存里已有的包。第一次启动时关掉离线模式，让 `uvx` 把服务下载一次，然后重载窗口 |
 
 更多情况见[故障排查](docs/TROUBLESHOOTING.md)和[桌面恢复记录](docs/desktop-auth-terminal-recovery.md)。
 
@@ -295,6 +298,9 @@ python3 tools/verify_release.py --vsix /path/to/stata-workbench-shared-session-0
 - Windows 锁屏/解锁和 UAC 这一步，依据是 Winlogon 事件和会话状态未变；没有实时录屏，取消 UAC
   的情况来自操作者本人的报告。
 - macOS 上 VS Code 窗口被隐藏时，Terminal 文字可能要到运行结束才出现。
+- Stata 自身的启动仍算在运行前快照的 60 秒预算里，只有服务连接有单独的预算。在繁忙的 Windows
+  机器上，打开或重载后的第一次运行在 6 次冷启动中被拒绝过 1 次（`PRE_RUN_SNAPSHOT_TIMEOUT`，
+  代码没有发出），下一次运行通过。
 - 一个 backend 一次只跑一个请求。多个实例需要各自的 profile 和端口；没有通用的多实例调度。
 - Data Browser 的 frame 名在浏览器打开时更新，之后再 `frame change` 不会跟着变。面板较窄时
   FILTER 一行文字会重叠。

@@ -165,7 +165,9 @@ With the same `STATA_WORKBENCH_PROFILE` and `STATA_WORKBENCH_PORT` set:
 
 The first run after opening or reloading also starts the Stata service. On the
 dev.8 test machines this took 14.1 s (macOS) and 25.2 s (Windows). Wait for it;
-do not submit the run again.
+do not submit the run again. The one exception is `PRE_RUN_SNAPSHOT_TIMEOUT`
+(see [Troubleshooting](#troubleshooting)): that run was refused before your code
+was sent, so running it again is safe.
 
 ### Share the session
 
@@ -306,6 +308,7 @@ pinned runtime file match. This checks runtime identity only, not live acceptanc
 | Symptom | What to do |
 | --- | --- |
 | The first run seems slow | The first run after opening or reloading also starts the Stata service. Wait; do not resubmit |
+| The first run after opening or reloading fails with `PRE_RUN_SNAPSHOT_TIMEOUT` (HTTP 504) | Stata took longer than 60 s to start on a busy machine. The run was refused before dispatch (`payloadDispatched:false`), so your code did not run. Run it again |
 | The Terminal looks busy for a long time | Check bridge status (`python3 tools/verified_workbench.py --status`) before running more code; do not queue another long run |
 | A long script stalls or times out | Reconcile the original request, raw log and outputs first. A timeout is not proof that Stata did not run. See [storage and log recovery](docs/storage-and-log-recovery.md) |
 | Port already in use | Another editor owns it. Choose a free `stataMcp.visibleBridgePort` and the same `STATA_WORKBENCH_PORT` |
@@ -314,6 +317,7 @@ pinned runtime file match. This checks runtime identity only, not live acceptanc
 | Windows: `code` cannot install the VSIX | Run `Get-Command code` and `code --version`; fix `PATH` to VS Code's `bin\code.cmd`, or use **Extensions: Install from VSIX...** |
 | macOS: error `-1743` or no windows found | Run `--doctor`, then `--request-permissions` once, in the same host as the agent. See [macOS permissions](docs/MAC_PERMISSIONS.md) |
 | `No module named 'mcp.server.fastmcp'` | The service was installed with MCP 2.x. The default route adds `mcp<2`; a custom service command needs the same constraint |
+| `Failed to connect to mcp-stata` with `No solution found when resolving tool dependencies` and "the network was disabled" | uv is in offline mode (for example `offline = true` in `~/.config/uv/uv.toml`, or `UV_OFFLINE`), so the default `uvx` route can only use packages already in its cache. Turn offline mode off for the first start so `uvx` can download the service once, then reload the window |
 
 More cases: [Troubleshooting](docs/TROUBLESHOOTING.md) and the
 [desktop recovery record](docs/desktop-auth-terminal-recovery.md).
@@ -330,6 +334,10 @@ More cases: [Troubleshooting](docs/TROUBLESHOOTING.md) and the
   cancellation rests on the operator's report.
 - On macOS, when the VS Code window is hidden, Terminal text can appear only
   after the run ends.
+- Stata's own start-up still counts against the 60 s pre-run snapshot budget;
+  only the service connection has its own budget. On a busy Windows machine the
+  first run after opening or reloading was refused once in 6 cold starts
+  (`PRE_RUN_SNAPSHOT_TIMEOUT`, code not sent); the next run passed.
 - One backend runs one request at a time. Several instances need separate
   profiles and ports; there is no general multi-instance scheduler.
 - The Data Browser frame name updates when the browser opens, not after a later
