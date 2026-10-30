@@ -317,6 +317,7 @@ pinned runtime file match. This checks runtime identity only, not live acceptanc
 | Windows: `code` cannot install the VSIX | Run `Get-Command code` and `code --version`; fix `PATH` to VS Code's `bin\code.cmd`, or use **Extensions: Install from VSIX...** |
 | macOS: error `-1743` or no windows found | Run `--doctor`, then `--request-permissions` once, in the same host as the agent. See [macOS permissions](docs/MAC_PERMISSIONS.md) |
 | `No module named 'mcp.server.fastmcp'` | The service was installed with MCP 2.x. The default route adds `mcp<2`; a custom service command needs the same constraint |
+| `Failed to connect to mcp-stata` with `No solution found when resolving tool dependencies` and "the network was disabled" | uv is in offline mode (for example `offline = true` in `~/.config/uv/uv.toml`, or `UV_OFFLINE`), so the default `uvx` route can only use packages already in its cache. Turn offline mode off for the first start so `uvx` can download the service once, then reload the window |
 
 More cases: [Troubleshooting](docs/TROUBLESHOOTING.md) and the
 [desktop recovery record](docs/desktop-auth-terminal-recovery.md).
