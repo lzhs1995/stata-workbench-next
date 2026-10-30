@@ -46,7 +46,7 @@ code --install-extension .\stata-workbench-shared-session-0.1.1.vsix
 
 Set `stataMcp.stataPath` to your local Stata executable path in VS Code settings.
 
-The tested baseline is Stata 18 MP on Windows. Do not commit your local path, license files, or local data into the repository.
+Tested environments are listed in the README [platform status](../README.md#platform-status): Windows 11 x64 with Stata 18 MP and macOS 26.5 arm64 with StataNow. Windows 10, Windows on ARM and Linux are not verified. Do not commit your local path, license files, or local data into the repository.
 
 ## Minimal Smoke Test
 
