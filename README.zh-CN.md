@@ -153,7 +153,8 @@ profile 和端口、Stata 候选路径、已安装和正在运行的身份），
    **Stata: Run Current File**。Terminal 打印 `STATA_WORKBENCH_SMOKE_OK`。
 
 打开或重载后的第一次运行还要启动 Stata 服务。dev.8 的测试机上分别用了 14.1 秒（macOS）
-和 25.2 秒（Windows）。等它跑完，不要重复提交。
+和 25.2 秒（Windows）。等它跑完，不要重复提交。唯一的例外是 `PRE_RUN_SNAPSHOT_TIMEOUT`
+（见[故障排查](#故障排查)）：那次运行在代码发出之前就被拒绝了，再运行一次是安全的。
 
 ### 共享会话
 
@@ -275,6 +276,7 @@ python3 tools/verify_release.py --vsix /path/to/stata-workbench-shared-session-0
 | 现象 | 处理 |
 | --- | --- |
 | 第一次运行很慢 | 打开或重载后的第一次运行还要启动 Stata 服务。等它，不要重复提交 |
+| 打开或重载后的第一次运行报 `PRE_RUN_SNAPSHOT_TIMEOUT`（HTTP 504） | 机器繁忙时 Stata 启动超过了 60 秒。这次运行在派发前就被拒绝（`payloadDispatched:false`），你的代码没有执行。再运行一次 |
 | Terminal 长时间显示忙 | 先查 bridge 状态（`python3 tools/verified_workbench.py --status`）再运行别的代码；不要再排一个长任务 |
 | 长脚本卡住或超时 | 先核对原请求、原始日志和输出。超时不能证明 Stata 没有执行。见[存储与日志恢复](docs/storage-and-log-recovery.md) |
 | 端口已被占用 | 别的编辑器占着。另选空闲的 `stataMcp.visibleBridgePort`，`STATA_WORKBENCH_PORT` 设成同一个值 |
@@ -295,6 +297,9 @@ python3 tools/verify_release.py --vsix /path/to/stata-workbench-shared-session-0
 - Windows 锁屏/解锁和 UAC 这一步，依据是 Winlogon 事件和会话状态未变；没有实时录屏，取消 UAC
   的情况来自操作者本人的报告。
 - macOS 上 VS Code 窗口被隐藏时，Terminal 文字可能要到运行结束才出现。
+- Stata 自身的启动仍算在运行前快照的 60 秒预算里，只有服务连接有单独的预算。在繁忙的 Windows
+  机器上，打开或重载后的第一次运行在 6 次冷启动中被拒绝过 1 次（`PRE_RUN_SNAPSHOT_TIMEOUT`，
+  代码没有发出），下一次运行通过。
 - 一个 backend 一次只跑一个请求。多个实例需要各自的 profile 和端口；没有通用的多实例调度。
 - Data Browser 的 frame 名在浏览器打开时更新，之后再 `frame change` 不会跟着变。面板较窄时
   FILTER 一行文字会重叠。
