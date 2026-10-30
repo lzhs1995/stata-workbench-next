@@ -1541,6 +1541,18 @@ const AUXILIARY_MARKERS = [
     optional: true,
   },
   {
+    key: "dataBrowserFrameLabelSource",
+    label: "source Data Browser shows the current frame",
+    relativePath: path.join("src", "ui-shared", "data-browser.js"),
+    marker: "codex patch rc.7.70: Data Browser shows the current frame",
+  },
+  {
+    key: "dataBrowserFrameLabelDist",
+    label: "packaged Data Browser shows the current frame",
+    relativePath: path.join("dist", "ui-shared", "data-browser.js"),
+    marker: "codex patch rc.7.70: Data Browser shows the current frame",
+  },
+  {
     key: "runtimePatchTargetsListenerLoop",
     label: "packaged mcp-stata patch targets the live listener loop",
     relativePath: path.join("scripts", "mcp_stata_runtime_patch.js"),

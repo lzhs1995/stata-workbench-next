@@ -1,6 +1,7 @@
 import copy
 import json
 from pathlib import Path
+import subprocess
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -198,6 +199,51 @@ class SharedClientTests(unittest.TestCase):
             self.assertEqual(missing["verdict"], "EXECUTION_UNCONFIRMED_NO_RETRY")
             self.assertIn("client request marker absent", missing["error"])
             self.assertEqual(post.call_count, 2)
+
+    def test_timed_out_probe_is_reobserved_without_repeating_the_post(self):
+        # 2026-10-30 Mac stress: /bin/ps ran past its 10 s limit under load 198 right
+        # after a successful POST, and the run was reported unconfirmed.
+        probe = subprocess.TimeoutExpired(["/bin/ps", "-ax", "-o", "pid=,args="], 10)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            log = root / "source.log"
+            client.write_once(log, b"___VERIFIED_CLIENT_token___\n___CODEX_RUN_DONE_new___\n")
+            body = {"ok": True, "rc": 0, "runId": "new", "requestId": "req-new", "logPath": str(log),
+                    "lifecycle": {"requestId": "req-new", "runId": "new", "sourceMode": "agent"}}
+            post = Mock(return_value=(200, body))
+            d = SimpleNamespace(w=SimpleNamespace(http_post=post))
+            sleep = Mock()
+            with patch.object(client.uuid, "uuid4", return_value=SimpleNamespace(hex="token")):
+                result = client.execute_once(d, {"code": "display 1"}, root / "receipt", sleep=sleep,
+                    observe=Mock(side_effect=[probe, state(), probe, state("new")]))
+            self.assertEqual(result["verdict"], "PASS_VISIBLE_SHARED_RUN")
+            self.assertEqual(post.call_count, 1)
+            self.assertEqual(len(result["observationRetries"]), 2)
+            self.assertEqual(sleep.call_count, 2)
+            # Persistent timeouts after the POST stay unconfirmed, still with one POST.
+            post.reset_mock()
+            with patch.object(client.uuid, "uuid4", return_value=SimpleNamespace(hex="token")):
+                lost = client.execute_once(d, {"code": "display 1"}, root / "lost", sleep=Mock(),
+                    observe=Mock(side_effect=[state(), probe, probe, probe]))
+            self.assertEqual(lost["verdict"], "EXECUTION_UNCONFIRMED_NO_RETRY")
+            self.assertEqual(lost["postCount"], 1)
+            self.assertEqual(post.call_count, 1)
+            self.assertEqual(len(lost["observationRetries"]), client.OBSERVE_ATTEMPTS)
+            # Persistent timeouts before the POST never dispatch.
+            post.reset_mock()
+            blocked = client.execute_once(d, {"code": "display 1"}, root / "blocked", sleep=Mock(),
+                observe=Mock(side_effect=[probe, probe, probe]))
+            self.assertEqual(blocked["verdict"], "BLOCKED_NO_DISPATCH")
+            self.assertEqual(blocked["postCount"], 0)
+            post.assert_not_called()
+
+    def test_other_observation_errors_are_not_retried(self):
+        observe = Mock(side_effect=RuntimeError("bridge listener does not belong to the exact Workbench instance"))
+        sleep = Mock()
+        with self.assertRaisesRegex(RuntimeError, "does not belong"):
+            client.observe_settled(SimpleNamespace(), observe, sleep)
+        self.assertEqual(observe.call_count, 1)
+        sleep.assert_not_called()
 
     def test_busy_no_post_and_timeout_no_retry(self):
         with tempfile.TemporaryDirectory() as directory:

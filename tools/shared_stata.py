@@ -6,6 +6,7 @@ import json
 import math
 import os
 from pathlib import Path
+import subprocess
 import sys
 import time
 import uuid
@@ -39,6 +40,27 @@ def ready(instance):
             and s.get("postRunBusy") is False and s.get("trueReady") is True
             and isinstance(s.get("recovery"), dict) and s["recovery"].get("required") is False
             and _valid_backend_pids(s.get("ownedBackendPids")))
+
+
+OBSERVE_ATTEMPTS = 3
+
+
+def observe_settled(d, observe=entry.observe, sleep=time.sleep, retries=None):
+    """Read-only observation that tolerates a timed-out process probe.
+
+    Only subprocess.TimeoutExpired is retried (a ps/lsof call that ran past its
+    limit on a heavily loaded host). Identity, permission and status results are
+    returned or raised unchanged. This never repeats a dispatch.
+    """
+    for attempt in range(1, OBSERVE_ATTEMPTS + 1):
+        try:
+            return observe(d)
+        except subprocess.TimeoutExpired as exc:
+            if retries is not None:
+                retries.append(repr(exc))
+            if attempt == OBSERVE_ATTEMPTS:
+                raise
+            sleep(1)
 
 
 def response_diagnostics(body):
@@ -126,9 +148,10 @@ def execute_once(d, request, receipt, timeout=3600, observe=entry.observe, sleep
     receipt = Path(receipt)
     receipt.mkdir(mode=0o700, parents=True, exist_ok=False)
     result = {"verdict": "BLOCKED_NO_DISPATCH", "postCount": 0, "retryCount": 0,
-              "request": request, "error": None, "startedAtEpoch": time.time()}
+              "request": request, "error": None, "startedAtEpoch": time.time(), "observationRetries": []}
+    look = lambda: observe_settled(d, observe, sleep, result["observationRetries"])
     try:
-        before = observe(d)
+        before = look()
         result["before"] = before
         entry.permissions.require_window_observation(before)
         if not ready(before):
@@ -161,13 +184,13 @@ def execute_once(d, request, receipt, timeout=3600, observe=entry.observe, sleep
         write_once(receipt / "response.json", {"http": http, "body": body})
         result["responseDiagnostics"] = response_diagnostics(body)
         write_once(receipt / "response-diagnostics.json", result["responseDiagnostics"])
-        after = observe(d)
+        after = look()
         # Only observe completion settlement. Never repeat the POST.
         for _ in range(30):
             if ready(after) or http != 200 or after.get("windowObservation", {}).get("ok") is not True:
                 break
             sleep(1)
-            after = observe(d)
+            after = look()
             if after.get("windowObservation", {}).get("ok") is not True:
                 break
         result["after"] = after
@@ -201,7 +224,7 @@ def execute_once(d, request, receipt, timeout=3600, observe=entry.observe, sleep
 def wait_ready(d, deadline, observe=entry.observe, clock=time.monotonic, sleep=time.sleep):
     """Poll before submission only. Identity/visibility failures are never retried."""
     while True:
-        state = observe(d)
+        state = observe_settled(d, observe, sleep)
         entry.permissions.require_window_observation(state)
         if not state.get("identityOk") or state.get("axWindowCount") != 1:
             raise RuntimeError("instance identity/window is not verified; no dispatch")
