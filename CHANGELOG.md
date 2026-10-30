@@ -25,6 +25,23 @@ Preserves the Mac-accepted runtime; removes local maintenance credentials, adds 
 
 # Changelog
 
+## Unreleased — wait for Stata itself on cold start
+
+- Windows rc.7.44 refused the first run after opening or reloading in 4 of 10 cold
+  starts (504 `PRE_RUN_SNAPSHOT_TIMEOUT`, or 500 after mcp-stata's pre-flight timed
+  out). mcp-stata 1.26.1 answers the MCP handshake after waiting at most 30 s for its
+  worker, while the worker still starts Stata twice: a pre-flight subprocess with a
+  hard 60 s limit, then the in-process `stata_setup.config`. rc.7.67 waited only for
+  the handshake, so the remaining start-up landed in the 60 s snapshot guard.
+- rc.7.72 waits, before any pre-run stage, until `list_sessions` reports the default
+  session as `running`, under its own bound (setup timeout + 120 s). A Stop during
+  the wait returns 409 `PRE_RUN_BACKEND_WARMUP_CANCELLED`; a timeout returns 504; a
+  failed session returns 500 and is stopped so the next run starts a fresh engine.
+  All refusals carry `payloadDispatched: false`. `/status.backendWarmup` records the
+  wait. Servers without `list_sessions` keep the rc.7.67 behaviour.
+- The runtime patch reads the pre-flight limit from `MCP_STATA_PREFLIGHT_TIMEOUT`
+  (seconds, default 180, clamped to 60–900) instead of the hard-coded 60 s.
+
 ## 0.1.3-rc.7.44 — Stop in the pre-run window, probe timeouts under load
 
 - Windows Stop-cycle testing found that a soft Stop landing in the human-file

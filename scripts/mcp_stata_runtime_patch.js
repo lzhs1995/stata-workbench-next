@@ -27,6 +27,7 @@ const helpStatePatch = require("./stata_help_state_patch");
 const sessionHealthPatch = require("./stata_session_health_patch");
 const logQueryPatch = require("./stata_log_query_patch");
 const graphNameBoundaryPatch = require("./stata_graph_name_boundary_patch");
+const preflightTimeoutPatch = require("./stata_preflight_timeout_patch");
 
 const PATCH_MARKER = "UI/DataBrowser HTTP threads must not create a second asyncio loop";
 const TASK_DONE_PATCH_MARKER = "Workbench task_done notification must not retain the MCP transport";
@@ -1571,6 +1572,12 @@ function patchRuntime(options = {}) {
   } catch (error) {
     return { ok: false, status: "unsupported-source", component: "client",
       anchor: "graph-name-boundary", error: error.message, ...located };
+  }
+  try {
+    patchedClient = preflightTimeoutPatch.patchClient(patchedClient);
+  } catch (error) {
+    return { ok: false, status: "unsupported-source", component: "client",
+      anchor: "preflight-timeout", error: error.message, ...located };
   }
   // Check the final composition, after every subsidiary transform. A later
   // patch must not leave the completion drain without its local state.

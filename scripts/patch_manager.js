@@ -1559,6 +1559,18 @@ const AUXILIARY_MARKERS = [
     marker: "codex patch rc.7.71: Stop in the pre-run window refuses the payload",
   },
   {
+    key: "backendWarmupWaitsForStata",
+    label: "rc.7.72 waits for the default Stata session before any pre-run stage",
+    relativePath: path.join("dist", "extension.js"),
+    marker: "codex patch rc.7.72: backend warm-up waits for Stata, not just the MCP handshake",
+  },
+  {
+    key: "runtimePatchPreflightTimeout",
+    label: "packaged mcp-stata patch reads the pre-flight timeout from MCP_STATA_PREFLIGHT_TIMEOUT",
+    relativePath: path.join("scripts", "stata_preflight_timeout_patch.js"),
+    marker: "Workbench pre-flight timeout follows MCP_STATA_PREFLIGHT_TIMEOUT",
+  },
+  {
     key: "runtimePatchTargetsListenerLoop",
     label: "packaged mcp-stata patch targets the live listener loop",
     relativePath: path.join("scripts", "mcp_stata_runtime_patch.js"),
