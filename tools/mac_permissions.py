@@ -71,6 +71,11 @@ def permission_status(run=subprocess.run):
         if not isinstance(body, dict) or not isinstance(body.get("status"), str):
             raise ValueError("invalid permission probe output")
         return body
+    except subprocess.TimeoutExpired as exc:
+        # The probe ran past its limit (a loaded host), so consent is unmeasured,
+        # not failed. Callers may observe again; this function never retries.
+        return {"status": "PERMISSION_CHECK_TIMEOUT", "osStatus": None, "error": str(exc),
+                "returnCode": None, "stdout": None, "stderr": None}
     except Exception as exc:
         return {"status": "PERMISSION_CHECK_FAILED", "osStatus": None, "error": str(exc),
                 "returnCode": getattr(result, "returncode", None), "stdout": getattr(result, "stdout", None),

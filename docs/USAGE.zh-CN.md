@@ -15,9 +15,11 @@
 
 ## AI 接入
 
-首次接入或遇到 `-1743`：在报错 agent 的同一宿主运行
+首次接入或遇到 `-1743`（macOS）：在报错 agent 的同一宿主运行
 `python3 -B tools/verified_workbench.py --doctor`，再按诊断运行一次
 `python3 -B tools/verified_workbench.py --request-permissions`。系统弹窗需本人允许。
+`--request-permissions` 是 macOS 的系统授权查询；Windows 上用已安装的 `python.exe`
+运行 `--doctor`，Windows 安装步骤见 README 的[安装](../README.zh-CN.md#安装)。
 权限失败现在显示未知窗口数 `null`，不再冒充“窗口数为 0”。
 [完整权限说明：自动化空列表、辅助功能、持久性与系统故障](MAC_PERMISSIONS.md)。
 
@@ -37,10 +39,11 @@ AI 必须使用同一 profile、同一端口的 `tools/shared_stata.py`，不另
 
 ## 验收范围
 
-固定 Mac 运行时有 FULL45 45/45、632/632 和共享 backend 的记录。
+`0.1.3-rc.7.39` 在一台已授权的 Mac 上有 FULL45 45/45、632/632 和共享 backend 的记录。
 公开包已移除本机 token，包哈希不同，运行时 bundle 相同。
-不是所有系统和版本的保证，Windows/Linux 未获得本轮认证。
-详见 [验收说明](ACCEPTANCE.md)。
+`0.1.3-rc.7.44` 的候选版在 macOS 26.5 arm64 和 Windows 11 x64（Stata 18 MP）上做了有限的
+实机检查，没有新跑 FULL45；Windows 10、Windows on ARM 和 Linux 未验证。各平台测到哪一步见
+README 的[平台状态](../README.zh-CN.md#平台状态)，详见 [验收说明](ACCEPTANCE.md)。
 
 ## 旧 DO 修订与图形验收
 

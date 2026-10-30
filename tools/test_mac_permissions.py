@@ -115,6 +115,20 @@ class PermissionTests(unittest.TestCase):
         run = Mock(return_value=SimpleNamespace(returncode=0, stdout=json.dumps({"status": "AUTOMATION_DENIED", "osStatus": -1743})))
         self.assertEqual(p.permission_status(run)["osStatus"], -1743)
 
+    def test_native_probe_timeout_is_unmeasured_not_failed(self):
+        # 2026-10-30 Mac stop-race run: the --native-status child ran past 10 s under
+        # load and was reported as PERMISSION_CHECK_FAILED with permission advice.
+        run = Mock(side_effect=subprocess.TimeoutExpired("python3", 10))
+        check = p.permission_status(run)
+        self.assertEqual(check["status"], "PERMISSION_CHECK_TIMEOUT")
+        self.assertEqual(run.call_count, 1)
+        self.assertFalse(p.automation_granted(check))
+        query = Mock()
+        result = p.window_observation(42, run=query, consent=lambda: check)
+        self.assertEqual(result["status"], "PERMISSION_CHECK_TIMEOUT")
+        self.assertIsNone(result["count"])
+        query.assert_not_called()
+
     def test_unknown_or_inconsistent_observation_blocks(self):
         for obs, count in ((None, 1), ({"ok": False, "status": "AUTOMATION_DENIED"}, 0),
             ({"ok": True, "count": True}, 1), ({"ok": True, "count": 1}, 2)):
