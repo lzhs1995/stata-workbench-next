@@ -32,6 +32,12 @@ python -B tools/verified_workbench.py --open --workspace <existing-workspace>
 python -B tools/shared_stata.py --file <saved-do-file> --cwd <working-directory> --busy-policy wait --max-wait 60
 ```
 
+`--open` reuses the running instance of the same profile instead of opening a
+second window. On a new launch, `--disable-workspace-trust` skips VS Code's
+workspace trust prompt; extensions in the private profile then run with full
+trust, so use it only for a folder you trust. What became of the early Windows
+fast-launcher tips is in [LEGACY_WINDOWS](LEGACY_WINDOWS.md).
+
 The client archives the exact submitted do-file bytes in its unique receipt
 directory. Chinese/space/apostrophe paths are supported. Stata macro delimiters,
 double quotes and control characters in do-file paths are rejected explicitly;

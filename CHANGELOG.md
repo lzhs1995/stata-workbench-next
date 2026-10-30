@@ -25,6 +25,20 @@ Preserves the Mac-accepted runtime; removes local maintenance credentials, adds 
 
 # Changelog
 
+## 0.1.3-rc.7.45-dev.1 — early Windows tooling accounted for, opt-in trust skip
+
+- [docs/LEGACY_WINDOWS.md](docs/LEGACY_WINDOWS.md) records, per file, what became
+  of the early Windows-only scripts and settings (about 60 files that were never
+  under version control): merged, replaced, not needed, or open.
+- `verified_workbench.py --open --disable-workspace-trust` (and
+  `acceptance.py open --disable-workspace-trust`) opens a new window without the
+  workspace trust prompt, as the early fast launcher always did. It is opt-in and
+  applies to new launches only; the default still shows the prompt. With it, every
+  extension in the private profile runs with full trust.
+- The other early startup tips needed no code: the private extensions folder
+  already loads only this extension, `--open` already reuses the running instance,
+  and it runs no patch verifier or smoke command at startup.
+
 ## 0.1.3-rc.7.44 — Stop in the pre-run window, probe timeouts under load
 
 - Windows Stop-cycle testing found that a soft Stop landing in the human-file
