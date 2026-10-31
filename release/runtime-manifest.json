@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "version": "0.2.0-next.1",
+  "version": "0.2.0-next.2",
   "files": {
     "scripts/wire_rc713b_remaining.js": {
       "sha256": "ebd9ff993b435ac55c5fe625fbf514938fe28b8f8d995c723044ae42898cbfaa",
@@ -27,8 +27,8 @@
       "bytes": 17618
     },
     "scripts/patch_manager.js": {
-      "sha256": "5f8b40578d885bb01370121d3c7f00bd3c45051810c4a8a871a5ec5d1ec427a6",
-      "bytes": 92764
+      "sha256": "08f53a98f229ed0123b2db0b0ec6c566633a88c8ccf0dc3573b62fe4cae2eef8",
+      "bytes": 93051
     },
     "scripts/mcp_stata_runtime_patch.js": {
       "sha256": "64013014e8598af5c7f70a276cd80a2f5c21d218eaa6fba59f079096c8f75ac9",
@@ -111,8 +111,8 @@
       "bytes": 5178
     },
     "scripts/apply_rc7_shared_execution_patch.js": {
-      "sha256": "e6bab491582fd1f59f303c33beb9bb2eb6bd73bae5d9b5c17dec48155d8f8e05",
-      "bytes": 337637
+      "sha256": "fc332e7163dae1f77247eb5dfa49e37557062b0f20989ba91124dd175bd56dcf",
+      "bytes": 337806
     },
     "scripts/apply_rc64_routes_patch.js": {
       "sha256": "b01e1225f5844b632e24d616957fb9e565541345a10d6f4fbc640a4b034070b2",
@@ -139,8 +139,8 @@
       "bytes": 11107
     },
     "dist/extension.js": {
-      "sha256": "09d274da569e68f1e7a80f7ee82eead46a024f5ab57fcbb74fa9e1d87180cb91",
-      "bytes": 5613939
+      "sha256": "341df97372d60768a72d146d6fa5c4965c96f6c292d6a088bf74ef888a8a347e",
+      "bytes": 5616810
     },
     "scripts/mac/png_compat_transform.js": {
       "sha256": "cdea12886a1d5bb5b4c2b3e38829de1c7e68ed70e7777e8d6e2eb02bb0ce3514",
@@ -335,16 +335,16 @@
       "bytes": 3225
     },
     "tools/shared_stata.py": {
-      "sha256": "8c40400724173ef2949e687ee166509f7b6bf523165b8b8bf130d14d1d6c4ed3",
-      "bytes": 14838
+      "sha256": "d03203194b078f6154ae88c6007551fd783d0dba8fb948d19ddbe70f0834eb4c",
+      "bytes": 16320
     },
     "tools/workbench_doctor.py": {
       "sha256": "547acffd98bcc6c6371c9a4c6767303760ed56832a646c5f959acc9ccc7e46fe",
       "bytes": 4729
     },
     "tools/verified_workbench.py": {
-      "sha256": "4968079eafb02b05b4a958d830e7557cdb7178e85740468b5f49b0b4792c8e62",
-      "bytes": 11671
+      "sha256": "f0dd713ca9986dbaf66d272b1ae942764e72828d4c5b3d7cefe2fa5b712bb314",
+      "bytes": 12228
     },
     "tools/workbench_platform.py": {
       "sha256": "1b436f1b5dc6401be22596de2bfeed42aeb90ea1b0d480e4847c873ee21ccd14",
@@ -397,6 +397,14 @@
     "scripts/apply_next_identity_patch.js": {
       "sha256": "21430a204519b3964f260275ac7d627f150b8b8786cc408388dfd8ed54bff1ba",
       "bytes": 2349
+    },
+    "scripts/next_session_core.js": {
+      "sha256": "150c23f114c16481531f7adc2d0ae7d95eb883dea7ea72fee5ac90bcf7b49150",
+      "bytes": 7570
+    },
+    "scripts/apply_next_agent_identity_patch.js": {
+      "sha256": "91bae249699e98c5de9cd4b88552c35c790c4c05bafa6cf27f03f65477899e88",
+      "bytes": 8745
     }
   },
   "acceptanceStatus": "PENDING_LICENSED_MAC_FULL_ACCEPTANCE",

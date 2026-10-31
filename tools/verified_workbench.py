@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import time
@@ -17,14 +18,14 @@ import urllib.error
 
 WORK = Path(__file__).resolve().parents[1]
 PROFILE = Path(os.environ.get("STATA_WORKBENCH_PROFILE", str(Path.home() / ".stata-workbench-next" / "profiles" / "default"))).expanduser().resolve()
-EXTENSION = PROFILE / "extensions/lzhs1995.stata-workbench-next-0.2.0-next.1"
+EXTENSION = PROFILE / "extensions/lzhs1995.stata-workbench-next-0.2.0-next.2"
 try:
     PORT = int(os.environ.get("STATA_WORKBENCH_PORT", "17601"))
 except ValueError:
     PORT = 0  # Doctor can report the bad setting before any connection or launch.
 CODE_CLI = host.default_code()
-VERSION = "0.2.0-next.1"
-BUNDLE_SHA256 = "09d274da569e68f1e7a80f7ee82eead46a024f5ab57fcbb74fa9e1d87180cb91"
+VERSION = "0.2.0-next.2"
+BUNDLE_SHA256 = "341df97372d60768a72d146d6fa5c4965c96f6c292d6a088bf74ef888a8a347e"
 PINS = {
     WORK / "dist/extension.js": BUNDLE_SHA256,
 }
@@ -58,7 +59,9 @@ class LocalBridge:
         return self.request(path, payload, timeout)
 
     def request(self, path, payload=None, timeout=5):
-        if path not in ("/status", "/run-command"):
+        # /events 只读，只接受数字 since/limit 两个参数
+        if path not in ("/status", "/run-command") and not (
+                payload is None and re.fullmatch(r"/events\?since=\d{1,12}(&limit=\d{1,4})?", path)):
             raise ValueError("unsupported endpoint")
         req = urllib.request.Request(f"http://127.0.0.1:{PORT}{path}",
             data=json.dumps(payload).encode() if payload is not None else None,
@@ -74,6 +77,13 @@ class LocalBridge:
         rc, body = self.request("/status", timeout=timeout)
         if rc != 200 or not isinstance(body, dict):
             raise RuntimeError("status unavailable")
+        return body
+
+    def events(self, since=0, limit=None, timeout=5):
+        path = f"/events?since={int(since)}" + (f"&limit={int(limit)}" if limit else "")
+        rc, body = self.request(path, timeout=timeout)
+        if rc != 200 or not isinstance(body, dict) or not isinstance(body.get("events"), list):
+            raise RuntimeError("events unavailable")
         return body
 
     def __getattr__(self, name):

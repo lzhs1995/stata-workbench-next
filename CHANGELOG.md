@@ -1,3 +1,25 @@
+## 0.2.0-next.2 — agent identity, Terminal origin header, session events
+
+- Agent runs carry a name: `tools/shared_stata.py --agent-name NAME` (or env
+  `STATA_WORKBENCH_AGENT_NAME`; default `agent`). The bridge also reads `agentId` from
+  older clients and an `X-Agent-Name` header. Names keep letters, digits, space and
+  `._-@`, at most 40 characters.
+- The Stata Terminal shows a small header above each run card: `NAME · runId` for agent
+  runs, `You · runId` for runs started in the editor or Terminal. The runId is the one
+  in the agent receipt.
+- `/status` `current` adds `origin` (`agent`, `human`, `internal`) and `agentName`;
+  `/status` adds `nextSession` (sessionId, events file, last sequence number).
+- Every run by the person or an agent is appended to one per-session event stream,
+  `~/.stata-workbench-next/runs/<sessionId>/events.jsonl` (`run-start`, `run-end`,
+  `run-end-update`, `run-refused`; code SHA-256, rc, duration, log path). New read-only
+  `GET /events?since=N[&limit=M]`, and `tools/shared_stata.py --events N`.
+- When you press Run while something else is running, the warning names who is running
+  which run and points to Stop.
+- Logic lives in `scripts/next_session_core.js`; `apply_next_agent_identity_patch.js`
+  wires it in without changing the existing lifecycle require. If the module cannot load,
+  the extension still activates and `/status.nextSession.error` says why.
+- Not yet verified on a licensed machine; see `docs/next/LIVE-CHECKS.md` L4–L8.
+
 ## 0.2.0-next.1 — isolated development identity
 
 Fork the rc.7.45 runtime into the Next development line. The extension is
