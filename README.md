@@ -2,6 +2,12 @@
 
 [English](README.md) | [中文](README.zh-CN.md)
 
+> **Development line, not for daily use.** This is `stata-workbench-next`, the isolated
+> development repository for multi-session, agent identity, bridge authentication and
+> diff-gated edits. It installs as a separate extension (`lzhs1995.stata-workbench-next`)
+> with bridge port 17601. For research work use the stable release
+> [stata-workbench-shared-session](https://github.com/lzhs1995/stata-workbench-shared-session).
+
 A VS Code extension that lets a person and AI agents use one visible Stata
 session in turn. Both send code to the same backend, so data, macros, scalars,
 results and graphs are shared.

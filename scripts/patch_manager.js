@@ -3,7 +3,7 @@
  * Stata Workbench shared-session patch manager.
  *
  * This manager treats the current, verified extension.js as a full patch set:
- *   - visible HTTP bridge on 127.0.0.1:17485
+ *   - visible HTTP bridge on 127.0.0.1:17601 (Next development line)
  *   - mcp-stata pinned to 1.26.1 with no --refresh/@latest
  *   - get_variable_list output noise filtered
  *   - terminal variable provider disabled
@@ -38,8 +38,8 @@ const EXT_ROOT = path.join(os.homedir(), ".vscode", "extensions");
 const EXTENSION_ID_PREFIX = "tmonk.stata-workbench-";
 const MANIFEST = path.join(WORKSPACE, "stata_workbench_patch_manifest.json");
 const PATCHED_BASELINE = path.join(WORKSPACE, "dist", "extension.js");
-const BRIDGE_URL = { host: "127.0.0.1", port: 17485, path: "/status" };
-const GRAPH_STATUS_URL = { host: "127.0.0.1", port: 17485, path: "/graph-status" };
+const BRIDGE_URL = { host: "127.0.0.1", port: 17601, path: "/status" };
+const GRAPH_STATUS_URL = { host: "127.0.0.1", port: 17601, path: "/graph-status" };
 const CLI_ARGS = process.argv.slice(2);
 const TARGET_REPO = CLI_ARGS.includes("--target=repo") ||
   CLI_ARGS.some((arg, index) => arg === "--target" && CLI_ARGS[index + 1] === "repo");
@@ -1595,6 +1595,12 @@ const AUXILIARY_MARKERS = [
     marker: "codex patch rc.7.74: soft Stop never dispatches a refused checkpoint restore",
   },
   {
+    key: "nextDefaultBridgePort",
+    label: "next 0.2.0-next.1: Next default bridge port 17601",
+    relativePath: path.join("dist", "extension.js"),
+    marker: "next patch 0.2.0-next.1: Next default bridge port 17601",
+  },
+  {
     key: "runtimePatchTargetsListenerLoop",
     label: "packaged mcp-stata patch targets the live listener loop",
     relativePath: path.join("scripts", "mcp_stata_runtime_patch.js"),
@@ -2153,7 +2159,7 @@ async function cmdVerify() {
     return;
   }
   console.log("");
-  process.stdout.write("Bridge    : checking http://127.0.0.1:17485/status ... ");
+  process.stdout.write("Bridge    : checking http://127.0.0.1:17601/status ... ");
   const bridge = await checkBridgeOnline();
   if (bridge.online) {
     console.log("OK online");
@@ -2162,7 +2168,7 @@ async function cmdVerify() {
     console.log("OFFLINE");
     console.log(`Reason    : ${bridge.error || "unknown"}`);
   }
-  process.stdout.write("Graphs    : checking http://127.0.0.1:17485/graph-status ... ");
+  process.stdout.write("Graphs    : checking http://127.0.0.1:17601/graph-status ... ");
   const graphStatus = await checkGraphStatusOnline();
   if (graphStatus.online) {
     console.log("OK online");

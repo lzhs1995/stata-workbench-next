@@ -5,7 +5,7 @@
 # 仅依赖系统自带 curl + jq（/usr/bin/jq 在本机已确认存在）。
 #
 # 桥地址 / token 可用环境变量覆盖：
-#   STATA_BRIDGE_BASE   默认 http://127.0.0.1:17485
+#   STATA_BRIDGE_BASE   默认 http://127.0.0.1:17601
 #   STATA_BRIDGE_TOKEN  must be supplied locally for authenticated endpoints
 #
 # 注意：/run-command 无 token 鉴权；/debug-run-file、/force-reset 等按补丁实现可能需 token。
@@ -13,7 +13,7 @@
 set -o pipefail
 
 # --- 桥连接常量 ---
-BRIDGE_BASE="${STATA_BRIDGE_BASE:-http://127.0.0.1:17485}"
+BRIDGE_BASE="${STATA_BRIDGE_BASE:-http://127.0.0.1:17601}"
 # Never distribute a machine's live bridge token.
 BRIDGE_TOKEN="${STATA_BRIDGE_TOKEN:-}"
 

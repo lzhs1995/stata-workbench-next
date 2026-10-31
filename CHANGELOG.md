@@ -1,3 +1,13 @@
+## 0.2.0-next.1 — isolated development identity
+
+Fork the rc.7.45 runtime into the Next development line. The extension is
+`lzhs1995.stata-workbench-next` (display name ends in "(Next)"), version
+`0.2.0-next.1`. The default bridge port is 17601 in `package.json`, in both bundle
+fallbacks (new replay patch `apply_next_identity_patch.js`) and in the tools; the
+default tool profile is `~/.stata-workbench-next/profiles/default`. Nothing in this
+tree defaults to 17485, the stable release's port. No runtime behavior changes.
+`scripts/refresh_runtime_manifest.js` recomputes the runtime manifest.
+
 ## Toolchain 2026-10-31
 
 Pin `minimatch` to 11.0.3 through `overrides`. It is used only by the packaging
