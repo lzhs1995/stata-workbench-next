@@ -16,6 +16,6 @@
 | L8 | B | 把 `next_session_core.js` 暂时改名后重载窗口：扩展照常激活、能跑代码，`/status.nextSession.error` 有原因，`/events` 回 503；改回后恢复。装了 C（0.2.0-next.3）后 bridge 对所有请求回 503 `AUTH_UNAVAILABLE`、`detail` 写原因，人在编辑器和 Terminal 里照常能跑 | `/status` 或 503 JSON | |
 | L9 | C | 窗口起来后不带 token 调 `curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:<端口>/status` 得 401；带 `Origin: http://example.com` 得 403；`Host: localhost:<端口>` 得 403 | 三个状态码 | |
 | L10 | C | `shared_stata.py --code 'display 1'` 和 `--events 0` 不另给 token 就能用（从注册表取） | 命令输出 | |
-| L11 | C | `~/.stata-workbench-next/sessions/<sessionId>.json`：macOS `stat -f %Lp` 是 600；Windows `icacls` 只列当前用户、无继承项 | `stat`/`icacls` 输出 | |
+| L11 | C | `~/.stata-workbench-next/sessions/<sessionId>.json`：macOS `stat -f %Lp` 是 600；Windows `icacls` 只列当前用户一条、没有 `(I)`、没有 SYSTEM 和 Administrators；顺带记下窗口打开到 `/status` 能用的秒数（Windows 上写注册表要起一次 PowerShell） | `stat`/`icacls` 输出 + 秒数 | |
 | L12 | C | 关掉窗口后这个窗口的记录被删；另一个仍开着的窗口的记录还在 | 前后 `ls` | |
 | L13 | C | `/status.nextAuth` 有 `published:true` 和端口，`/status`、`events.jsonl` 里都搜不到 token 字符串 | `grep -c` 为 0 | |

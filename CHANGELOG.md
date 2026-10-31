@@ -3,9 +3,13 @@
 - Each window's bridge creates a random 32-byte token when it starts. After the bridge
   binds its port it writes `~/.stata-workbench-next/sessions/<sessionId>.json`
   (schema `stata-workbench-next-session/1`: sessionId, port, extension host pid, token,
-  events path, bundle fingerprint). On macOS the file is 0600; on Windows `icacls`
-  removes inherited rights and grants only the current user. The record is deleted when
-  the window closes. Records whose pid is confirmed dead are pruned; others are kept.
+  events path, bundle fingerprint). On macOS the file is 0600. On Windows PowerShell
+  rebuilds the file's DACL by SID: inheritance off, every explicit entry removed (files
+  can be created with explicit SYSTEM and Administrators entries, which
+  `icacls /inheritance:r` keeps), one FullControl entry for the current user. The DACL is
+  read back, and publishing fails unless exactly that entry remains. The empty file is
+  restricted first; the token is written after. The record is deleted when the window
+  closes. Records whose pid is confirmed dead are pruned; others are kept.
 - Every bridge endpoint now requires `Authorization: Bearer <token>` and a `Host` of
   exactly `127.0.0.1:<port>`. Requests with any `Origin` header are refused. Missing or
   wrong token: 401; wrong Host or any Origin: 403; registry not written yet: 503. Refused

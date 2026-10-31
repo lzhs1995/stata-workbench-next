@@ -88,24 +88,60 @@ function request(port, headers) {
     c.remove();
     // 拒绝日志限流
     ok(c.shouldRecordRefusal("AUTH_REQUIRED") && !c.shouldRecordRefusal("AUTH_REQUIRED") && c.shouldRecordRefusal("HOST_MISMATCH"), "refusal logging is rate limited per reason");
-    // 限权：Windows 上真跑 icacls，核只剩当前用户；其他平台核 0600
+    // 限权：Windows 上真跑，并用 icacls 独立读回，核只剩当前用户一条；其他平台核 0600
     const f = path.join(tmp, "acl-probe.json");
     fs.writeFileSync(f, "{}");
     const mode = auth.restrictToOwner(f);
     if (process.platform === "win32") {
-      ok(mode === "windows-owner-only", "icacls applied");
+      ok(mode === "windows-owner-only", "owner-only ACL applied");
       const out = cp.execFileSync("icacls", [f], { encoding: "utf8" });
       const aces = out.split(/\r?\n/).filter((l) => l.includes(":(")).map((l) => l.replace(f, "").trim());
-      ok(aces.length === 1 && aces[0].toLowerCase().includes(String(process.env.USERNAME).toLowerCase()), "only the current user: " + JSON.stringify(aces));
+      ok(aces.length === 1 && aces[0].toLowerCase().includes(String(process.env.USERNAME).toLowerCase()) && !aces[0].includes("(I)"),
+        "only the current user: " + JSON.stringify(aces));
     } else {
       ok(mode === "posix-0600" && (fs.statSync(f).mode & 0o777) === 0o600, "chmod 0600");
     }
-    // Windows 分支的参数（在非 Windows 上用假 execFileSync 核命令行）
+    // Windows 分支（在任何平台上用假 execFileSync 核命令行与读回判定）
+    const SID = "S-1-5-21-1-2-3-1001";
+    const report = (extra = {}) => [`SID=${extra.sid || SID}`, `PROTECTED=${extra.protectedValue || "True"}`, `COUNT=${extra.count || 1}`,
+      ...(extra.rules || [`RULE=${SID}|Allow|False|2032127`])].join("\r\n") + "\r\n";
     const calls = [];
-    auth.restrictToOwner("C:\\x.json", { platform: "win32", env: { USERDOMAIN: "PC", USERNAME: "lzhs" }, execFileSync: (...args) => calls.push(args) });
-    ok(calls[0][0] === "icacls" && calls[0][1].join(" ") === "C:\\x.json /inheritance:r /grant:r PC\\lzhs:F", "icacls arguments " + JSON.stringify(calls[0]));
-    assert.throws(() => auth.restrictToOwner("C:\\x.json", { platform: "win32", env: {}, execFileSync() {} }), /Windows user/);
-    checks++;
+    const fakeRun = (stdout) => (...args) => { calls.push(args); return typeof stdout === "function" ? stdout(args) : stdout; };
+    ok(auth.restrictToOwner("C:\\x.json", { platform: "win32", env: { SystemRoot: "C:\\Windows" }, execFileSync: fakeRun(report()) }) === "windows-owner-only",
+      "good readback accepted");
+    const [shell, args, runOptions] = calls[0];
+    ok(shell === "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", "powershell by absolute path: " + shell);
+    ok(args.slice(0, 3).join(" ") === "-NoProfile -NonInteractive -EncodedCommand" && args.length === 4, "powershell arguments");
+    const script = Buffer.from(args[3], "base64").toString("utf16le");
+    ok(script === auth.WINDOWS_ACL_SCRIPT, "encoded script is the module script");
+    ok(script.includes("SetAccessRuleProtection($true, $false)") && script.includes("RemoveAccessRuleSpecific")
+      && script.includes("GetCurrent().User") && script.includes("GetAccessControl('Access')") && !/icacls|Set-Acl/i.test(script),
+      "script drops inheritance and every explicit rule, grants the process SID, writes Access only");
+    ok(runOptions.env.STATA_WORKBENCH_NEXT_ACL_TARGET === path.resolve("C:\\x.json") && !script.includes("x.json"), "target passed by environment, not in the script");
+    for (const [label, bad] of [
+      ["extra SYSTEM rule", report({ count: 2, rules: [`RULE=${SID}|Allow|False|2032127`, "RULE=S-1-5-18|Allow|False|2032127"] })],
+      ["inheritance still on", report({ protectedValue: "False" })],
+      ["inherited rule", report({ rules: [`RULE=${SID}|Allow|True|2032127`] })],
+      ["another user's rule", report({ rules: ["RULE=S-1-5-21-9-9-9-500|Allow|False|2032127"] })],
+      ["read-only rule", report({ rules: [`RULE=${SID}|Allow|False|1179785`] })],
+      ["empty output", ""],
+    ]) {
+      assert.throws(() => auth.restrictToOwner("C:\\x.json", { platform: "win32", env: {}, execFileSync: fakeRun(bad) }), /not owner-only/, label);
+      checks++;
+    }
+    // publish 在 Windows 上：限权时文件还是空的（token 之后才写）；读回不合格则不发布、不留文件、所有请求 503
+    const winRoot = path.join(tmp, "win");
+    let sizeWhenRestricted = null;
+    const winOk = auth.createAuth({ stateRoot: winRoot, sessionId: "sWin", platform: "win32", env: {},
+      execFileSync: fakeRun((a) => { sizeWhenRestricted = fs.statSync(a[2].env.STATA_WORKBENCH_NEXT_ACL_TARGET).size; return report(); }) });
+    ok(winOk.publish({ port: 17605, extensionHostPid: process.pid }) && sizeWhenRestricted === 0, "ACL applied before the token is written");
+    ok(JSON.parse(fs.readFileSync(path.join(winRoot, "sessions", "sWin.json"), "utf8")).port === 17605 && winOk.publicAuth().acl === "windows-owner-only",
+      "record written after the ACL");
+    winOk.remove();
+    const winBad = auth.createAuth({ stateRoot: winRoot, sessionId: "sWinBad", platform: "win32", env: {}, execFileSync: fakeRun(report({ protectedValue: "False" })) });
+    ok(winBad.publish({ port: 17606, extensionHostPid: process.pid }) === null && /not owner-only/.test(winBad.publicAuth().publishError), "bad ACL readback fails publish");
+    ok(fs.readdirSync(path.join(winRoot, "sessions")).length === 0, "no record or temp file left after a failed ACL");
+    ok(winBad.check({ host: "127.0.0.1:17606", authorization: "Bearer " + "a".repeat(43) }).status === 503, "unpublished session answers 503");
 
     // 2. 补丁
     assert.equal(patch.patchBundle(bundle), bundle, "byte idempotence");

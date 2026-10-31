@@ -407,8 +407,8 @@
       "bytes": 8745
     },
     "scripts/next_bridge_auth_core.js": {
-      "sha256": "bb80cfa143b08572ec8a3d10443d416b005339a9388744f77fd5f39a0cafb417",
-      "bytes": 7044
+      "sha256": "075283c7348acd042ae55fb6381cf43d274555370a41ea2b415d81e6023f9c87",
+      "bytes": 9731
     },
     "scripts/apply_next_bridge_auth_patch.js": {
       "sha256": "5a4a5801740abaaf433d12766209efdaa2ca83af48909e8c631617576023ac08",
