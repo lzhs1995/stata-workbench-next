@@ -11,7 +11,9 @@ const before = hash();
 // Exclude patch application, not regressions; retain --check finalization.
 const mutators = new Set(["node scripts/apply_rc7_shared_execution_patch.js", "node scripts/finalize_bundle_identity.js"]);
 const commands = ["node scripts/audit_candidate_readonly.js", "node --check scripts/test_activation_isolation.js",
-  "node scripts/test_activation_isolation.js", ...pkg.scripts["check:legacy"].split(" && ")];
+  "node scripts/test_activation_isolation.js", "node scripts/test_session_registry_core.js",
+  "node scripts/test_bridge_auth_core.js", "node scripts/test_bridge_auth_patch.js",
+  ...pkg.scripts["check:legacy"].split(" && ")];
 let count = 0;
 const keepGoing = process.argv.includes("--keep-going");
 const failed = [];

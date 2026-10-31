@@ -1,0 +1,16 @@
+"use strict";
+const assert = require("node:assert");
+const { constantTimeEqual, authorize } = require("./bridge_auth_core");
+const token = "ab".repeat(32);
+assert.equal(constantTimeEqual(token, token), true);
+assert.equal(constantTimeEqual(token, token.slice(0, -2)), false);
+const check = (headers) => authorize(headers, { token, port: 17611 });
+assert.equal(check({}).status, 403);
+assert.equal(check({ host: "127.0.0.1:17611" }).status, 401);
+assert.equal(check({ host: "127.0.0.1:17611", authorization: "Bearer " + "cd".repeat(32) }).status, 401);
+assert.equal(check({ host: "localhost:17611", authorization: "Bearer " + token }).status, 403);
+assert.equal(check({ host: "127.0.0.1:17611", origin: "http://127.0.0.1", authorization: "Bearer " + token }).status, 403);
+assert.equal(check({ host: "127.0.0.1:17611", authorization: "Bearer " + token }).ok, true);
+const events = []; authorize({ host: "bad", authorization: "Bearer " + token }, { token, port: 17611, onReject: e => events.push(e) });
+assert.deepEqual(events, [{ status: 403, reason: "HOST_FORBIDDEN" }]);
+console.log("PASS bridge auth: constant-time token path, 401/403 rules, Origin rejection, and event hook");

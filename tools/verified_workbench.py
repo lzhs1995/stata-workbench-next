@@ -60,9 +60,11 @@ class LocalBridge:
     def request(self, path, payload=None, timeout=5):
         if path not in ("/status", "/run-command"):
             raise ValueError("unsupported endpoint")
+        credentials = session_credentials()
         req = urllib.request.Request(f"http://127.0.0.1:{PORT}{path}",
             data=json.dumps(payload).encode() if payload is not None else None,
-            headers={"Content-Type": "application/json"})
+            headers={"Content-Type": "application/json", "Authorization": "Bearer " + credentials["token"],
+                     "Host": f"127.0.0.1:{PORT}"})
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
         try:
             with opener.open(req, timeout=timeout) as response:
@@ -78,6 +80,25 @@ class LocalBridge:
 
     def __getattr__(self, name):
         return getattr(self.platform, name)
+
+
+def session_credentials():
+    """Read the exact per-session bearer token before any bridge request."""
+    root = Path(os.environ.get("STATA_WORKBENCH_SESSION_ROOT", str(Path.home() / ".stata-workbench-next" / "sessions"))).expanduser()
+    wanted = os.environ.get("STATA_WORKBENCH_SESSION_ID")
+    records = []
+    for file in sorted(root.glob("*.json")):
+        try:
+            record = json.loads(file.read_text())
+        except (OSError, ValueError):
+            continue
+        if wanted and record.get("sessionId") != wanted:
+            continue
+        if record.get("port") == PORT and isinstance(record.get("token"), str) and len(record["token"]) == 64:
+            records.append(record)
+    if len(records) != 1:
+        raise RuntimeError("SESSION_REGISTRY_MISSING")
+    return records[0]
 
 
 def activate_once(pid):

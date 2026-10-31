@@ -1,0 +1,16 @@
+"use strict";
+const assert = require("node:assert");
+const fs = require("node:fs");
+const path = require("node:path");
+const patch = require("./apply_bridge_auth_patch");
+const source = fs.readFileSync(path.join(__dirname, "..", "dist", "extension.js"), "utf8");
+const fresh = source.replace(patch.MARKER, "");
+const once = patch.patchBundle(fresh, { finalize: false });
+const twice = patch.patchBundle(once, { finalize: false });
+assert.equal(once, twice);
+assert.equal((once.match(new RegExp(patch.MARKER.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g")) || []).length, 1);
+assert.match(once, /Authorization|authorize/);
+assert.match(once, /session_registry_core\.js/);
+assert.match(once, /\/status/);
+assert.throws(() => patch.patchBundle(fresh.replace(patch.SESSION_ANCHOR, patch.SESSION_ANCHOR + patch.SESSION_ANCHOR), { finalize: false }), /ambiguous/);
+console.log("PASS bridge auth patch: idempotence, auth/session wiring, and fail-closed anchors");
