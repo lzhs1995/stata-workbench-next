@@ -19,3 +19,4 @@
 | L11 | C | `~/.stata-workbench-next/sessions/<sessionId>.json`：macOS `stat -f %Lp` 是 600；Windows `icacls` 只列当前用户一条、没有 `(I)`、没有 SYSTEM 和 Administrators；顺带记下窗口打开到 `/status` 能用的秒数（Windows 上写注册表要起一次 PowerShell） | `stat`/`icacls` 输出 + 秒数 | |
 | L12 | C | 关掉窗口后这个窗口的记录被删；另一个仍开着的窗口的记录还在 | 前后 `ls` | |
 | L13 | C | `/status.nextAuth` 有 `published:true` 和端口，`/status`、`events.jsonl` 里都搜不到 token 字符串 | `grep -c` 为 0 | |
+| L14 | K0 | 合成会话 `clear all` 后 `set obs 100000`，再交一条 `display 1`（agent）和一次 Run File（人）；再在 `set obs 1` 的会话里跑一个长命令并 soft Stop | 两次都 rc 0、无 `EXEC_REJECTED`；Stop 后 `display c(N), c(k)` 分别是 100000 0 和 1 0 | |
