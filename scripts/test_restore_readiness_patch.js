@@ -15,6 +15,11 @@ assert.ok(bundle.includes("__codexRestoreReadinessRef&&globalThis.__codexRestore
 assert.ok(bundle.includes("__codexRestoreReadinessRef&&globalThis.__codexRestoreReadinessRef.finish(__runId"));
 assert.ok(bundle.includes('__codexRestoreReadinessRef&&globalThis.__codexRestoreReadinessRef.reset("recovery-smoke-verified")'));
 assert.ok(bundle.includes('__codexRestoreReadinessRef&&globalThis.__codexRestoreReadinessRef.reset("force-reset-complete")'));
+const forceResetGate = bundle.indexOf('__codexRestoreReadinessRef&&globalThis.__codexRestoreReadinessRef.reset("force-reset-complete")');
+const forceResetScopeEnd = bundle.indexOf('}catch{}let __state=__current();', forceResetGate);
+assert.ok(forceResetGate > bundle.indexOf('let __needsSmoke='), "force-reset reset is in the force-reset tail");
+assert.ok(forceResetScopeEnd > forceResetGate, "force-reset reset remains inside the reconnect try scope");
+assert.equal(bundle.includes('catch{}if(!__needsSmoke&&__reconnect'), false, "force-reset reset must not reference out-of-scope __needsSmoke");
 assert.equal(patch.patchBundle(bundle, { finalize: false }), bundle, "F0 patch is idempotent");
 
 function cutFunction(source, start) {

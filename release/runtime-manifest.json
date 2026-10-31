@@ -139,8 +139,8 @@
       "bytes": 11107
     },
     "dist/extension.js": {
-      "sha256": "c33fec0510bf869ecd5c01421ed33ab4fa9a07d5206bd8e48fcd91239fe3b69d",
-      "bytes": 5625027
+      "sha256": "408b4214e0a753b7f8f977ef94ec55e40ab853e53569e119dbafd8cb79572ad4",
+      "bytes": 5625028
     },
     "scripts/mac/png_compat_transform.js": {
       "sha256": "cdea12886a1d5bb5b4c2b3e38829de1c7e68ed70e7777e8d6e2eb02bb0ce3514",
@@ -343,7 +343,7 @@
       "bytes": 4729
     },
     "tools/verified_workbench.py": {
-      "sha256": "bfd1be64b27e60d6e1ddb61545f7ebc5cd4147f3e5435a7e77e3c1d905890690",
+      "sha256": "553d1725f6bcfe963b155514cb0941841d91faa912ee1d42c39b1b3748bd1e3a",
       "bytes": 20125
     },
     "tools/workbench_platform.py": {
@@ -423,8 +423,8 @@
       "bytes": 5437
     },
     "scripts/apply_restore_readiness_patch.js": {
-      "sha256": "0ae00f6e54badc284bc789100d0f4175b9d944ed5e8401bc3c79d4c61699fc12",
-      "bytes": 7578
+      "sha256": "a5d42211ea04c39f38bd0f2306fddad03ceaae74afebbe9b47cbf74fa8cfa1b5",
+      "bytes": 7996
     },
     "scripts/restore_readiness_core.js": {
       "sha256": "96d2303c80472d876e6708866c553a5023bfb622882968f1d2fb68a0fefd4721",
