@@ -1607,6 +1607,12 @@ const AUXILIARY_MARKERS = [
     marker: "next patch 0.2.0-next.2: agent identity, Terminal origin header, session events",
   },
   {
+    key: "nextBridgeBearerAuth",
+    label: "next 0.2.0-next.3: bridge bearer authentication",
+    relativePath: path.join("dist", "extension.js"),
+    marker: "next patch 0.2.0-next.3: bridge bearer authentication",
+  },
+  {
     key: "runtimePatchTargetsListenerLoop",
     label: "packaged mcp-stata patch targets the live listener loop",
     relativePath: path.join("scripts", "mcp_stata_runtime_patch.js"),

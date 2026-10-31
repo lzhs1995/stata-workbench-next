@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "version": "0.2.0-next.2",
+  "version": "0.2.0-next.3",
   "files": {
     "scripts/wire_rc713b_remaining.js": {
       "sha256": "ebd9ff993b435ac55c5fe625fbf514938fe28b8f8d995c723044ae42898cbfaa",
@@ -27,8 +27,8 @@
       "bytes": 17618
     },
     "scripts/patch_manager.js": {
-      "sha256": "08f53a98f229ed0123b2db0b0ec6c566633a88c8ccf0dc3573b62fe4cae2eef8",
-      "bytes": 93051
+      "sha256": "d0d3efe8cd40e79110cea1380bb860f9e102e26e9d72bd3043e2001b18e879c8",
+      "bytes": 93283
     },
     "scripts/mcp_stata_runtime_patch.js": {
       "sha256": "64013014e8598af5c7f70a276cd80a2f5c21d218eaa6fba59f079096c8f75ac9",
@@ -111,8 +111,8 @@
       "bytes": 5178
     },
     "scripts/apply_rc7_shared_execution_patch.js": {
-      "sha256": "fc332e7163dae1f77247eb5dfa49e37557062b0f20989ba91124dd175bd56dcf",
-      "bytes": 337806
+      "sha256": "0916a9a0152f579336ddab8e9bdc20b7687b2ffdee69f4156b1091cdd205d55d",
+      "bytes": 337946
     },
     "scripts/apply_rc64_routes_patch.js": {
       "sha256": "b01e1225f5844b632e24d616957fb9e565541345a10d6f4fbc640a4b034070b2",
@@ -139,8 +139,8 @@
       "bytes": 11107
     },
     "dist/extension.js": {
-      "sha256": "341df97372d60768a72d146d6fa5c4965c96f6c292d6a088bf74ef888a8a347e",
-      "bytes": 5616810
+      "sha256": "0788dad0c0837d29e2a1f03a267cceb0778e54feca4ddda0e40d768b239e86c3",
+      "bytes": 5618946
     },
     "scripts/mac/png_compat_transform.js": {
       "sha256": "cdea12886a1d5bb5b4c2b3e38829de1c7e68ed70e7777e8d6e2eb02bb0ce3514",
@@ -343,8 +343,8 @@
       "bytes": 4729
     },
     "tools/verified_workbench.py": {
-      "sha256": "f0dd713ca9986dbaf66d272b1ae942764e72828d4c5b3d7cefe2fa5b712bb314",
-      "bytes": 12228
+      "sha256": "3dc0b8064825dfcd294291a180b96d22c08f2e47cac6fcfdd2dd55848a28e825",
+      "bytes": 13878
     },
     "tools/workbench_platform.py": {
       "sha256": "1b436f1b5dc6401be22596de2bfeed42aeb90ea1b0d480e4847c873ee21ccd14",
@@ -405,6 +405,14 @@
     "scripts/apply_next_agent_identity_patch.js": {
       "sha256": "91bae249699e98c5de9cd4b88552c35c790c4c05bafa6cf27f03f65477899e88",
       "bytes": 8745
+    },
+    "scripts/next_bridge_auth_core.js": {
+      "sha256": "bb80cfa143b08572ec8a3d10443d416b005339a9388744f77fd5f39a0cafb417",
+      "bytes": 7044
+    },
+    "scripts/apply_next_bridge_auth_patch.js": {
+      "sha256": "5a4a5801740abaaf433d12766209efdaa2ca83af48909e8c631617576023ac08",
+      "bytes": 5988
     }
   },
   "acceptanceStatus": "PENDING_LICENSED_MAC_FULL_ACCEPTANCE",

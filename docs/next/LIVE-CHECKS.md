@@ -13,4 +13,9 @@
 | L5 | B | 人按 Run File、在 Terminal 输入命令：卡片上方是 `You · <runId>` | 截图 | |
 | L6 | B | agent 长命令运行中人按 Run File：弹出的提示写明 `claude is running Stata (<runId>)` 并提到 Stop；`/events` 里有一条 `run-refused`，`busyRunId` 是 agent 那次 | 截图 + `/events` JSON | |
 | L7 | B | 一次 agent 运行、一次人的运行、一次 soft Stop 之后，`events.jsonl` 每次运行恰好一条 `run-start` 和一条 `run-end`（Stop 那次另有至多一条 `run-end-update`），seq 连续；`--events 0` 与文件内容一致 | 文件 + 命令输出 | |
-| L8 | B | 把 `next_session_core.js` 暂时改名后重载窗口：扩展照常激活、能跑代码，`/status.nextSession.error` 有原因，`/events` 回 503；改回后恢复 | `/status` JSON | |
+| L8 | B | 把 `next_session_core.js` 暂时改名后重载窗口：扩展照常激活、能跑代码，`/status.nextSession.error` 有原因，`/events` 回 503；改回后恢复。装了 C（0.2.0-next.3）后 bridge 对所有请求回 503 `AUTH_UNAVAILABLE`、`detail` 写原因，人在编辑器和 Terminal 里照常能跑 | `/status` 或 503 JSON | |
+| L9 | C | 窗口起来后不带 token 调 `curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:<端口>/status` 得 401；带 `Origin: http://example.com` 得 403；`Host: localhost:<端口>` 得 403 | 三个状态码 | |
+| L10 | C | `shared_stata.py --code 'display 1'` 和 `--events 0` 不另给 token 就能用（从注册表取） | 命令输出 | |
+| L11 | C | `~/.stata-workbench-next/sessions/<sessionId>.json`：macOS `stat -f %Lp` 是 600；Windows `icacls` 只列当前用户、无继承项 | `stat`/`icacls` 输出 | |
+| L12 | C | 关掉窗口后这个窗口的记录被删；另一个仍开着的窗口的记录还在 | 前后 `ls` | |
+| L13 | C | `/status.nextAuth` 有 `published:true` 和端口，`/status`、`events.jsonl` 里都搜不到 token 字符串 | `grep -c` 为 0 | |

@@ -27,8 +27,12 @@ GATE_ZERO = ("doubleReleases", "doubleSettles", "doubleStarts", "drainFailClosed
 
 
 def status(port):
+    # Next bridge 的每个端点都要 Bearer token；token 从会话注册表读（见 tools/verified_workbench.py）
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
+    from verified_workbench import auth_headers
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    with opener.open(f"http://127.0.0.1:{port}/status", timeout=10) as response:
+    request = urllib.request.Request(f"http://127.0.0.1:{port}/status", headers=auth_headers(port))
+    with opener.open(request, timeout=10) as response:
         return json.load(response)
 
 
