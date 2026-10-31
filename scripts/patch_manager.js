@@ -91,6 +91,11 @@ const REQUIRED_MARKERS = [
     marker: "codex-rc7-shared-execution",
   },
   {
+    key: "editProposalDiffGate",
+    label: "agent Stata edits require accepted diff proposals",
+    marker: "next patch E1: agent .do edits require explicit diff acceptance",
+  },
+  {
     key: "visibleBridgeTransientPortRebind",
     label: "surviving extension host retries transient bridge-port ownership races",
     marker: "codex patch rc.7.10.31: bridge retries transient EADDRINUSE",
