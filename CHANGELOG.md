@@ -1,3 +1,33 @@
+## 0.2.0-next.3 — bridge bearer authentication
+
+- Each window's bridge creates a random 32-byte token when it starts. After the bridge
+  binds its port it writes `~/.stata-workbench-next/sessions/<sessionId>.json`
+  (schema `stata-workbench-next-session/1`: sessionId, port, extension host pid, token,
+  events path, bundle fingerprint). On macOS the file is 0600. On Windows PowerShell
+  rebuilds the file's DACL by SID: inheritance off, every explicit entry removed (files
+  can be created with explicit SYSTEM and Administrators entries, which
+  `icacls /inheritance:r` keeps), one FullControl entry for the current user. The DACL is
+  read back, and publishing fails unless exactly that entry remains. The empty file is
+  restricted first; the token is written after. The record is deleted when the window
+  closes. Records whose pid is confirmed dead are pruned; others are kept.
+- Every bridge endpoint now requires `Authorization: Bearer <token>` and a `Host` of
+  exactly `127.0.0.1:<port>`. Requests with any `Origin` header are refused. Missing or
+  wrong token: 401; wrong Host or any Origin: 403; registry not written yet: 503. Refused
+  requests never reach a route. They are recorded as rate-limited `auth-refused` events
+  (reason, status, method, path), never with the token.
+- `tools/verified_workbench.py` (and so `tools/shared_stata.py`) reads the newest record
+  for the port from the registry and sends the token. `STATA_WORKBENCH_NEXT_HOME`
+  overrides the state root. The extension's own recovery check sends the token too.
+- `/status` adds `nextAuth` (required, published, registry path, port, ACL kind, publish
+  error). It never contains the token.
+- The older shell and PowerShell helpers (`scripts/mac/*.sh`, `scripts/*.ps1`) do not send
+  a token yet, so they get 401 from a Next bridge. Use `tools/shared_stata.py`.
+- Logic lives in `scripts/next_bridge_auth_core.js`; `apply_next_bridge_auth_patch.js`
+  wires it in. If it or the B session module cannot load, the bridge fails closed: every
+  request, `/status` included, gets 503 `AUTH_UNAVAILABLE` and `detail` says why. Runs
+  started in the editor or Terminal are not affected.
+- Not yet verified on a licensed machine; see `docs/next/LIVE-CHECKS.md` L9–L13.
+
 ## 0.2.0-next.2 — agent identity, Terminal origin header, session events
 
 - Agent runs carry a name: `tools/shared_stata.py --agent-name NAME` (or env
