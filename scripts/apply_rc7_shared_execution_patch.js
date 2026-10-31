@@ -3431,5 +3431,7 @@ text = require("./apply_next_identity_patch").patchBundle(text, { finalize: fals
 text = require("./apply_next_agent_identity_patch").patchBundle(text, { finalize: false });
 // next 0.2.0-next.3: bridge bearer authentication
 text = require("./apply_next_bridge_auth_patch").patchBundle(text, { finalize: false });
+// next 0.2.0-next.4: multi-session registry and per-session temp
+text = require("./apply_next_multi_session_patch").patchBundle(text, { finalize: false });
 fs.writeFileSync(target, text, "utf8");
 console.log(baseAlreadyApplied ? "RC7_SHARED_EXECUTION_UPDATED" : "RC7_SHARED_EXECUTION_APPLIED", target);

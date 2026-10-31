@@ -109,6 +109,7 @@ function createAuth(options = {}) {
   let publishError = null;
   let acl = null;
   let port = null;
+  let current = null;
 
   function check(headers) {
     if (!port) return { ok: false, status: 503, reason: "SESSION_NOT_PUBLISHED" };
@@ -142,7 +143,22 @@ function createAuth(options = {}) {
     return removed;
   }
 
-  // bridge 绑定端口之后调用。先写临时文件、限权，再改名；失败时 bridge 照常起，但所有请求 503。
+  // 先建空文件并限权，再写 token：token 落盘时文件已经只有当前用户能读。然后原子改名。
+  function writeRecord(record) {
+    const dir = sessionsDir(stateRoot);
+    const tmp = path.join(dir, `.${sessionId}.${process.pid}.${crypto.randomBytes(4).toString("hex")}.tmp`);
+    try {
+      fs.writeFileSync(tmp, "", { mode: 0o600, flag: "wx" });
+      acl = restrictToOwner(tmp, options);
+      fs.writeFileSync(tmp, JSON.stringify(record, null, 2) + "\n", { encoding: "utf8", flag: "r+" });
+      fs.renameSync(tmp, recordPath);
+    } catch (error) {
+      try { fs.unlinkSync(tmp); } catch {}
+      throw error;
+    }
+  }
+
+  // bridge 绑定端口之后调用。失败时 bridge 照常起，但所有请求 503。
   function publish(fields = {}) {
     port = Number(fields.port);
     if (!(port >= 1024 && port <= 65535)) { port = null; publishError = "invalid port"; return null; }
@@ -151,25 +167,37 @@ function createAuth(options = {}) {
       extensionHostPid: fields.extensionHostPid || process.pid, startedAt: fields.startedAt || new Date(now()).toISOString(),
       dataDir: fields.dataDir || null, eventsPath: fields.eventsPath || null, bundleSha: fields.bundleSha || null,
     };
-    const dir = sessionsDir(stateRoot);
-    const tmp = path.join(dir, `.${sessionId}.${process.pid}.${crypto.randomBytes(4).toString("hex")}.tmp`);
     try {
-      fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+      fs.mkdirSync(sessionsDir(stateRoot), { recursive: true, mode: 0o700 });
       const removed = pruneDead();
-      // 先建空文件并限权，再写 token：token 落盘时文件已经只有当前用户能读。
-      fs.writeFileSync(tmp, "", { mode: 0o600, flag: "wx" });
-      acl = restrictToOwner(tmp, options);
-      fs.writeFileSync(tmp, JSON.stringify(record, null, 2) + "\n", { encoding: "utf8", flag: "r+" });
-      fs.renameSync(tmp, recordPath);
+      writeRecord(record);
+      current = record;
       published = { recordPath, port, startedAt: record.startedAt, prunedDead: removed.length };
       publishError = null;
     } catch (error) {
-      try { fs.unlinkSync(tmp); } catch {}
       port = null;
       published = null;
+      current = null;
       publishError = String(error && (error.code || error.message) || error);
     }
     return published;
+  }
+
+  // 已发布之后补字段（阶段 D：generation、backendPid 等会变的值）。身份字段和 token 不可改；
+  // 内容没变不写盘；写失败时盘上留旧记录（客户端核对不一致会拒绝执行），返回错误。
+  const FIXED = new Set(["schema", "sessionId", "port", "token", "extensionHostPid", "startedAt"]);
+  function update(extra = {}) {
+    if (!current || !published) return { changed: false, error: "not published" };
+    const next = { ...current };
+    for (const [key, value] of Object.entries(extra || {})) if (!FIXED.has(key)) next[key] = value;
+    if (JSON.stringify(next) === JSON.stringify(current)) return { changed: false, error: null };
+    try {
+      writeRecord(next);
+      current = next;
+      return { changed: true, error: null };
+    } catch (error) {
+      return { changed: false, error: String(error && (error.code || error.message) || error) };
+    }
   }
 
   // 只删自己写的那一个：文件里的 sessionId 和 token 都得对得上。
@@ -179,6 +207,7 @@ function createAuth(options = {}) {
       if (rec.sessionId === sessionId && rec.token === token) fs.unlinkSync(recordPath);
     } catch {}
     published = null;
+    current = null;
     port = null;
   }
 
@@ -186,7 +215,7 @@ function createAuth(options = {}) {
     return { required: true, scheme: "Bearer", registryPath: recordPath, published: !!published, port, acl, publishError };
   }
 
-  return { sessionId, recordPath, check, headers, publish, remove, pruneDead, shouldRecordRefusal, publicAuth };
+  return { sessionId, recordPath, check, headers, publish, update, remove, pruneDead, shouldRecordRefusal, publicAuth };
 }
 
 module.exports = { RECORD_SCHEMA, TOKEN_BYTES, WINDOWS_ACL_SCRIPT, authorize, createAuth, parseWindowsAclReport, pidAlive, restrictToOwner, sessionsDir };
