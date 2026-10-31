@@ -12,6 +12,7 @@ const LATER = [
   "./apply_single_do_pagination_patch",
   "./apply_softstop_incomplete_checkpoint_patch",
   "./apply_next_identity_patch",
+  "./apply_bridge_auth_patch",
 ];
 
 function revertLaterPatches(source) {

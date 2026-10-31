@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const os = require("node:os");
+const childProcess = require("node:child_process");
 
 const DEFAULT_ROOT = path.join(os.homedir(), ".stata-workbench-next", "sessions");
 
@@ -17,6 +18,11 @@ function tokenHex(randomBytes = crypto.randomBytes) {
   const token = randomBytes(32);
   if (!Buffer.isBuffer(token) || token.length !== 32) throw new Error("token generator must return 32 bytes");
   return token.toString("hex");
+}
+
+function restrictWindowsFile(file, spawn = childProcess.spawnSync) {
+  const user = process.env.USERNAME || process.env.USER || "%USERNAME%";
+  return spawn("icacls", [file, "/inheritance:r", "/grant:r", `${user}:R,W`], { stdio: "ignore" });
 }
 
 function atomicWrite(file, value, fsApi = fs) {
@@ -33,9 +39,7 @@ function atomicWrite(file, value, fsApi = fs) {
   try { fsApi.chmodSync(temp, 0o600); } catch {}
   fsApi.renameSync(temp, file);
   if (process.platform === "win32") {
-    try {
-      require("node:child_process").spawnSync("icacls", [file, "/inheritance:r", "/grant:r", `${process.env.USERNAME || process.env.USER || "%USERNAME%"}:R,W`], { stdio: "ignore" });
-    } catch {}
+    try { restrictWindowsFile(file); } catch {}
   }
 }
 
@@ -64,4 +68,4 @@ function recordRejection(session, details, append = fs.appendFileSync) {
   try { fs.chmodSync(session.eventLog, 0o600); } catch {}
 }
 
-module.exports = { DEFAULT_ROOT, tokenHex, atomicWrite, createSession, recordRejection };
+module.exports = { DEFAULT_ROOT, tokenHex, atomicWrite, createSession, recordRejection, restrictWindowsFile };

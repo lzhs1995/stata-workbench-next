@@ -29,6 +29,15 @@ function patchBundle(source, options = {}) {
   return options.finalize === false ? source : fingerprint.finalize(source).text;
 }
 
+function revertBundle(source) {
+  if (!source.includes(MARKER)) throw new Error("C auth marker missing");
+  unique(source, SESSION_INSERT);
+  unique(source, SERVER_INSERT);
+  source = source.replace(SESSION_INSERT, () => SESSION_ANCHOR);
+  source = source.replace(SERVER_INSERT, () => SERVER_ANCHOR);
+  return fingerprint.finalize(source).text;
+}
+
 if (require.main === module) {
   const target = path.join(__dirname, "..", "dist", "extension.js");
   const before = fs.readFileSync(target, "utf8");
@@ -37,4 +46,4 @@ if (require.main === module) {
   console.log(JSON.stringify({ changed: before !== after, target, installed: false }));
 }
 
-module.exports = { patchBundle, MARKER, SESSION_ANCHOR, SERVER_ANCHOR };
+module.exports = { patchBundle, revertBundle, MARKER, SESSION_ANCHOR, SERVER_ANCHOR };

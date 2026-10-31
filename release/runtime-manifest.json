@@ -27,8 +27,8 @@
       "bytes": 17618
     },
     "scripts/patch_manager.js": {
-      "sha256": "5f8b40578d885bb01370121d3c7f00bd3c45051810c4a8a871a5ec5d1ec427a6",
-      "bytes": 92764
+      "sha256": "7de41188bdeaf8e3baf8046eb8a41a1bfd68502313f29219136ae9cb61374641",
+      "bytes": 92969
     },
     "scripts/mcp_stata_runtime_patch.js": {
       "sha256": "64013014e8598af5c7f70a276cd80a2f5c21d218eaa6fba59f079096c8f75ac9",
@@ -111,8 +111,8 @@
       "bytes": 5178
     },
     "scripts/apply_rc7_shared_execution_patch.js": {
-      "sha256": "e6bab491582fd1f59f303c33beb9bb2eb6bd73bae5d9b5c17dec48155d8f8e05",
-      "bytes": 337637
+      "sha256": "88ff821062b04fa4ef332d6f12382b727cbe624c5e8221901fbbd9f1b98d37f2",
+      "bytes": 337824
     },
     "scripts/apply_rc64_routes_patch.js": {
       "sha256": "b01e1225f5844b632e24d616957fb9e565541345a10d6f4fbc640a4b034070b2",
@@ -139,8 +139,8 @@
       "bytes": 11107
     },
     "dist/extension.js": {
-      "sha256": "09d274da569e68f1e7a80f7ee82eead46a024f5ab57fcbb74fa9e1d87180cb91",
-      "bytes": 5613939
+      "sha256": "60215798c6556d563841b95eaed9f180322dfd3060529169318c9ea097495528",
+      "bytes": 5614830
     },
     "scripts/mac/png_compat_transform.js": {
       "sha256": "cdea12886a1d5bb5b4c2b3e38829de1c7e68ed70e7777e8d6e2eb02bb0ce3514",
@@ -343,8 +343,8 @@
       "bytes": 4729
     },
     "tools/verified_workbench.py": {
-      "sha256": "4968079eafb02b05b4a958d830e7557cdb7178e85740468b5f49b0b4792c8e62",
-      "bytes": 11671
+      "sha256": "c122dc0d0c25204e2d11a3300016700fcb2dceef4cb5a0c3bbc0aea8878f3b8a",
+      "bytes": 12625
     },
     "tools/workbench_platform.py": {
       "sha256": "1b436f1b5dc6401be22596de2bfeed42aeb90ea1b0d480e4847c873ee21ccd14",
@@ -397,6 +397,18 @@
     "scripts/apply_next_identity_patch.js": {
       "sha256": "21430a204519b3964f260275ac7d627f150b8b8786cc408388dfd8ed54bff1ba",
       "bytes": 2349
+    },
+    "scripts/apply_bridge_auth_patch.js": {
+      "sha256": "a86cf0ebba34edac64ab4118804b12ff8faf1db235941139b217b91b032b5c38",
+      "bytes": 2919
+    },
+    "scripts/bridge_auth_core.js": {
+      "sha256": "24e189db632d626fb0ce65f64cd26d2869d49f59712fef91a39eb944d54d043e",
+      "bytes": 1218
+    },
+    "scripts/session_registry_core.js": {
+      "sha256": "d0b9b630117ba5f680123952f9dcb1b7f544a1ca14dbd1b465cc3a32e82dfd9b",
+      "bytes": 3048
     }
   },
   "acceptanceStatus": "PENDING_LICENSED_MAC_FULL_ACCEPTANCE",

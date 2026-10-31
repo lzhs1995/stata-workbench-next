@@ -11,7 +11,15 @@ const record = core.createSession({
   bundleSha: "a".repeat(64), root, randomBytes: n => Buffer.alloc(n, 7), now: () => "2026-10-31T00:00:00.000Z",
 });
 assert.equal(record.token.length, 64);
-assert.equal(fs.statSync(record.file).mode & 0o777, 0o600);
+if (process.platform === "win32") {
+  const calls = [];
+  core.restrictWindowsFile(record.file, (...args) => { calls.push(args); return { status: 0 }; });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0], "icacls");
+  assert.deepEqual(calls[0][1].slice(1, 3), ["/inheritance:r", "/grant:r"]);
+} else {
+  assert.equal(fs.statSync(record.file).mode & 0o777, 0o600);
+}
 const loaded = JSON.parse(fs.readFileSync(record.file, "utf8"));
 assert.deepEqual(loaded, { sessionId: "test-session", sessionName: "test", port: 17611, token: "07".repeat(32), extensionHostPid: 1234, startedAt: "2026-10-31T00:00:00.000Z", bundleSha: "a".repeat(64) });
 assert.equal(fs.readdirSync(root).some(name => name.endsWith(".tmp")), false);
