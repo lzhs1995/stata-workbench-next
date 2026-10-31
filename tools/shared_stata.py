@@ -251,18 +251,43 @@ def wait_ready(d, deadline, observe=entry.observe, clock=time.monotonic, sleep=t
         sleep(min(1, max(0, deadline - clock())))
 
 
+def agent_name(value):
+    """--agent-name：只留字母、数字、空格和 ._-@，1–40 字；与扩展 next_session_core 的清洗规则一致。"""
+    text = " ".join("".join(c for c in str(value) if c.isalnum() or c in " ._@-").split())[:40]
+    if not text:
+        raise argparse.ArgumentTypeError("agent name needs letters or digits")
+    return text
+
+
+def print_events(since, limit):
+    """只读：GET /events?since=N，原样打印 JSON；不提交代码，不取执行锁。"""
+    body = entry.LocalBridge().events(since=since, limit=limit)
+    print(json.dumps(body, ensure_ascii=False))
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser()
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--code")
     source.add_argument("--file", type=Path)
+    source.add_argument("--events", type=int, metavar="SINCE",
+                        help="print the session event stream after sequence number SINCE (0 = from the start) and exit")
     parser.add_argument("--cwd", type=Path, default=Path.cwd())
     parser.add_argument("--receipt-dir", type=Path)
     parser.add_argument("--timeout", type=int, default=3600)
     parser.add_argument("--busy-policy", choices=("fail", "wait"), default="fail")
     parser.add_argument("--max-wait", type=float, default=60)
     parser.add_argument("--label", default="Shared session AI run")
+    parser.add_argument("--agent-name", type=agent_name,
+                        default=os.environ.get("STATA_WORKBENCH_AGENT_NAME") or "agent",
+                        help="name shown in the Stata Terminal header and the event stream (env STATA_WORKBENCH_AGENT_NAME)")
+    parser.add_argument("--limit", type=int, default=None, help="with --events: at most this many events (1-500)")
     args = parser.parse_args()
+    if args.events is not None:
+        if args.events < 0 or (args.limit is not None and not 1 <= args.limit <= 500):
+            parser.error("--events needs SINCE >= 0 and --limit 1-500")
+        return print_events(args.events, args.limit)
     if args.timeout < 1 or not math.isfinite(args.max_wait) or args.max_wait < 0 or not args.cwd.is_dir():
         parser.error("positive timeout and existing cwd required")
     os.environ.update(WS_FG_ALLOWED="0", WS_WINDOW_ALLOWED="0", WS_PHYSICAL_KEYS="0")
@@ -276,7 +301,8 @@ def main():
     if not code or not code.strip():
         parser.error("empty code is not an execution")
     request = {"code": code, "cwd": str(args.cwd.resolve()),
-               "source": "agent", "agentId": "verified-shared-session-client", "label": args.label}
+               "source": "agent", "agentId": "verified-shared-session-client", "agentName": args.agent_name,
+               "label": args.label}
     with ExitStack() as stack:
         wait = args.max_wait if args.busy_policy == "wait" else 0
         deadline = time.monotonic() + wait

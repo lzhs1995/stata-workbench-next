@@ -1601,6 +1601,12 @@ const AUXILIARY_MARKERS = [
     marker: "next patch 0.2.0-next.1: Next default bridge port 17601",
   },
   {
+    key: "nextAgentIdentityEvents",
+    label: "next 0.2.0-next.2: agent identity, Terminal origin header, session events",
+    relativePath: path.join("dist", "extension.js"),
+    marker: "next patch 0.2.0-next.2: agent identity, Terminal origin header, session events",
+  },
+  {
     key: "runtimePatchTargetsListenerLoop",
     label: "packaged mcp-stata patch targets the live listener loop",
     relativePath: path.join("scripts", "mcp_stata_runtime_patch.js"),
