@@ -5,7 +5,7 @@
 // 1. next_multi_session_core：会话名规则与优先级、会话目录、TMPDIR、backendPid、注册表字段。
 // 2. next_bridge_auth_core.update：补字段、身份与 token 不可改、没变不写盘、写失败留旧记录、改写后仍只删自己。
 // 3. 两个会话并排：各自记录、各自 token，关一个只删它自己的。
-// 4. 补丁可逆、紧跟 C 层、锚点缺失即拒绝、只用 ASCII、不改 B/C 写入的字符。
+// 4. 补丁可逆、紧跟上一层（E）、锚点取自 C、缺失即拒绝、只用 ASCII、不改 B/C 写入的字符。
 // 5. 把 bundle 里真实的激活语句和 /status 片段放进沙盒跑：会话名、TMPDIR、注册表刷新、generation 变化。
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
@@ -134,11 +134,13 @@ try {
   const sealed = revertAfter(bundle, name);
   const below = patch.revertBundle(sealed);
   assert.equal(below, revertAfter(bundle, LATER[LATER.indexOf(name) - 1]), "directly follows the previous later layer");
-  assert.ok(LATER[LATER.indexOf(name) - 1] === "./apply_next_bridge_auth_patch", "stacked on C");
+  // E（PR #6，先合并）排在 C 与 D 之间；D 的锚点仍是 C 插入的文本，E 不改它们
+  assert.ok(LATER[LATER.indexOf(name) - 1] === "./apply_edit_proposal_patch", "stacked on E");
+  assert.ok(LATER.indexOf("./apply_next_bridge_auth_patch") < LATER.indexOf(name), "after C");
   assert.equal(patch.patchBundle(below), sealed, "replay reproduces the sealed layer");
   assert.throws(() => patch.patchBundle(below.replace(C.EDITS[2][1], "")), /anchor/);
   assert.throws(() => patch.patchBundle(below + "__codexNextMultiRef"), /partial/);
-  checks += 7;
+  checks += 8;
   ok(!/[^\x00-\x7f]/.test(patch.EDITS.map((e) => e[1]).join("")), "patch strings are ASCII only");
   for (const [, after] of C.EDITS) ok(bundle.includes(after), "C text intact in the bundle");
   ok(bundle.includes(C.EDITS[2][1] + patch.REFRESH), "registry refresh runs right after the auth gate");
