@@ -149,7 +149,7 @@ def main(argv=None):
         if not (args.repo and args.cwd):
             p.error("--repo and --cwd are required without --root")
         repo, cwd = args.repo, args.cwd
-    port = int(env.get("STATA_WORKBENCH_PORT", "17485"))
+    port = int(env.get("STATA_WORKBENCH_PORT", "17601"))
     temp_dir = env.get("MCP_STATA_TEMP")
     args.out.mkdir(parents=True)  # refuses an existing directory; receipts are never reused
     log = (args.out / "jobs.jsonl").open("x", encoding="utf-8")

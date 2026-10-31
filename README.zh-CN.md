@@ -2,6 +2,11 @@
 
 [English](README.md) | [中文](README.zh-CN.md)
 
+> **开发线，不作日常使用。** 这是 `stata-workbench-next`，多会话、agent 身份、bridge 鉴权和
+> diff 确认改动的隔离开发仓库。它装成另一个扩展（`lzhs1995.stata-workbench-next`），bridge
+> 端口 17601。做研究请用稳定版
+> [stata-workbench-shared-session](https://github.com/lzhs1995/stata-workbench-shared-session)。
+
 这是一个 VS Code 扩展：人和 AI agent 轮流使用同一个可见的 Stata 会话。双方的代码
 都送到同一个 backend，所以数据、宏、scalar、结果和图形是共享的。
 

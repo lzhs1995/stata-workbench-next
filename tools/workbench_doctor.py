@@ -33,7 +33,7 @@ def diagnose(entry):
         try:
             config = json.loads(settings.read_text(encoding="utf-8-sig"))
             configured_stata = config.get("stataMcp.stataPath")
-            configured_port = config.get("stataMcp.visibleBridgePort", 17485)
+            configured_port = config.get("stataMcp.visibleBridgePort", 17601)
             check("configuredPort", type(configured_port) is int and configured_port == entry.PORT,
                   configured_port, "Align STATA_WORKBENCH_PORT with stataMcp.visibleBridgePort in this profile.")
         except (ValueError, UnicodeError) as exc:
