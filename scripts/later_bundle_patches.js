@@ -11,6 +11,7 @@ const LATER = [
   "./apply_backend_warmup_patch",
   "./apply_single_do_pagination_patch",
   "./apply_softstop_incomplete_checkpoint_patch",
+  "./apply_softstop_snapshot_presence_patch",
   "./apply_next_identity_patch",
   "./apply_next_agent_identity_patch",
   "./apply_next_bridge_auth_patch",

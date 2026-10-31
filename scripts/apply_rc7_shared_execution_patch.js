@@ -3425,6 +3425,8 @@ text = require("./apply_backend_warmup_patch").patchBundle(text, { finalize: fal
 text = require("./apply_single_do_pagination_patch").patchBundle(text, { finalize: false });
 // rc.7.74: soft Stop never dispatches a refused checkpoint restore (FULL45 S40).
 text = require("./apply_softstop_incomplete_checkpoint_patch").patchBundle(text, { finalize: false });
+// F0 P3: a ready checkpoint whose dataset file is gone is recovery failure.
+text = require("./apply_softstop_snapshot_presence_patch").patchBundle(text, { finalize: false });
 // next 0.2.0-next.1: Next default bridge port 17601
 text = require("./apply_next_identity_patch").patchBundle(text, { finalize: false });
 // next 0.2.0-next.2: agent identity, Terminal origin header, session events

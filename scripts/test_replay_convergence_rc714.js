@@ -246,11 +246,11 @@ function main() {
       assert.strictEqual(l.scope.checkpoint.bareViolations, 0, l.label + " 仍有裸消费点");
       assert.strictEqual(l.scope.checkpoint.outOfScope, 0, l.label + " 仍有越界消费点");
       assert.strictEqual(l.scope.checkpoint.exports, "__codexStopCheckpointRef:1");
-      assert.strictEqual(l.scope.checkpoint.globalRefs, 31,
-        l.label + " 全局引用数应为 31（新增 R16J114 失败恢复保全判断；含 rc.7.30 两条 payload tracking、两次 Stop"
+      assert.strictEqual(l.scope.checkpoint.globalRefs, 34,
+        l.label + " 全局引用数应为 34（新增 R16J114 失败恢复保全判断；含 rc.7.30 两条 payload tracking、两次 Stop"
         + " settlement probe，rc.7.35 阶梯的 4 处：hard-fallback 一处别名"
         + " __codexCkpt + force-reset 三处 forceResetReconnectTimeoutMs 探测，以及 rc.7.74 soft Stop"
-        + " 恢复判定的 3 处：restorePlan 探测与调用、restoreCode）");
+        + " 恢复判定的 3 处：restorePlan 探测与调用、restoreCode；P3 快照存在性判定 3 处）");
       assert.ok(/__codexStopCheckpoint:let/.test(l.scope.checkpoint.declKind),
         l.label + " 声明应为 let：" + l.scope.checkpoint.declKind);
     }
