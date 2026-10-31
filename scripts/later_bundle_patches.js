@@ -13,6 +13,7 @@ const LATER = [
   "./apply_softstop_incomplete_checkpoint_patch",
   "./apply_next_identity_patch",
   "./apply_next_agent_identity_patch",
+  "./apply_next_bridge_auth_patch",
   "./apply_edit_proposal_patch",
 ];
 

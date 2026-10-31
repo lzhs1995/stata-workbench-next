@@ -23,7 +23,9 @@ async function run() {
   assert.equal(rejected.reasonCode, "USER_REJECTED");
   assert.deepEqual(fs.readFileSync(file), original);
 
-  const timedOut = await gate.propose({ path: file, content: "display \"timeout\"\n", expectedSha256: sha256(original), timeoutMs: 10 }, () => new Promise(() => {}));
+  // Keep the deliberately late decision timer finite so the test process can
+  // exit cleanly after the gate's timeout wins the race.
+  const timedOut = await gate.propose({ path: file, content: "display \"timeout\"\n", expectedSha256: sha256(original), timeoutMs: 10 }, () => new Promise(resolve => setTimeout(() => resolve({ status: "accepted" }), 2000)));
   assert.equal(timedOut.reasonCode, "DECISION_TIMEOUT");
   assert.deepEqual(fs.readFileSync(file), original);
 
@@ -46,6 +48,10 @@ async function run() {
     "edit_proposal_accepted", "edit_proposal_pending", "edit_proposal_rejected",
   ]);
   console.log("PASS edit proposal core: mismatch, reject, timeout, accept+snapshot, and concurrent SHA change");
+  // The timeout case intentionally leaves a late decision promise detached;
+  // terminate this standalone test after assertions so that promise cannot
+  // keep a CI worker alive.
+  process.exit(0);
 }
 
 run().catch(error => { console.error(error); process.exitCode = 1; });

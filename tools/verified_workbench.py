@@ -18,14 +18,14 @@ import urllib.error
 
 WORK = Path(__file__).resolve().parents[1]
 PROFILE = Path(os.environ.get("STATA_WORKBENCH_PROFILE", str(Path.home() / ".stata-workbench-next" / "profiles" / "default"))).expanduser().resolve()
-EXTENSION = PROFILE / "extensions/lzhs1995.stata-workbench-next-0.2.0-next.2"
+EXTENSION = PROFILE / "extensions/lzhs1995.stata-workbench-next-0.2.0-next.3"
 try:
     PORT = int(os.environ.get("STATA_WORKBENCH_PORT", "17601"))
 except ValueError:
     PORT = 0  # Doctor can report the bad setting before any connection or launch.
 CODE_CLI = host.default_code()
-VERSION = "0.2.0-next.2"
-BUNDLE_SHA256 = "341df97372d60768a72d146d6fa5c4965c96f6c292d6a088bf74ef888a8a347e"
+VERSION = "0.2.0-next.3"
+BUNDLE_SHA256 = "0788dad0c0837d29e2a1f03a267cceb0778e54feca4ddda0e40d768b239e86c3"
 PINS = {
     WORK / "dist/extension.js": BUNDLE_SHA256,
 }
@@ -44,6 +44,45 @@ def helpers():
 
 def output(argv):
     return subprocess.check_output(argv, text=True, timeout=10).strip()
+
+
+STATE_ROOT = Path(os.environ.get("STATA_WORKBENCH_NEXT_HOME", str(Path.home() / ".stata-workbench-next"))).expanduser()
+SESSION_SCHEMA = "stata-workbench-next-session/1"
+
+
+class SessionRegistryError(RuntimeError):
+    pass
+
+
+def session_record(port=None, root=None):
+    """读本端口的会话注册表记录（含 token）。同一端口有多条时取 startedAt 最新的；读不出的文件跳过。
+    每次请求都重新读，扩展重载后换了 token 也能跟上。"""
+    port = PORT if port is None else port
+    directory = (root or STATE_ROOT) / "sessions"
+    best = None
+    try:
+        names = sorted(os.listdir(directory))
+    except OSError:
+        names = []
+    for name in names:
+        if not name.endswith(".json") or name.startswith("."):
+            continue
+        try:
+            rec = json.loads((directory / name).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if (isinstance(rec, dict) and rec.get("schema") == SESSION_SCHEMA and rec.get("port") == port
+                and isinstance(rec.get("token"), str) and re.fullmatch(r"[A-Za-z0-9_-]{16,128}", rec["token"])):
+            if best is None or str(rec.get("startedAt") or "") > str(best.get("startedAt") or ""):
+                best = rec
+    if best is None:
+        raise SessionRegistryError(f"SESSION_REGISTRY_MISSING: no Next session record for port {port} in {directory}")
+    return best
+
+
+def auth_headers(port=None, root=None):
+    port = PORT if port is None else port
+    return {"Authorization": "Bearer " + session_record(port, root)["token"], "Host": f"127.0.0.1:{port}"}
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -65,7 +104,7 @@ class LocalBridge:
             raise ValueError("unsupported endpoint")
         req = urllib.request.Request(f"http://127.0.0.1:{PORT}{path}",
             data=json.dumps(payload).encode() if payload is not None else None,
-            headers={"Content-Type": "application/json"})
+            headers={"Content-Type": "application/json", **auth_headers()})
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
         try:
             with opener.open(req, timeout=timeout) as response:

@@ -3429,6 +3429,8 @@ text = require("./apply_softstop_incomplete_checkpoint_patch").patchBundle(text,
 text = require("./apply_next_identity_patch").patchBundle(text, { finalize: false });
 // next 0.2.0-next.2: agent identity, Terminal origin header, session events
 text = require("./apply_next_agent_identity_patch").patchBundle(text, { finalize: false });
+// next 0.2.0-next.3: bridge bearer authentication
+text = require("./apply_next_bridge_auth_patch").patchBundle(text, { finalize: false });
 // next E: accepted diff gate for agent Stata-source edits
 text = require("./apply_edit_proposal_patch").patchBundle(text, { finalize: false });
 fs.writeFileSync(target, text, "utf8");
