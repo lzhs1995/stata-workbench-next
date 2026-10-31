@@ -59,6 +59,18 @@ try {
     for (const [k, v] of Object.entries(savedTmp)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
   }
 
+  // 运行时配置：环境变量优先；没有才用 settings，并写进 env 供 bundle 懒读；相对路径不认
+  const cfgFile = path.join(tmp, "mcp-A.json");
+  fs.writeFileSync(cfgFile, JSON.stringify({ servers: { mcp_stata: { command: "/r/bin/python3", env: { MCP_STATA_TEMP: path.join(tmp, "mt") } } } }));
+  const e1 = {};
+  const rc1 = multi.applyRuntimeConfig(e1, cfgFile);
+  ok(e1.MCP_STATA_CONFIG_PATH === cfgFile && rc1.configPath === cfgFile && rc1.backendTemp === path.join(tmp, "mt"), "settings config applied when env is empty");
+  const e2 = { MCP_STATA_CONFIG_PATH: "/from/env.json" };
+  const rc2 = multi.applyRuntimeConfig(e2, cfgFile);
+  ok(e2.MCP_STATA_CONFIG_PATH === "/from/env.json" && rc2.configPath === path.resolve("/from/env.json") && rc2.backendTemp === null, "env config wins; unreadable -> no backendTemp");
+  const e3 = {};
+  ok(multi.applyRuntimeConfig(e3, "relative.json").configPath === null && !("MCP_STATA_CONFIG_PATH" in e3), "relative settings path ignored");
+
   const owned = new Map([[11, {}], [22, {}], [33, {}]]);
   ok(multi.latestBackendPid(owned, () => true) === 33, "latest owned backend pid");
   ok(multi.latestBackendPid(owned, (p) => p !== 33) === 22, "dead latest skipped");
@@ -182,6 +194,20 @@ try {
   ok(statusPart.nextMulti.sessionName === "envSession" && !JSON.stringify(statusPart).includes(rec.token), "/status nextMulti without token");
   const noMulti = new Function("globalThis", "return {" + patch.STATUS + "}")({ __codexNextMultiError: "boom" });
   ok(noMulti.nextMulti.error === "boom", "/status explains a disabled D layer");
+
+  // 只有 settings（启动器的环境没传过来）：运行时配置和后端临时目录取自 settings 指的 mcp.json
+  const g3 = { __codexNextSessionRef: { sessionId: "sSet", dataDir: path.join(sandboxRoot, "runs", "sSet") } };
+  const env3 = {};
+  const iA3 = { workspace: { getConfiguration: () => ({ get: (k, d) => ({ nextSessionName: "p3", nextMcpConfigPath: cfgFile })[k] ?? d }),
+    workspaceFolders: [] } };
+  new Function("globalThis", "iA", "rg", "yC", "require", "process", patch.ACTIVATE)(g3, iA3, path, { extensionUri: { fsPath: root } }, require, { env: env3, cwd: () => root });
+  ok(!g3.__codexNextMultiError && g3.__codexNextMultiRef.sessionName === "p3", "settings-only: name from settings");
+  ok(env3.MCP_STATA_CONFIG_PATH === cfgFile, "settings-only: MCP_STATA_CONFIG_PATH set before the backend starts");
+  ok(g3.__codexNextMultiRef.dirs.logDir === path.join(tmp, "mt") && env3.MCP_STATA_TEMP === undefined, "settings-only: logDir from the config, MCP_STATA_TEMP not leaked");
+  ok(g3.__codexNextMultiRef.workspacePath === null, "no workspace folder -> null");
+  const hhg = bundle.indexOf("function HHg(g){yC=g;");
+  const lazy = bundle.indexOf("let __runtimeIsolation=!!uM().MCP_STATA_CONFIG_PATH");
+  ok(hhg > 0 && hhg < bundle.indexOf(patch.MARKER) && bundle.indexOf(patch.MARKER) < lazy, "D sets the config path inside activation, before the runtime is resolved");
 
   // 激活失败只关掉 D：没有会话时不改 TMPDIR
   const g2 = {};

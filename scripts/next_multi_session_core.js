@@ -6,9 +6,10 @@
 // 扩展激活时：
 //   1. 会话名取环境变量 STATA_WORKBENCH_NEXT_SESSION，没有再取 settings 的 stataMcp.nextSessionName，
 //      再没有用 "default"。
-//   2. 该会话的 temp/checkpoint 放到 <runs>/<sessionId>/tmp，并把本进程的 TMPDIR/TEMP/TMP 指过去
+//   2. 运行时配置：MCP_STATA_CONFIG_PATH（环境变量优先，其次 settings 的 stataMcp.nextMcpConfigPath）。
+//   3. 该会话的 temp/checkpoint 放到 <runs>/<sessionId>/tmp，并把本进程的 TMPDIR/TEMP/TMP 指过去
 //      （bundle 里运行前快照、选区 do 文件等都用 os.tmpdir()，这样不再落到机器级临时目录）。
-//   3. 注册表记录补齐 sessionName、backendPid、profilePath、workspacePath、tempDir、logDir、graphDir、
+//   4. 注册表记录补齐 sessionName、backendPid、profilePath、workspacePath、tempDir、logDir、graphDir、
 //      checkpointDir、generation、diskBundleSha256；generation 或 backendPid 变了就原子改写。
 // 客户端提交前读 /status 核 sessionId、port、generation、bundle SHA，与注册表任一不符就不执行。
 const fs = require("node:fs");
@@ -54,6 +55,28 @@ function applyTempDir(env, tempDir, platform) {
   return before;
 }
 
+// 本会话的 mcp-stata 运行时配置（stata_session.py 写的 mcp.json）。环境变量 MCP_STATA_CONFIG_PATH 优先，
+// 其次 settings 的 stataMcp.nextMcpConfigPath。只在环境里没有时才把 settings 的值写进 process.env，
+// 让 bundle 之后懒读 MCP_STATA_CONFIG_PATH 时拿到这个会话自己的运行时，不再落到机器级默认运行时。
+// 返回 {configPath, backendTemp}；读不出配置不抛错，backendTemp 为 null。
+function applyRuntimeConfig(env, configured, options = {}) {
+  const readFile = options.readFileSync || fs.readFileSync;
+  let configPath = absoluteOrNull(env.MCP_STATA_CONFIG_PATH);
+  if (!configPath && absoluteOrNull(configured)) {
+    configPath = absoluteOrNull(configured);
+    env.MCP_STATA_CONFIG_PATH = configPath;
+  }
+  let backendTemp = null;
+  if (configPath) {
+    try {
+      const config = JSON.parse(readFile(configPath, "utf8"));
+      const server = (config && config.servers && config.servers.mcp_stata) || (config && config.mcpServers && config.mcpServers.mcp_stata);
+      backendTemp = absoluteOrNull(server && server.env && server.env.MCP_STATA_TEMP);
+    } catch {}
+  }
+  return { configPath, backendTemp };
+}
+
 // ownedBackendPids 是插入有序的 Map；取最后一个还活着的。
 function latestBackendPid(owned, alive) {
   if (!owned || typeof owned.keys !== "function") return null;
@@ -82,6 +105,7 @@ function registryFields(input = {}) {
 function publicMulti(state = {}) {
   return {
     sessionName: state.sessionName || null, profilePath: state.profilePath || null,
+    mcpConfigPath: state.runtime ? state.runtime.configPath || null : null,
     tempDir: state.dirs ? state.dirs.tempDir : null, registryRefreshes: state.refreshes || 0,
     lastRefreshError: state.lastError || null,
   };
@@ -89,5 +113,5 @@ function publicMulti(state = {}) {
 
 module.exports = {
   NAME_RE, MAX_SESSIONS, PORT_MIN, PORT_MAX,
-  sanitizeSessionName, resolveSessionName, sessionDirs, applyTempDir, latestBackendPid, registryFields, publicMulti,
+  sanitizeSessionName, resolveSessionName, sessionDirs, applyTempDir, applyRuntimeConfig, latestBackendPid, registryFields, publicMulti,
 };

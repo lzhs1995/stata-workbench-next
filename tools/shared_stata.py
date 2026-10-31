@@ -169,6 +169,8 @@ def execute_once(d, request, receipt, timeout=3600, observe=entry.observe, sleep
         entry.permissions.require_window_observation(before)
         if not ready(before):
             raise RuntimeError("existing session is not ready; no launch, reset or dispatch")
+        # 阶段 D：注册表里绑定的会话必须就是 /status 报的这个（sessionId、port、generation、bundle SHA）
+        result["sessionIdentity"] = entry.verify_session_identity(before.get("status"))
         write_once(receipt / "request.json", request)
         write_once(receipt / "before.json", before)
         payload = dict(request)
@@ -273,6 +275,9 @@ def main():
     source.add_argument("--file", type=Path)
     source.add_argument("--events", type=int, metavar="SINCE",
                         help="print the session event stream after sequence number SINCE (0 = from the start) and exit")
+    source.add_argument("--list-sessions", action="store_true", help="print the Next session registry (no tokens) and exit")
+    parser.add_argument("--session", default=None,
+                        help="session name or id (env STATA_WORKBENCH_SESSION); required when several are live")
     parser.add_argument("--cwd", type=Path, default=Path.cwd())
     parser.add_argument("--receipt-dir", type=Path)
     parser.add_argument("--timeout", type=int, default=3600)
@@ -284,12 +289,18 @@ def main():
                         help="name shown in the Stata Terminal header and the event stream (env STATA_WORKBENCH_AGENT_NAME)")
     parser.add_argument("--limit", type=int, default=None, help="with --events: at most this many events (1-500)")
     args = parser.parse_args()
+    if args.list_sessions:
+        print(json.dumps({"sessions": entry.list_sessions()}, ensure_ascii=False))
+        return 0
     if args.events is not None:
         if args.events < 0 or (args.limit is not None and not 1 <= args.limit <= 500):
             parser.error("--events needs SINCE >= 0 and --limit 1-500")
+        entry.bind_session(args.session)  # 先选定会话；没有或不唯一就停下
         return print_events(args.events, args.limit)
     if args.timeout < 1 or not math.isfinite(args.max_wait) or args.max_wait < 0 or not args.cwd.is_dir():
         parser.error("positive timeout and existing cwd required")
+    # 先选定会话再做任何请求；没有或不唯一（MULTIPLE_SESSIONS）就在这里停下，不执行代码
+    entry.bind_session(args.session)
     os.environ.update(WS_FG_ALLOWED="0", WS_WINDOW_ALLOWED="0", WS_PHYSICAL_KEYS="0")
     d = entry.helpers()
     token = "shared_" + uuid.uuid4().hex

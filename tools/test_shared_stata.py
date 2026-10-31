@@ -21,6 +21,12 @@ def state(rid="old"):
 
 
 class SharedClientTests(unittest.TestCase):
+    def setUp(self):
+        # 阶段 D 的注册表/状态一致性核对另有 test_next_multi_session_client 覆盖；这里测的是之后的派发协议
+        identity = patch.object(client.entry, "verify_session_identity", return_value={"sessionId": "s"})
+        identity.start()
+        self.addCleanup(identity.stop)
+
     def test_file_dispatch_freezes_original_bytes_before_post(self):
         with tempfile.TemporaryDirectory(prefix="shared 中文 ") as directory:
             root = Path(directory)

@@ -36,13 +36,18 @@ class RegistryTests(unittest.TestCase):
         with self.assertRaisesRegex(entry.SessionRegistryError, "SESSION_REGISTRY_MISSING"):
             entry.session_record(17601, self.root / "nope")
 
-    def test_picks_this_port_and_the_newest_record(self):
+    def test_picks_this_port_and_refuses_two_live_records(self):
+        # 阶段 D：同一端口两条活记录不再「取最新」，而是 MULTIPLE_SESSIONS；extensionHostPid 已死的那条跳过
         write(self.sessions, "other-port", port=17602, token="o" * 43)
-        write(self.sessions, "old", startedAt="2026-10-31T12:00:00.000Z", token="a" * 43)
-        write(self.sessions, "new", startedAt="2026-10-31T13:30:00.000Z", token="b" * 43)
-        self.assertEqual(entry.session_record(17601, self.root)["sessionId"], "new")
-        self.assertEqual(entry.auth_headers(17601, self.root),
-                         {"Authorization": "Bearer " + "b" * 43, "Host": "127.0.0.1:17601"})
+        write(self.sessions, "old", startedAt="2026-10-31T12:00:00.000Z", token="a" * 43, extensionHostPid=111)
+        write(self.sessions, "new", startedAt="2026-10-31T13:30:00.000Z", token="b" * 43, extensionHostPid=222)
+        with patch.object(entry, "pid_alive", lambda pid: True):
+            with self.assertRaisesRegex(entry.MultipleSessionsError, "MULTIPLE_SESSIONS"):
+                entry.session_record(17601, self.root)
+        with patch.object(entry, "pid_alive", lambda pid: pid != 111):
+            self.assertEqual(entry.session_record(17601, self.root)["sessionId"], "new")
+            self.assertEqual(entry.auth_headers(17601, self.root),
+                             {"Authorization": "Bearer " + "b" * 43, "Host": "127.0.0.1:17601"})
 
     def test_skips_malformed_and_foreign_records(self):
         (self.sessions / "broken.json").write_text("{not json", encoding="utf-8")

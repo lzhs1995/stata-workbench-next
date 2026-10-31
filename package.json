@@ -2,7 +2,7 @@
   "name": "stata-workbench-next",
   "displayName": "Stata Workbench Shared Session (Next)",
   "description": "A patched Stata Workbench distribution focused on visible human-agent shared sessions, resilient lifecycle recovery, and graph-panel routing. Cross-platform support is validated per release notes; do not assume dual-OS certification from the package description alone.",
-  "version": "0.2.0-next.3",
+  "version": "0.2.0-next.4",
   "publisher": "lzhs1995",
   "author": "LZHS and contributors",
   "license": "AGPL-3.0-or-later",
@@ -185,6 +185,14 @@
           ],
           "default": null,
           "description": "Next multi-session: this window's session name (letters, digits, _ and -; set by tools/stata_session.py). The STATA_WORKBENCH_NEXT_SESSION environment variable takes precedence."
+        },
+        "stataMcp.nextMcpConfigPath": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null,
+          "description": "Next multi-session: absolute path of this session's mcp-stata runtime config (set by tools/stata_session.py). Used only when the MCP_STATA_CONFIG_PATH environment variable is not set."
         },
         "stataMcp.nextProfilePath": {
           "type": [

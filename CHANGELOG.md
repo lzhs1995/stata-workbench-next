@@ -1,3 +1,30 @@
+## 0.2.0-next.4 — multi-session
+
+- New `tools/stata_session.py open|list|close <name>`. One session is one private profile, one VS Code window, one port and one mcp-stata runtime.
+  - `open` creates `~/.stata-workbench-next/profiles/<name>/` and writes `user-data/User/settings.json`: `stataMcp.visibleBridgePort` (a free port in 17601–17620, kept when the same profile is reopened), `stataMcp.nextSessionName`, `stataMcp.nextProfilePath`, `stataMcp.nextMcpConfigPath`.
+  - It links `extensions` to a shared `extensions-shared` directory: a symlink on macOS, a directory junction on Windows, no elevation.
+  - It gives the session its own runtime. On macOS this is an APFS clone (`cp -c -R`). On Windows it is a full copy, not yet verified on a licensed machine.
+  - It writes `mcp.json` pointing at that runtime, so a session never patches or runs the machine-wide `~/.local/share/stata-workbench` runtime.
+  - It refuses a sixth live session (`SESSION_LIMIT`), a second window for the same session (`SESSION_ALREADY_OPEN`), settings that are not plain JSON, and low disk (macOS keeps 20 GB free).
+  - `open` launches VS Code once. It does not wait for the bridge, activate a window or send Stata code.
+  - `close` asks only that profile's VS Code to quit (macOS SIGTERM, Windows `taskkill` without `/F`). It never force-kills and reports `CLOSE_PENDING` if a prompt is still open.
+- The extension takes the session name from `STATA_WORKBENCH_NEXT_SESSION`, then `stataMcp.nextSessionName`, then `default`. It takes the runtime config from `MCP_STATA_CONFIG_PATH`, then `stataMcp.nextMcpConfigPath`.
+- At activation the extension points this process's `TMPDIR` (Windows: also `TEMP`/`TMP`) at `~/.stata-workbench-next/runs/<sessionId>/tmp`. Pre-run checkpoints, selection do-files and other `os.tmpdir()` files then stay inside the session.
+- The registry record now also has these fields. All are public; the token is unchanged.
+  - sessionName, backendPid, profilePath, workspacePath
+  - tempDir, logDir, graphDir, checkpointDir
+  - generation, diskBundleSha256
+- The record is rewritten atomically, with the same ACL, after the bridge binds and after any authorised request in which generation or the backend pid changed.
+- `/status` adds `nextMulti` (session name, profile, runtime config, temp dir; no token).
+- `tools/verified_workbench.py` and `tools/shared_stata.py` add `--session <name or id>` (env `STATA_WORKBENCH_SESSION`) and `--list-sessions`.
+  - Records whose extension host pid is confirmed dead are skipped.
+  - If no live record matches, the clients stop with `SESSION_REGISTRY_MISSING`. If more than one live record matches, they stop with `MULTIPLE_SESSIONS`. This includes two live records on one port, which replaces the old "newest record wins".
+  - With exactly one live session, that session is used.
+  - A client binds to one sessionId for the whole call. If the window reloads, the client refuses rather than switching sessions.
+- Before every submission `shared_stata.py` compares the registry with `/status`: sessionId, port, generation and bundle SHA. Any difference is `SESSION_IDENTITY_MISMATCH` with zero POSTs.
+- Logic lives in `scripts/next_multi_session_core.js` and `tools/stata_session.py`. `apply_next_multi_session_patch.js` wires D in after C without changing B's or C's text. If D cannot load, B and C work as before and `/status.nextMulti.error` says why.
+- Not yet verified on a licensed machine; see `docs/next/LIVE-CHECKS.md` L14–L22.
+
 ## 0.2.0-next.3 — bridge bearer authentication
 
 - Each window's bridge creates a random 32-byte token when it starts. After the bridge

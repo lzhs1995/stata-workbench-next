@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "version": "0.2.0-next.3",
+  "version": "0.2.0-next.4",
   "files": {
     "scripts/wire_rc713b_remaining.js": {
       "sha256": "ebd9ff993b435ac55c5fe625fbf514938fe28b8f8d995c723044ae42898cbfaa",
@@ -27,8 +27,8 @@
       "bytes": 17618
     },
     "scripts/patch_manager.js": {
-      "sha256": "d0d3efe8cd40e79110cea1380bb860f9e102e26e9d72bd3043e2001b18e879c8",
-      "bytes": 93283
+      "sha256": "ede3a717382ef6f78573eee515ea99945e6f206a772610b07db2eb25aba5b654",
+      "bytes": 93541
     },
     "scripts/mcp_stata_runtime_patch.js": {
       "sha256": "64013014e8598af5c7f70a276cd80a2f5c21d218eaa6fba59f079096c8f75ac9",
@@ -111,8 +111,8 @@
       "bytes": 5178
     },
     "scripts/apply_rc7_shared_execution_patch.js": {
-      "sha256": "0916a9a0152f579336ddab8e9bdc20b7687b2ffdee69f4156b1091cdd205d55d",
-      "bytes": 337946
+      "sha256": "094e64d8ff16b6f70c6311bb4d8c545d4135eeb8b5bbd2e2e3417624791bb81c",
+      "bytes": 338103
     },
     "scripts/apply_rc64_routes_patch.js": {
       "sha256": "b01e1225f5844b632e24d616957fb9e565541345a10d6f4fbc640a4b034070b2",
@@ -139,8 +139,8 @@
       "bytes": 11107
     },
     "dist/extension.js": {
-      "sha256": "0788dad0c0837d29e2a1f03a267cceb0778e54feca4ddda0e40d768b239e86c3",
-      "bytes": 5618946
+      "sha256": "0c85f319a99b36c65d51cb2068db2c4aefe9b353133af6d3464a416536875223",
+      "bytes": 5621395
     },
     "scripts/mac/png_compat_transform.js": {
       "sha256": "cdea12886a1d5bb5b4c2b3e38829de1c7e68ed70e7777e8d6e2eb02bb0ce3514",
@@ -335,16 +335,16 @@
       "bytes": 3225
     },
     "tools/shared_stata.py": {
-      "sha256": "d03203194b078f6154ae88c6007551fd783d0dba8fb948d19ddbe70f0834eb4c",
-      "bytes": 16320
+      "sha256": "8bb07f4b3301504afe5be87373d726eb4e4cfcfa254b0b3cb7269f78c53840f8",
+      "bytes": 17201
     },
     "tools/workbench_doctor.py": {
       "sha256": "547acffd98bcc6c6371c9a4c6767303760ed56832a646c5f959acc9ccc7e46fe",
       "bytes": 4729
     },
     "tools/verified_workbench.py": {
-      "sha256": "3dc0b8064825dfcd294291a180b96d22c08f2e47cac6fcfdd2dd55848a28e825",
-      "bytes": 13878
+      "sha256": "7df5134ea59f82a5b1caa164d8518a307a9e3ffcb52e9af387f053dac25f8702",
+      "bytes": 20125
     },
     "tools/workbench_platform.py": {
       "sha256": "1b436f1b5dc6401be22596de2bfeed42aeb90ea1b0d480e4847c873ee21ccd14",
@@ -407,12 +407,20 @@
       "bytes": 8745
     },
     "scripts/next_bridge_auth_core.js": {
-      "sha256": "075283c7348acd042ae55fb6381cf43d274555370a41ea2b415d81e6023f9c87",
-      "bytes": 9731
+      "sha256": "16619e82aff9c19fdacc5a7334018bb3fd3beb2917772e2751fb1cfe86269579",
+      "bytes": 10867
     },
     "scripts/apply_next_bridge_auth_patch.js": {
       "sha256": "5a4a5801740abaaf433d12766209efdaa2ca83af48909e8c631617576023ac08",
       "bytes": 5988
+    },
+    "scripts/next_multi_session_core.js": {
+      "sha256": "a279608c614b1a4259e0843f0acca894bc469de32a20d6a6b55fd57a3407a20d",
+      "bytes": 5986
+    },
+    "scripts/apply_next_multi_session_patch.js": {
+      "sha256": "22c3c8cd4bd4d925a9e0342826dbf9fc3418a498759be1ea678e3bbdec5eee6b",
+      "bytes": 5731
     }
   },
   "acceptanceStatus": "PENDING_LICENSED_MAC_FULL_ACCEPTANCE",

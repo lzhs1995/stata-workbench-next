@@ -18,14 +18,14 @@ import urllib.error
 
 WORK = Path(__file__).resolve().parents[1]
 PROFILE = Path(os.environ.get("STATA_WORKBENCH_PROFILE", str(Path.home() / ".stata-workbench-next" / "profiles" / "default"))).expanduser().resolve()
-EXTENSION = PROFILE / "extensions/lzhs1995.stata-workbench-next-0.2.0-next.3"
+EXTENSION = PROFILE / "extensions/lzhs1995.stata-workbench-next-0.2.0-next.4"
 try:
     PORT = int(os.environ.get("STATA_WORKBENCH_PORT", "17601"))
 except ValueError:
     PORT = 0  # Doctor can report the bad setting before any connection or launch.
 CODE_CLI = host.default_code()
-VERSION = "0.2.0-next.3"
-BUNDLE_SHA256 = "0788dad0c0837d29e2a1f03a267cceb0778e54feca4ddda0e40d768b239e86c3"
+VERSION = "0.2.0-next.4"
+BUNDLE_SHA256 = "0c85f319a99b36c65d51cb2068db2c4aefe9b353133af6d3464a416536875223"
 PINS = {
     WORK / "dist/extension.js": BUNDLE_SHA256,
 }
@@ -54,16 +54,53 @@ class SessionRegistryError(RuntimeError):
     pass
 
 
-def session_record(port=None, root=None):
-    """读本端口的会话注册表记录（含 token）。同一端口有多条时取 startedAt 最新的；读不出的文件跳过。
-    每次请求都重新读，扩展重载后换了 token 也能跟上。"""
-    port = PORT if port is None else port
+class MultipleSessionsError(SessionRegistryError):
+    pass
+
+
+class SessionIdentityError(RuntimeError):
+    pass
+
+
+# 本次调用绑定的会话（bind_session 设）。绑定后整次调用只认这个 sessionId，扩展重载换了会话就拒绝，不改投别的会话。
+BOUND_SESSION_ID = None
+
+
+def pid_alive(pid):
+    """True 活着，False 确定已死，None 不知道（无权限、没有 pid）。未知一律当活，不跳过。"""
+    if type(pid) is not int or pid <= 0:
+        return None
+    if sys.platform == "win32":
+        import ctypes
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        handle = kernel.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not handle:
+            return False if ctypes.get_last_error() == 87 else None  # ERROR_INVALID_PARAMETER = no such pid
+        try:
+            code = ctypes.c_ulong()
+            if not kernel.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return None
+            return code.value == 259  # STILL_ACTIVE
+        finally:
+            kernel.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return None
+
+
+def registry_records(root=None, alive=None):
+    """注册表里格式正确的记录（含 token），附 alive 三态。读不出、格式不对的文件跳过。"""
+    alive = alive or pid_alive
     directory = (root or STATE_ROOT) / "sessions"
-    best = None
     try:
         names = sorted(os.listdir(directory))
     except OSError:
         names = []
+    records = []
     for name in names:
         if not name.endswith(".json") or name.startswith("."):
             continue
@@ -71,18 +108,98 @@ def session_record(port=None, root=None):
             rec = json.loads((directory / name).read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
-        if (isinstance(rec, dict) and rec.get("schema") == SESSION_SCHEMA and rec.get("port") == port
+        if (isinstance(rec, dict) and rec.get("schema") == SESSION_SCHEMA and type(rec.get("port")) is int
+                and isinstance(rec.get("sessionId"), str)
                 and isinstance(rec.get("token"), str) and re.fullmatch(r"[A-Za-z0-9_-]{16,128}", rec["token"])):
-            if best is None or str(rec.get("startedAt") or "") > str(best.get("startedAt") or ""):
-                best = rec
-    if best is None:
-        raise SessionRegistryError(f"SESSION_REGISTRY_MISSING: no Next session record for port {port} in {directory}")
-    return best
+            records.append({**rec, "alive": alive(rec.get("extensionHostPid"))})
+    return records
+
+
+def select_session(selector=None, port=None, root=None, alive=None):
+    """选会话：selector 是会话名或 sessionId；没给就按 port 过滤。extensionHostPid 确定已死的跳过。
+    一条也没有报 SESSION_REGISTRY_MISSING；多于一条报 MULTIPLE_SESSIONS。两种都不执行代码。"""
+    directory = (root or STATE_ROOT) / "sessions"
+    live = [r for r in registry_records(root, alive) if r["alive"] is not False]
+    if selector:
+        found = [r for r in live if selector in (r.get("sessionId"), r.get("sessionName"))]
+        if port is not None:
+            found = [r for r in found if r["port"] == port]
+        what = f"session {selector!r}"
+    elif port is not None:
+        found = [r for r in live if r["port"] == port]
+        what = f"port {port}"
+    else:
+        found = live
+        what = "any live session"
+    if not found:
+        raise SessionRegistryError(f"SESSION_REGISTRY_MISSING: no live Next session record for {what} in {directory}; nothing was executed")
+    if len(found) > 1:
+        names = ", ".join(f"{r.get('sessionName') or '?'}={r['sessionId']}:{r['port']}" for r in found)
+        raise MultipleSessionsError(f"MULTIPLE_SESSIONS: {len(found)} live Next sessions match {what} ({names}); "
+                                    "pass --session <name or id>; nothing was executed")
+    return found[0]
+
+
+def session_record(port=None, root=None):
+    """当前请求要用的记录（含 token）。已绑定时只认绑定的 sessionId；每次请求都重新读，
+    扩展重载换了会话就报 SESSION_REGISTRY_MISSING，不改投别的会话。"""
+    if BOUND_SESSION_ID is not None:
+        rec = [r for r in registry_records(root) if r["sessionId"] == BOUND_SESSION_ID and r["alive"] is not False]
+        if len(rec) != 1:
+            raise SessionRegistryError(f"SESSION_REGISTRY_MISSING: bound session {BOUND_SESSION_ID} is no longer registered; nothing was executed")
+        return rec[0]
+    return select_session(None, PORT if port is None else port, root)
 
 
 def auth_headers(port=None, root=None):
-    port = PORT if port is None else port
-    return {"Authorization": "Bearer " + session_record(port, root)["token"], "Host": f"127.0.0.1:{port}"}
+    rec = session_record(port, root)
+    return {"Authorization": "Bearer " + rec["token"], "Host": f"127.0.0.1:{rec['port']}"}
+
+
+def bind_session(selector=None, root=None, alive=None):
+    """在任何请求之前选定会话，并把 PORT/PROFILE/EXTENSION 指到它。selector 没给时用环境变量
+    STATA_WORKBENCH_SESSION；显式设了 STATA_WORKBENCH_PORT 就只在该端口里选。"""
+    global BOUND_SESSION_ID, PORT, PROFILE, EXTENSION
+    selector = selector or os.environ.get("STATA_WORKBENCH_SESSION") or None
+    port = PORT if "STATA_WORKBENCH_PORT" in os.environ else None
+    rec = select_session(selector, port, root, alive)
+    profile = rec.get("profilePath")
+    if profile:
+        profile = Path(profile).expanduser().resolve()
+        if "STATA_WORKBENCH_PROFILE" in os.environ and profile != PROFILE:
+            raise SessionRegistryError(f"SESSION_PROFILE_MISMATCH: session {rec['sessionId']} uses {profile}, "
+                                       f"STATA_WORKBENCH_PROFILE is {PROFILE}; nothing was executed")
+        EXTENSION = profile / EXTENSION.relative_to(PROFILE)
+        PROFILE = profile
+    PORT = rec["port"]
+    BOUND_SESSION_ID = rec["sessionId"]
+    return rec
+
+
+def verify_session_identity(status, root=None):
+    """提交前核对：注册表里绑定的会话与 /status 的 sessionId、port、generation、bundle SHA 一一相同。
+    任一缺失或不符就拒绝（不执行）。/status 经过鉴权门时扩展先刷新注册表，所以这里重读一次即可。"""
+    rec = session_record(None, root)
+    s = status if isinstance(status, dict) else {}
+    pairs = {
+        "sessionId": (rec.get("sessionId"), (s.get("nextSession") or {}).get("sessionId")),
+        "port": (rec.get("port"), (s.get("nextAuth") or {}).get("port")),
+        "generation": (rec.get("generation"), s.get("resetGeneration")),
+        "bundleSha": (rec.get("diskBundleSha256"), s.get("diskBundleSha256")),
+    }
+    bad = sorted(k for k, (a, b) in pairs.items() if a is None or b is None or a != b)
+    if bad:
+        raise SessionIdentityError("SESSION_IDENTITY_MISMATCH: registry and /status differ on " + ", ".join(bad)
+                                   + " " + json.dumps({k: pairs[k] for k in bad}) + "; nothing was executed")
+    return {k: a for k, (a, _) in pairs.items()}
+
+
+def list_sessions(root=None, alive=None):
+    """--list-sessions：注册表里的会话，不含 token。"""
+    keep = ("sessionId", "sessionName", "port", "alive", "extensionHostPid", "backendPid", "startedAt", "generation",
+            "profilePath", "workspacePath", "tempDir", "logDir", "graphDir", "checkpointDir", "dataDir", "eventsPath",
+            "diskBundleSha256")
+    return [{k: r.get(k) for k in keep} for r in registry_records(root, alive)]
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -242,6 +359,9 @@ def main():
     mode.add_argument("--status", action="store_true")
     mode.add_argument("--doctor", action="store_true", help="non-prompting host/permission/window diagnosis")
     mode.add_argument("--request-permissions", action="store_true", help="one read-only System Events query; may show macOS consent")
+    mode.add_argument("--list-sessions", action="store_true", help="print the Next session registry (no tokens) and exit")
+    parser.add_argument("--session", default=None,
+                        help="session name or id to talk to (env STATA_WORKBENCH_SESSION); required when several are live")
     parser.add_argument("--no-activate", action="store_true")
     parser.add_argument("--remote-debugging-port", type=int, default=None,
                         help="with --open on a new launch only: 127.0.0.1 DevTools port for UI automation")
@@ -257,6 +377,11 @@ def main():
         result = diagnose(sys.modules[__name__])
         print(json.dumps(result, ensure_ascii=False))
         return 0 if result["verdict"] == "READY" else 2
+    if args.list_sessions:
+        print(json.dumps({"sessions": list_sessions()}, ensure_ascii=False))
+        return 0
+    if args.status:
+        bind_session(args.session)  # --open/--request-permissions 不需要已有会话
     d = helpers()
     if args.request_permissions:
         result = permissions.diagnostic(d, observe, request=args.request_permissions)

@@ -38,6 +38,11 @@ SETTINGS = {
         "description": "Next multi-session: this window's session name (letters, digits, _ and -; set by tools/stata_session.py). "
                        "The STATA_WORKBENCH_NEXT_SESSION environment variable takes precedence.",
     },
+    "stataMcp.nextMcpConfigPath": {
+        "type": ["string", "null"], "default": None,
+        "description": "Next multi-session: absolute path of this session's mcp-stata runtime config (set by tools/stata_session.py). "
+                       "Used only when the MCP_STATA_CONFIG_PATH environment variable is not set.",
+    },
     "stataMcp.nextProfilePath": {
         "type": ["string", "null"], "default": None,
         "description": "Next multi-session: absolute path of this window's private profile directory (set by tools/stata_session.py).",
