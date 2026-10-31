@@ -27,8 +27,8 @@
       "bytes": 17618
     },
     "scripts/patch_manager.js": {
-      "sha256": "7de41188bdeaf8e3baf8046eb8a41a1bfd68502313f29219136ae9cb61374641",
-      "bytes": 92969
+      "sha256": "5f8b40578d885bb01370121d3c7f00bd3c45051810c4a8a871a5ec5d1ec427a6",
+      "bytes": 92764
     },
     "scripts/mcp_stata_runtime_patch.js": {
       "sha256": "64013014e8598af5c7f70a276cd80a2f5c21d218eaa6fba59f079096c8f75ac9",
@@ -343,7 +343,7 @@
       "bytes": 4729
     },
     "tools/verified_workbench.py": {
-      "sha256": "c122dc0d0c25204e2d11a3300016700fcb2dceef4cb5a0c3bbc0aea8878f3b8a",
+      "sha256": "cf41546eb11bf26059be397d6b00411d9a17110bed29f384d6d599ceaf98e2bc",
       "bytes": 12625
     },
     "tools/workbench_platform.py": {
