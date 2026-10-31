@@ -19,12 +19,13 @@
 | L11 | C | `~/.stata-workbench-next/sessions/<sessionId>.json`：macOS `stat -f %Lp` 是 600；Windows `icacls` 只列当前用户一条、没有 `(I)`、没有 SYSTEM 和 Administrators；顺带记下窗口打开到 `/status` 能用的秒数（Windows 上写注册表要起一次 PowerShell） | `stat`/`icacls` 输出 + 秒数 | |
 | L12 | C | 关掉窗口后这个窗口的记录被删；另一个仍开着的窗口的记录还在 | 前后 `ls` | |
 | L13 | C | `/status.nextAuth` 有 `published:true` 和端口，`/status`、`events.jsonl` 里都搜不到 token 字符串 | `grep -c` 为 0 | |
-| L14 | D | `stata_session.py open p1` 再 `open p2`：两个窗口各一个 VS Code 主进程；端口 17601、17602；`--list-sessions` 列两条，会话名分别是 p1、p2 | `list` 输出 + 进程数 | |
-| L15 | D | macOS `open -n -a … --env` 传进去的环境到了扩展宿主：`/status.nextMulti.sessionName` 是 p1、`mcpConfigPath` 是 `profiles/p1/mcp.json`；把 `--env` 去掉只靠 settings 也一样 | 两次 `/status` | |
-| L16 | D | 运行时隔离：p1 跑一次后 `~/.local/share/stata-workbench/mcp-stata-1.26.1/.../stata_client.py` 的 mtime 不变，`profiles/p1/runtime/.../stata_client.py` 被打补丁；mcp-stata 进程的命令行是 `profiles/p1/runtime/bin/python3` | `stat` + `ps` | |
-| L17 | D | 运行前快照落在 `runs/<sessionId>/tmp/codex_prerun_*.dta`，不在系统临时目录 | `ls` | |
-| L18 | D | p1、p2 真正重叠各跑一个 20 秒的模型：各自 global、`e()`、图、日志不串；Stop p1 不影响 p2 | 两份回执 + 两个 Terminal 截图 | |
-| L19 | D | 两个会话都活着时不带 `--session` 提交，得 `MULTIPLE_SESSIONS`、退出 2、回执 `postCount` 0 | 命令输出 | |
-| L20 | D | p1 force reset 后 `generation` 加 1；下一次 `shared_stata.py --session p1` 照常执行（注册表随 `/status` 刷新）；手改注册表里的 `generation` 后提交得 `SESSION_IDENTITY_MISMATCH`、`postCount` 0 | 两份回执 | |
-| L21 | D | 第 6 个 `open` 得 `SESSION_LIMIT`，不建目录、不起窗口；`close p3` 后可开 | 命令输出 | |
-| L22 | D | `close p1`：只有 p1 的窗口退出、p1 的记录被删、p2 照跑；有未保存文件时得 `CLOSE_PENDING`，窗口和文件都还在 | 前后 `list` + 截图 | |
+| L14 | K0 | 合成会话 `clear all` 后 `set obs 100000`，再交一条 `display 1`（agent）和一次 Run File（人）；再在 `set obs 1` 的会话里跑一个长命令并 soft Stop | 两次都 rc 0、无 `EXEC_REJECTED`；Stop 后 `display c(N), c(k)` 分别是 100000 0 和 1 0 | |
+| L15 | D | `stata_session.py open p1` 再 `open p2`：两个窗口各一个 VS Code 主进程；端口 17601、17602；`--list-sessions` 列两条，会话名分别是 p1、p2 | `list` 输出 + 进程数 | |
+| L16 | D | macOS `open -n -a … --env` 传进去的环境到了扩展宿主：`/status.nextMulti.sessionName` 是 p1、`mcpConfigPath` 是 `profiles/p1/mcp.json`；把 `--env` 去掉只靠 settings 也一样 | 两次 `/status` | |
+| L17 | D | 运行时隔离：p1 跑一次后 `~/.local/share/stata-workbench/mcp-stata-1.26.1/.../stata_client.py` 的 mtime 不变，`profiles/p1/runtime/.../stata_client.py` 被打补丁；mcp-stata 进程的命令行是 `profiles/p1/runtime/bin/python3` | `stat` + `ps` | |
+| L18 | D | 运行前快照落在 `runs/<sessionId>/tmp/codex_prerun_*.dta`，不在系统临时目录 | `ls` | |
+| L19 | D | p1、p2 真正重叠各跑一个 20 秒的模型：各自 global、`e()`、图、日志不串；Stop p1 不影响 p2 | 两份回执 + 两个 Terminal 截图 | |
+| L20 | D | 两个会话都活着时不带 `--session` 提交，得 `MULTIPLE_SESSIONS`、退出 2、回执 `postCount` 0 | 命令输出 | |
+| L21 | D | p1 force reset 后 `generation` 加 1；下一次 `shared_stata.py --session p1` 照常执行（注册表随 `/status` 刷新）；手改注册表里的 `generation` 后提交得 `SESSION_IDENTITY_MISMATCH`、`postCount` 0 | 两份回执 | |
+| L22 | D | 第 6 个 `open` 得 `SESSION_LIMIT`，不建目录、不起窗口；`close p3` 后可开 | 命令输出 | |
+| L23 | D | `close p1`：只有 p1 的窗口退出、p1 的记录被删、p2 照跑；有未保存文件时得 `CLOSE_PENDING`，窗口和文件都还在 | 前后 `list` + 截图 | |
