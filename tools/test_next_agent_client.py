@@ -30,7 +30,7 @@ class AgentNameTests(unittest.TestCase):
                     "responseDiagnostics": {"fields": {"runId": "r", "requestId": "q"}}}
 
         argv = ["shared_stata.py", "--code", "display 1", "--agent-name", "claude code", "--receipt-dir", "/nonexistent-ok"]
-        with patch.object(sys, "argv", argv), patch.object(entry, "helpers", Mock()), \
+        with patch.object(sys, "argv", argv), patch.object(entry, "helpers", Mock()), patch.object(entry, "bind_session", Mock()), \
                 patch.object(client, "execute_once", fake_execute), \
                 patch.object(entry.host, "lock_paths", Mock(return_value=[])), redirect_stdout(io.StringIO()):
             self.assertEqual(client.main(), 0)
@@ -50,7 +50,7 @@ class AgentNameTests(unittest.TestCase):
             captured.clear()
             with patch.dict("os.environ", env, clear=False), \
                     patch.object(sys, "argv", ["shared_stata.py", "--code", "display 1", "--receipt-dir", "/x"]), \
-                    patch.object(entry, "helpers", Mock()), patch.object(client, "execute_once", fake_execute), \
+                    patch.object(entry, "helpers", Mock()), patch.object(entry, "bind_session", Mock()), patch.object(client, "execute_once", fake_execute), \
                     patch.object(entry.host, "lock_paths", Mock(return_value=[])), redirect_stdout(io.StringIO()):
                 if not env:
                     import os
@@ -65,6 +65,7 @@ class EventsTests(unittest.TestCase):
         events = Mock(return_value={"ok": True, "events": [{"seq": 4}], "lastSeq": 4})
         with patch.object(sys, "argv", ["shared_stata.py", "--events", "3", "--limit", "10"]), \
                 patch.object(entry.host, "lock_paths", lock), patch.object(entry, "helpers", lock), \
+                patch.object(entry, "bind_session", Mock()), \
                 patch.object(entry.LocalBridge, "events", events), redirect_stdout(io.StringIO()) as out:
             self.assertEqual(client.main(), 0)
         events.assert_called_once_with(since=3, limit=10)
