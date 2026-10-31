@@ -391,8 +391,8 @@
       "bytes": 5809
     },
     "scripts/apply_softstop_incomplete_checkpoint_patch.js": {
-      "sha256": "6a2d8722b68c1763d32d9dacf4c846b405e3f49daa6cddbc6b80060894e314df",
-      "bytes": 5490
+      "sha256": "2822c960878fe0ba0ebeb4542c6a71cc74c7f6d0721f968de4a072ff72d543ec",
+      "bytes": 5844
     },
     "scripts/apply_next_identity_patch.js": {
       "sha256": "21430a204519b3964f260275ac7d627f150b8b8786cc408388dfd8ed54bff1ba",
