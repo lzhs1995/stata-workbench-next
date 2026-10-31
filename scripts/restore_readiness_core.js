@@ -35,11 +35,20 @@ function createRestoreReadiness(options = {}) {
     return finish(id, { ready: false, reason: String(error || "checkpoint restore failed") });
   }
 
+  function reset(_reason) {
+    active = false;
+    runId = null;
+    finishedAt = now();
+    ready = true;
+    reason = null;
+    return status();
+  }
+
   function status() {
     return { active, ready, runId, startedAt, finishedAt, reason, status: active ? "restoring" : (ready ? "ready" : "stale") };
   }
 
-  return { begin, finish, fail, status };
+  return { begin, finish, fail, reset, status };
 }
 
 module.exports = { createRestoreReadiness };

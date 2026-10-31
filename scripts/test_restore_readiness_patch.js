@@ -13,6 +13,8 @@ assert.ok(bundle.includes("restoreReadiness:"));
 assert.ok(bundle.includes("checkpoint restore not complete"));
 assert.ok(bundle.includes("__codexRestoreReadinessRef&&globalThis.__codexRestoreReadinessRef.begin(__runId)"));
 assert.ok(bundle.includes("__codexRestoreReadinessRef&&globalThis.__codexRestoreReadinessRef.finish(__runId"));
+assert.ok(bundle.includes('__codexRestoreReadinessRef&&globalThis.__codexRestoreReadinessRef.reset("recovery-smoke-verified")'));
+assert.ok(bundle.includes('__codexRestoreReadinessRef&&globalThis.__codexRestoreReadinessRef.reset("force-reset-complete")'));
 assert.equal(patch.patchBundle(bundle, { finalize: false }), bundle, "F0 patch is idempotent");
 
 function cutFunction(source, start) {
@@ -56,4 +58,10 @@ gate.fail("run-2", "restore failed");
 const failed = ready(globalState.__codexBridgeState, "idle");
 assert.equal(failed.ready, false);
 assert.match(failed.reason, /restore failed/);
+const failedSubmission = acquireDecision({ bridge: globalState.__codexBridgeState, readiness: failed, recovery: null, request: { kind: "normal" } });
+assert.equal(failedSubmission.httpStatus, 423);
+gate.reset("recovery-smoke-verified");
+assert.equal(ready(globalState.__codexBridgeState, "idle").ready, true);
+const recoveredSubmission = acquireDecision({ bridge: globalState.__codexBridgeState, readiness: gate.status(), recovery: null, request: { kind: "normal" } });
+assert.equal(recoveredSubmission.ok, true);
 console.log("PASS restore readiness patch: idempotence, status gate, completion, and failure refusal");

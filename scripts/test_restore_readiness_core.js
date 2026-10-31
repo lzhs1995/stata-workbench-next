@@ -16,4 +16,6 @@ assert.equal(gate.finish("run-2", { ok: true, degraded: true }).ready, false, "d
 gate.begin("run-3");
 assert.equal(gate.fail("run-3", "restore error").ready, false);
 assert.match(gate.status().reason, /restore error/);
+assert.equal(gate.reset("recovery-smoke-verified").ready, true);
+assert.equal(gate.status().status, "ready");
 console.log("PASS restore readiness core: begin, run binding, full/degraded completion, and failure");

@@ -139,8 +139,8 @@
       "bytes": 11107
     },
     "dist/extension.js": {
-      "sha256": "0dcd5b305c66a0725c3d9b5e2fffb64d2563b0e53585e74c7b965d49c34341d0",
-      "bytes": 5624735
+      "sha256": "c33fec0510bf869ecd5c01421ed33ab4fa9a07d5206bd8e48fcd91239fe3b69d",
+      "bytes": 5625027
     },
     "scripts/mac/png_compat_transform.js": {
       "sha256": "cdea12886a1d5bb5b4c2b3e38829de1c7e68ed70e7777e8d6e2eb02bb0ce3514",
@@ -423,12 +423,12 @@
       "bytes": 5437
     },
     "scripts/apply_restore_readiness_patch.js": {
-      "sha256": "73eb26cbe4dc63d363d25697053ff5e0a5cc95c492727989b7ae41bbb4b2f177",
-      "bytes": 6205
+      "sha256": "0ae00f6e54badc284bc789100d0f4175b9d944ed5e8401bc3c79d4c61699fc12",
+      "bytes": 7578
     },
     "scripts/restore_readiness_core.js": {
-      "sha256": "5453a12c2a143cf88f4d3090f7b54bb53533a403b336984e898d92ff9b52909b",
-      "bytes": 1386
+      "sha256": "96d2303c80472d876e6708866c553a5023bfb622882968f1d2fb68a0fefd4721",
+      "bytes": 1546
     }
   },
   "acceptanceStatus": "PENDING_LICENSED_MAC_FULL_ACCEPTANCE",

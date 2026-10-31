@@ -24,7 +24,10 @@ const { execFileSync } = require("node:child_process");
 const SCRIPTS_DIR = __dirname;
 
 // guardStage 的完整依赖闭包（打包必须整组带上，缺一即崩）
-const REQUIRED_CLOSURE = ["prerun_stage_guard.js", "execution_guard.js"];
+const REQUIRED_CLOSURE = [
+  "prerun_stage_guard.js", "execution_guard.js",
+  "restore_readiness_core.js", "edit_proposal_core.js", "next_bridge_auth_core.js",
+];
 const DARWIN_CLOSURE = [
   "darwin_compat_adapter.js", "stata_source_compat_core.js", "stata_do_references.js",
   "mac/png_compat_transform.js", "mac/png_compat_sips.sh", "mac/docx_image_inject.py",
