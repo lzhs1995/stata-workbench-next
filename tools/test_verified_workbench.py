@@ -140,6 +140,20 @@ class LauncherTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     v.launch_argv("Code.exe", Path("/p"), "/w", bad)
 
+    def test_workspace_trust_prompt_is_kept_unless_disabled_by_bool_opt_in(self):
+        # Early Windows fast launcher passed --disable-workspace-trust always; here it is opt-in.
+        from pathlib import Path
+        with patch.object(v.host, "code_launch_command", return_value=["Code.exe"]):
+            plain = v.launch_argv("Code.exe", Path("/p"), "/w")
+            self.assertNotIn("--disable-workspace-trust", plain)
+            off = v.launch_argv("Code.exe", Path("/p"), "/w", 9335, True)
+            self.assertEqual(off.count("--disable-workspace-trust"), 1)
+            self.assertEqual(off[-1], str(Path("/w").resolve()))
+            self.assertLess(off.index("--disable-workspace-trust"), off.index("--remote-debugging-port=9335"))
+            for bad in (1, "yes", None):
+                with self.assertRaises(ValueError):
+                    v.launch_argv("Code.exe", Path("/p"), "/w", None, bad)
+
     def test_mac_start_still_waits_for_the_cli_and_checks_its_result(self):
         with patch.object(v.subprocess, "Popen") as popen, patch.object(v.subprocess, "run") as run:
             v.start_code(["/usr/local/bin/code", "--new-window", "/w"], platform="darwin")

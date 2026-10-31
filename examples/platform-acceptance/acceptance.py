@@ -329,15 +329,19 @@ def build_parser():
                                help="open or reuse the exact instance without bringing it to the foreground")
             child.add_argument("--cdp-port", type=int, default=None,
                                help="new launch only: 127.0.0.1 DevTools port for driving the editor UI remotely")
+            child.add_argument("--disable-workspace-trust", action="store_true",
+                               help="new launch only: open without the workspace trust prompt (full trust)")
     return parser
 
 
-def open_argv(state, no_activate=False, cdp_port=None):
+def open_argv(state, no_activate=False, cdp_port=None, disable_workspace_trust=False):
     argv = [sys.executable, "-B", str(REPO / "tools/verified_workbench.py"), "--open", "--workspace", state["work"]]
     if no_activate:
         argv.append("--no-activate")
     if cdp_port is not None:
         argv += ["--remote-debugging-port", str(int(cdp_port))]
+    if disable_workspace_trust:
+        argv.append("--disable-workspace-trust")
     return argv
 
 
@@ -356,7 +360,8 @@ def main():
         elif args.command == "run":
             result = {"log": run_agent(state, args.fixture)}
         else:
-            result = {"log": run_logged(state, "open", open_argv(state, args.no_activate, args.cdp_port)),
+            result = {"log": run_logged(state, "open", open_argv(state, args.no_activate, args.cdp_port,
+                                                                 args.disable_workspace_trust)),
                       "nativeAcceptance": "NOT_INFERRED"}
     print(json.dumps(result, indent=2))
 

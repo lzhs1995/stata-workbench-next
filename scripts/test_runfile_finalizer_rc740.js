@@ -60,7 +60,19 @@ test("actual writer keeps author exit and finalizer in separate execution scopes
   assert.match(record.executionCode, /save "[^"]+", replace emptyok/);
   assert.ok(record.executionCode.indexOf("local __codex_snapshot_rc = _rc") < record.executionCode.indexOf(done));
   assert.equal(record.executionCode.split(done).length - 1, 1);
-  assert.ok(record.executionCode.endsWith("exit " + tick + "__codex_run_rc'\n"));
+  assert.ok(record.executionCode.endsWith("if " + tick + "__codex_run_rc' != 0 exit " + tick + "__codex_run_rc'\n"));
+});
+
+test("driver never ends with an unconditional exit (mcp-stata include bundle rc read)", () => {
+  // pystata runs mcp-stata's multi-line bundle with `include`; `exit 0` ends the
+  // include before `scalar <rc> = _rc`, turning every successful run into a
+  // missing-rc failure (FULL45 rc.7.45 S20). Measured with pystata on StataNow MP.
+  const code = finalizer.buildFinalizerCode({ runId, bodyPath: "/tmp/b.do", snapshotPath: "/tmp/s.dta" });
+  const lines = code.split("\n").filter(Boolean);
+  assert.equal(lines.filter((line) => /^\s*exit\b/.test(line)).length, 0, "no bare exit line");
+  assert.equal(lines[lines.length - 1], "if " + tick + "__codex_run_rc' != 0 exit " + tick + "__codex_run_rc'");
+  const markerLine = lines.indexOf('display as text "' + done + '"');
+  assert.ok(markerLine >= 0 && markerLine < lines.length - 1, "marker precedes the conditional exit");
 });
 
 test("write corruption is still repaired before source is admitted", (t) => {

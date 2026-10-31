@@ -539,7 +539,7 @@ function restoreCode(snapshot, stataString, options = {}) {
   const ready = snapshotReadyRecord(snapshot);
   if (!ready) return "";
   const defaultGraphObjectPreexisting = readBinaryFlag(paths.defaultGraphObjectPath);
-  if (defaultGraphObjectPreexisting === null) return "exit 459\n";
+  if (defaultGraphObjectPreexisting === null) return REFUSED_RESTORE_CODE;
   // datasetOnly：升级路径（L2）专用的降级恢复。只做数据集 + 全局，
   // 跳过 estimates/graphs 的逐条重建 —— 那是 PF-4 里真正耗时的部分。
   const datasetOnly = options && options.datasetOnly === true;
@@ -550,7 +550,7 @@ function restoreCode(snapshot, stataString, options = {}) {
     globalLines = globalRestoreLines(paths.globalsPath);
   } catch {
     // Validate even degraded restores before emitting clear/use/discard.
-    return "exit 459\n";
+    return REFUSED_RESTORE_CODE;
   }
   if (!datasetOnly) {
     // Do not reset live state unless every declared saved component remains
@@ -560,7 +560,7 @@ function restoreCode(snapshot, stataString, options = {}) {
       ...estimateNames.map((name) => path.join(paths.stateDir, `estimate_${name}.ster`)),
       ...graphNames.map((name) => path.join(paths.stateDir, `graph_${name}.gph`))];
     if (required.some((file) => !fs.existsSync(file) || !fs.statSync(file).isFile())) {
-      return "exit 459\n";
+      return REFUSED_RESTORE_CODE;
     }
   }
   const lines = [...globalLines.preflight, ready.kind === "empty"
@@ -637,6 +637,41 @@ function restoreCode(snapshot, stataString, options = {}) {
 }
 
 /** L2 降级恢复的工作量证据：跳过了多少条 estimates/graphs 重建。 */
+// restoreCode() answers "exit 459\n" (or "") when the checkpoint cannot be
+// restored as a whole, e.g. a Stop that broke the checkpoint's graph-save loop
+// left graphs.txt cut off mid-name (FULL45 S40, rc.7.44). Sending that
+// sentinel to Stata only fails: embedded Stata answers a top-level exit with
+// "--Break-- r(1)", and soft Stop recorded continuity-lost.
+const REFUSED_RESTORE_CODE = "exit 459\n";
+
+// What soft Stop does with a pre-run checkpoint. `payloadAdmitted` is the
+// snapshot's flag at Stop entry: false only when the run registered the
+// snapshot and had not passed its last pre-run Stop fence. Soft Stop advances
+// the reset generation before its first await, so such a run can no longer
+// dispatch its payload, and Stata state is the pre-run state (every pre-run
+// command keeps its holds and cleanup under nobreak). Anything else
+// (true, missing) means the payload may have run.
+function restorePlan(code, payloadAdmitted) {
+  const refused = code === REFUSED_RESTORE_CODE || !String(code || "").trim();
+  if (!refused) return { dispatch: true };
+  if (payloadAdmitted === false) {
+    return {
+      dispatch: false,
+      restore: {
+        ok: true,
+        skipped: "pre-run checkpoint incomplete; payload not dispatched",
+      },
+    };
+  }
+  return {
+    dispatch: false,
+    restore: {
+      ok: false,
+      error: "pre-run checkpoint incomplete; restore refused without dispatch",
+    },
+  };
+}
+
 function restoreDowngradeSummary(snapshot) {
   if (!snapshot?.path) return null;
   const paths = checkpointPaths(snapshot);
@@ -769,13 +804,35 @@ function softStopReadiness(restore, hardReset) {
   }
 }
 
-function restoreTimeoutMs(snapshot) {
+// Windows：完整 restore 的逐条重建比 macOS 慢得多，图尤其慢。2026-10-31 integ
+// smoke（job 405，160 estimates + 80 graphs）L1 在 45 s 天花板被切断
+// （exthost「run_selection cancelled after 45018ms」），L2 只恢复数据集 + 全局，
+// 丢掉全部 estimates/graphs。job 443 计数（mcp_stata_t8l4b220.log）：45 s 内
+// 160/160 个 estimates use + store 与 16 个 graph use 完成，第 17 个（t8_gc_j）
+// 被切。于是每个图至多 45/16 ≈ 2.8 s、每个 estimate 至多 0.28 s；完整 restore
+// 约 45 + 64×(2.3–2.8) ≈ 190–225 s。
+// win32 按类型计：30 s + 400 ms × estimates + 3000 ms × graphs，上限 300 s
+// （job 405 → 334 s → 封顶 300 s，为实测估计的 1.3–1.6 倍）。成功的 restore 不会
+// 因此变慢；挂住的 restore 照样在期限到时升级。macOS 与其他平台保持原公式
+// （rc.7.44 S12 在 45 s 内完整恢复）。L1 的 RECOVERY guard 默认 60 s，win32 上
+// 同步放宽到这个上限（execution_guard.js RECOVERY_LIMIT_MS_WIN32）。
+const RESTORE_BASE_MS = 30000;
+const RESTORE_MS_PER_ARTIFACT = 250;
+const RESTORE_CEILING_MS = 45000;
+const WIN32_RESTORE_MS_PER_ESTIMATE = 400;
+const WIN32_RESTORE_MS_PER_GRAPH = 3000;
+const WIN32_RESTORE_CEILING_MS = 300000;
+
+function restoreTimeoutMs(snapshot, platform = process.platform) {
   const estimateCount = Number(snapshot && snapshot.estimateCount);
   const graphCount = Number(snapshot && snapshot.graphCount);
-  const artifacts =
-    (Number.isFinite(estimateCount) && estimateCount > 0 ? estimateCount : 0) +
-    (Number.isFinite(graphCount) && graphCount > 0 ? graphCount : 0);
-  return Math.min(45000, 30000 + artifacts * 250);
+  const estimates = Number.isFinite(estimateCount) && estimateCount > 0 ? estimateCount : 0;
+  const graphs = Number.isFinite(graphCount) && graphCount > 0 ? graphCount : 0;
+  if (platform === "win32") {
+    return Math.min(WIN32_RESTORE_CEILING_MS,
+      RESTORE_BASE_MS + estimates * WIN32_RESTORE_MS_PER_ESTIMATE + graphs * WIN32_RESTORE_MS_PER_GRAPH);
+  }
+  return Math.min(RESTORE_CEILING_MS, RESTORE_BASE_MS + (estimates + graphs) * RESTORE_MS_PER_ARTIFACT);
 }
 
 // ===================================================================
@@ -807,27 +864,43 @@ const RECONNECT_DIVISOR = 3;
 // ≥ RECONNECT_FLOOR_MS 与最坏情况下 L2 的 reconnect 预算。
 const FORCE_RESET_RECONNECT_MS = 30000;
 
-function hardRestoreTimeoutMs(snapshot) {
-  return Math.ceil(restoreTimeoutMs(snapshot) * ESCALATION_SLACK);
+function hardRestoreTimeoutMs(snapshot, platform = process.platform) {
+  return Math.ceil(restoreTimeoutMs(snapshot, platform) * ESCALATION_SLACK);
 }
 
-function reconnectTimeoutMs(snapshot) {
+function reconnectTimeoutMs(snapshot, platform = process.platform) {
   return Math.max(
     RECONNECT_FLOOR_MS,
-    Math.ceil(restoreTimeoutMs(snapshot) / RECONNECT_DIVISOR)
+    Math.ceil(restoreTimeoutMs(snapshot, platform) / RECONNECT_DIVISOR)
   );
 }
 
-function forceResetReconnectTimeoutMs() {
-  return Math.max(FORCE_RESET_RECONNECT_MS, RECONNECT_FLOOR_MS);
+// Windows：force reset 之后的 reconnect 就是一次冷启动（mcp-stata 先等 worker
+// 至多 30 s，再握手），实测 connect 34.6–42.5 s（2026-10-30 stage 211343），
+// 30 s 必然超时、落到 recovery-required。期限与冷启动 / warm-up 同源：
+// 1000 × (max(180, STATA_SETUP_TIMEOUT) + 120)。成功的重连不会因此变慢。
+// macOS 与其他平台保持 30 s 不变。
+const SETUP_BUDGET_FLOOR_S = 180;
+const SETUP_BUDGET_MARGIN_S = 120;
+
+function setupBudgetMs(env = process.env) {
+  let setupSeconds = SETUP_BUDGET_FLOOR_S;
+  const configured = Number(env && env.STATA_SETUP_TIMEOUT);
+  if (Number.isFinite(configured) && configured > setupSeconds) setupSeconds = configured;
+  return 1000 * (setupSeconds + SETUP_BUDGET_MARGIN_S);
+}
+
+function forceResetReconnectTimeoutMs(platform = process.platform, env = process.env) {
+  const base = Math.max(FORCE_RESET_RECONNECT_MS, RECONNECT_FLOOR_MS);
+  return platform === "win32" ? Math.max(base, setupBudgetMs(env)) : base;
 }
 
 /** 阶梯全貌 + 单调性谓词。dist 与静态判据都从这里取值，避免两处各写一份。 */
-function escalationLadder(snapshot) {
-  const l1RestoreMs = restoreTimeoutMs(snapshot);
-  const l2ReconnectMs = reconnectTimeoutMs(snapshot);
-  const l2RestoreMs = hardRestoreTimeoutMs(snapshot);
-  const l3ReconnectMs = forceResetReconnectTimeoutMs();
+function escalationLadder(snapshot, platform = process.platform, env = process.env) {
+  const l1RestoreMs = restoreTimeoutMs(snapshot, platform);
+  const l2ReconnectMs = reconnectTimeoutMs(snapshot, platform);
+  const l2RestoreMs = hardRestoreTimeoutMs(snapshot, platform);
+  const l3ReconnectMs = forceResetReconnectTimeoutMs(platform, env);
   return {
     l1RestoreMs,
     l2ReconnectMs,
@@ -891,6 +964,7 @@ module.exports = {
   finalizeCheckpoint,
   forceResetReconnectTimeoutMs,
   hardRestoreTimeoutMs,
+  setupBudgetMs,
   initializeCheckpoint,
   isRestoreCapable,
   isSnapshotReady,
@@ -900,8 +974,11 @@ module.exports = {
   shouldCleanupAfterFailure,
   publicSummary,
   readNames,
+  REFUSED_RESTORE_CODE,
   restoreCode,
+  restorePlan,
   restoreTimeoutMs,
+  WIN32_RESTORE_CEILING_MS,
   snapshotReadyRecord,
   snapshotCode,
   trackTransport,

@@ -32,7 +32,9 @@ function buildFinalizerCode({ runId, bodyPath, snapshotPath = null } = {}) {
   lines.push('display as text "___CODEX_BODY_RC_' + runId + '___=" %12.0f ' + local("__codex_body_rc"),
     'display as text "___CODEX_RUN_RC_' + runId + '___=" %12.0f ' + local("__codex_run_rc"),
     'display as text "___CODEX_RUN_DONE_' + runId + '___"',
-    "exit " + local("__codex_run_rc"), "");
+    // `exit 0` inside mcp-stata's include bundle skips its rc read; see the
+    // maintained scripts/runfile_finalizer_core.js. Only a nonzero rc exits.
+    "if " + local("__codex_run_rc") + " != 0 exit " + local("__codex_run_rc"), "");
   return lines.join("\n");
 }
 

@@ -17,14 +17,14 @@ import urllib.error
 
 WORK = Path(__file__).resolve().parents[1]
 PROFILE = Path(os.environ.get("STATA_WORKBENCH_PROFILE", str(Path.home() / ".stata-workbench-shared"))).expanduser().resolve()
-EXTENSION = PROFILE / "extensions/lzhs1995.stata-workbench-shared-session-0.1.3-rc.7.44"
+EXTENSION = PROFILE / "extensions/lzhs1995.stata-workbench-shared-session-0.1.3-rc.7.45"
 try:
     PORT = int(os.environ.get("STATA_WORKBENCH_PORT", "17485"))
 except ValueError:
     PORT = 0  # Doctor can report the bad setting before any connection or launch.
 CODE_CLI = host.default_code()
-VERSION = "0.1.3-rc.7.44"
-BUNDLE_SHA256 = "2b9460b29e293148965b73faaa2eb68f77c3c93cc330d0ecfb8e3090038b2118"
+VERSION = "0.1.3-rc.7.45"
+BUNDLE_SHA256 = "f02ae62736459e89f9bbefc2cfaa55d73edb6e9ef1af662e17d778157d2ceacd"
 PINS = {
     WORK / "dist/extension.js": BUNDLE_SHA256,
 }
@@ -108,12 +108,20 @@ def observe(d):
             "status": status}
 
 
-def launch_argv(code, profile, workspace, cdp_port=None):
+def launch_argv(code, profile, workspace, cdp_port=None, disable_workspace_trust=False):
     """VS Code argv for the exact private profile. cdp_port opts in to a
     127.0.0.1-only DevTools endpoint so a remote operator can drive the real
-    editor UI when Windows refuses foreground input from a background process."""
+    editor UI when Windows refuses foreground input from a background process.
+    disable_workspace_trust opts in to VS Code's --disable-workspace-trust for
+    this window only (the early Windows fast launcher did this): the folder opens
+    without the trust prompt, but every extension in the private profile then
+    runs with full trust, so use it only for a workspace you trust."""
     argv = host.code_launch_command(code) + ["--user-data-dir", str(profile / "user-data"),
         "--extensions-dir", str(profile / "extensions"), "--new-window"]
+    if disable_workspace_trust is not False:
+        if disable_workspace_trust is not True:
+            raise ValueError("disable_workspace_trust must be a bool")
+        argv.append("--disable-workspace-trust")
     if cdp_port is not None:
         if type(cdp_port) is not int or not 1024 <= cdp_port <= 65535:
             raise ValueError("invalid DevTools port")
@@ -188,6 +196,9 @@ def main():
     parser.add_argument("--no-activate", action="store_true")
     parser.add_argument("--remote-debugging-port", type=int, default=None,
                         help="with --open on a new launch only: 127.0.0.1 DevTools port for UI automation")
+    parser.add_argument("--disable-workspace-trust", action="store_true",
+                        help="with --open on a new launch only: skip the workspace trust prompt; "
+                             "extensions in the private profile then run with full trust")
     parser.add_argument("--workspace", type=Path, default=Path.cwd())
     args = parser.parse_args()
     os.environ["WS_FG_ALLOWED"] = "1" if args.open and not args.no_activate else "0"
@@ -213,7 +224,8 @@ def main():
         def launch():
             if not args.workspace.is_dir():
                 raise RuntimeError("workspace must exist")
-            start_code(launch_argv(CODE_CLI, PROFILE, args.workspace, args.remote_debugging_port))
+            start_code(launch_argv(CODE_CLI, PROFILE, args.workspace, args.remote_debugging_port,
+                                   args.disable_workspace_trust))
 
         result = open_once(d, launch, foreground=not args.no_activate)
         print(json.dumps(result, ensure_ascii=False))

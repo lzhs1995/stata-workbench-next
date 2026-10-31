@@ -463,11 +463,24 @@ async function boundedDrain(state, workPromise, opts) {
  * ABSOLUTE / SHORT_INTERNAL / RECOVERY 共用：固定上限竞速。
  * work() 返回 promise；opts 见文件头。返回 {ok, cause, settlement, state, value?}。
  */
+// RECOVERY 的默认上限。soft Stop 的 L1 完整 restore 不传 timeoutMs，外层另有按
+// checkpoint 计算的竞速期限（stop_checkpoint_core.restoreTimeoutMs）。win32 上那个
+// 期限最高 300 s（job 405：160 estimates + 80 graphs 需约 190–225 s），60 s 的
+// guard 会先把它切断，所以 win32 放宽到同一上限。其他平台与其他策略不变。
+const RECOVERY_LIMIT_MS = 60000;
+const RECOVERY_LIMIT_MS_WIN32 = 300000;
+
+function defaultFixedLimitMs(policy, platform = process.platform) {
+  if (policy === POLICY.SHORT_INTERNAL) return 30000;
+  if (policy === POLICY.RECOVERY && platform === "win32") return RECOVERY_LIMIT_MS_WIN32;
+  return RECOVERY_LIMIT_MS;
+}
+
 async function guardFixed(policy, work, opts) {
   opts = opts || {};
   const state = opts.state || createState(policy, opts.meta);
   const limitMs = Number.isFinite(opts.timeoutMs) ? opts.timeoutMs
-    : (policy === POLICY.SHORT_INTERNAL ? 30000 : 60000);
+    : defaultFixedLimitMs(policy);
   const started = Date.now();
   const TO = Symbol("fixed-to");
   let tmr = null;
@@ -726,4 +739,5 @@ module.exports = {
   boundedCancel, boundedDrain,
   resolveTransportPromise, recordTransportProbe,
   guardFixed, guardProgress, mapOutcome, markPayloadDispatched, publicSummary,
+  defaultFixedLimitMs, RECOVERY_LIMIT_MS, RECOVERY_LIMIT_MS_WIN32,
 };

@@ -25,6 +25,119 @@ Preserves the Mac-accepted runtime; removes local maintenance credentials, adds 
 
 # Changelog
 
+## 0.1.3-rc.7.45 — cold start waits for Stata, Agent-path named graphs, soft Stop during the pre-run checkpoint
+
+Integrates PR #11, #12, #13 and #14 on top of rc.7.44.
+
+### Named graph exports on the Agent path (macOS and Windows)
+
+- On macOS an Agent request `do "<file>"` reaches the visible bridge with
+  `set more off` in front: the compatibility layer adds it (`ensurePaginationOff`).
+  Both single-do checks in the bridge matched only the whole request, so the
+  prefixed request was not treated as one do-file. The bridge skipped the human-file
+  graph preparation and `__codexResolveSingleDoFilePath` returned null. Named graph
+  exports were never activated, and `graph export …, name(g)` for a graph that was
+  not the current one failed with r(693) "could not find Graph window". rc.7.44
+  FULL45 hit this on taught_task5/7/8 over the Agent path (S8, S25, S28).
+- rc.7.73 skips leading `set more off` / `capture set more off` lines before both
+  checks and keeps them in front of the prepared code. Any other code before or
+  after the `do` line still does not count as a single do-file.
+- New test `scripts/test_single_do_pagination.js` runs the real bundle checks
+  against the real compatibility layer. It fails on the rc.7.44 bundle.
+- Windows (stage 211343, job 384): before the fix taught_task5 failed the same way (500,
+  r(693)); after it, 200 rc 0 with the named exports activated.
+
+### Wait for Stata itself on cold start
+
+- Windows rc.7.44 refused the first run after opening or reloading in 4 of 10 cold
+  starts (504 `PRE_RUN_SNAPSHOT_TIMEOUT`, or 500 after mcp-stata's pre-flight timed
+  out). mcp-stata 1.26.1 answers the MCP handshake after waiting at most 30 s for its
+  worker, while the worker still starts Stata twice: a pre-flight subprocess with a
+  hard 60 s limit, then the in-process `stata_setup.config`. rc.7.67 waited only for
+  the handshake, so the remaining start-up landed in the 60 s snapshot guard.
+- rc.7.72 waits, before any pre-run stage, until `list_sessions` reports the default
+  session as `running`, under its own bound (setup timeout + 120 s). A Stop during
+  the wait returns 409 `PRE_RUN_BACKEND_WARMUP_CANCELLED`; a timeout returns 504; a
+  failed session returns 500 and is stopped so the next run starts a fresh engine.
+  All refusals carry `payloadDispatched: false`. `/status.backendWarmup` records the
+  wait. Servers without `list_sessions` keep the rc.7.67 behaviour.
+- A soft Stop during that wait no longer escalates to a force reset. With no
+  dataset snapshot, soft Stop used to run a 5 s quiescence probe, which queued
+  behind Stata start-up and timed out. The force reset then hit its own 30 s
+  reconnect limit and left the instance recovery-required (Windows, 2026-10-30).
+  The probe is now skipped only while this run's warm-up is waiting, or was
+  cancelled before Stata reported `running`. In that window no payload has been
+  dispatched.
+- On Windows the force-reset reconnect now waits as long as a cold start may
+  take: setup budget + 120 s, the same formula the warm-up uses (300 s by
+  default; follows `STATA_SETUP_TIMEOUT`). After a force reset the reconnect is
+  a fresh cold start, and Windows cold connects took 34.6–42.5 s, so the old
+  30 s bound always ended in recovery-required. A successful reconnect is not
+  slowed down. macOS and other platforms keep 30 s.
+- On Windows the soft-Stop full restore of a large pre-run checkpoint gets more
+  time. The budget is 30 s + 400 ms per saved estimate + 3 s per saved graph, up
+  to 300 s. Before, every platform got 250 ms per item, capped at 45 s, and the
+  recovery guard around the restore stopped it at 60 s whatever the budget. In the
+  Windows integ smoke of 2026-10-31 (160 estimates, 80 graphs) the restore had
+  finished all 160 estimates but only 16 of the 80 graphs when the 45 s timer fired.
+  A complete restore needs about 190–225 s. The escalation then restored only the
+  dataset and globals, so the instance ended continuity-lost and the next run was
+  refused with 423. On win32 the recovery guard's default limit is now the same
+  300 s. The escalation ladder scales with the new budget and stays monotonic. A
+  restore that finishes is not slowed down, and a hung one still escalates when the
+  budget runs out; a Stop of a large session can therefore take up to about 5
+  minutes on Windows before it falls back. macOS and other platforms are unchanged.
+- The force-reset process cleanup treats an empty owned-PID list as a no-op
+  success. Before, the extension passed `-OwnedPidCsv ""` when no backend had
+  been started, the script refused with exit 2, and the reset recorded cleanup
+  `ok: false`. A non-empty list with no valid PID is still refused.
+- The runtime patch reads the pre-flight limit from `MCP_STATA_PREFLIGHT_TIMEOUT`
+  (seconds, default 180, clamped to 60–900) instead of the hard-coded 60 s.
+- rc.7.74: a Stop during the pre-run checkpoint no longer leaves the instance
+  continuity-lost. In FULL45 S40 (Mac, rc.7.44) the Stop broke the checkpoint's
+  graph-save loop, `graphs.txt` ended in a half-written name, and the restore
+  code refused with its `exit 459` sentinel. Soft Stop sent that sentinel to
+  Stata, which answers a top-level exit with `--Break-- r(1)`; the Stop returned
+  500 and only a force reset cleared the state, although the payload had never
+  been dispatched. Each pre-run snapshot now records whether its run passed the
+  last pre-run Stop fence. A refused restore is never sent to Stata: when the
+  payload was not admitted, Stata still holds the pre-run state and the Stop
+  completes; otherwise the restore fails as before, without dispatching.
+
+### Successful prepared do-file runs no longer report a failure
+
+- A prepared do-file run (human-file, and since #13 the Agent `do "<file>"` path)
+  is driven by `scripts/runfile_finalizer_core.js`, which ended with
+  `exit <rc>`. mcp-stata wraps multi-line code in `capture noisily { … }` and
+  then reads `scalar <rc> = _rc`; pystata runs that bundle with `include`.
+  `exit 0` ends the include before the scalar line, so mcp-stata found no return
+  code and answered `success: false` for every run that returned 0. The error
+  text was then taken from the last red line in the log. A nonzero exit is caught
+  by the `capture`, so failures were reported correctly.
+- The Workbench usually settled the run from its exact completion marker first,
+  which hid the problem. In rc.7.45 FULL45 S20 (Mac) the `task_done` notice won
+  twice: two Agent runs that had finished with RUN_RC 0 came back as HTTP 500,
+  with "gopen: graph export failed …" (a user ado's `display as error` before
+  `exit 0`) and "not found)" as the error.
+- The driver now ends with `if <rc> != 0 exit <rc>`; rc 0 falls through.
+  Measured in the mcp-stata bundle shape with pystata on StataNow MP: the old
+  driver lost the rc for all three rc-0 bodies (plain, red line then `exit 0`,
+  captured r(601)); the new driver returns 0, 0, 0, 603 and 111 for those three
+  and two failing bodies. The failing bodies keep the author's own error text.
+
+### Early Windows tooling accounted for, opt-in trust skip
+- [docs/LEGACY_WINDOWS.md](docs/LEGACY_WINDOWS.md) records, per file, what became
+  of the early Windows-only scripts and settings (about 60 files that were never
+  under version control): merged, replaced, not needed, or open.
+- `verified_workbench.py --open --disable-workspace-trust` (and
+  `acceptance.py open --disable-workspace-trust`) opens a new window without the
+  workspace trust prompt, as the early fast launcher always did. It is opt-in and
+  applies to new launches only; the default still shows the prompt. With it, every
+  extension in the private profile runs with full trust.
+- The other early startup tips needed no code: the private extensions folder
+  already loads only this extension, `--open` already reuses the running instance,
+  and it runs no patch verifier or smoke command at startup.
+
 ## 0.1.3-rc.7.44 — Stop in the pre-run window, probe timeouts under load
 
 - Windows Stop-cycle testing found that a soft Stop landing in the human-file

@@ -26,7 +26,8 @@ Derived from [tmonk/stata-workbench](https://github.com/tmonk/stata-workbench)
 
 | Version | State | Platform evidence |
 | --- | --- | --- |
-| [`v0.1.3-rc.7.44`](https://github.com/lzhs1995/stata-workbench-shared-session/releases/tag/v0.1.3-rc.7.44) | Latest pre-release (2026-10-30) | macOS and Windows, see [Platform status](#platform-status) |
+| [`v0.1.3-rc.7.45`](https://github.com/lzhs1995/stata-workbench-shared-session/releases/tag/v0.1.3-rc.7.45) | Latest pre-release (2026-10-31) | macOS and Windows, see [Platform status](#platform-status) |
+| [`v0.1.3-rc.7.44`](https://github.com/lzhs1995/stata-workbench-shared-session/releases/tag/v0.1.3-rc.7.44) | Earlier pre-release (2026-10-30) | macOS and Windows |
 | [`v0.1.3-rc.7.39-public.2`](https://github.com/lzhs1995/stata-workbench-shared-session/releases/tag/v0.1.3-rc.7.39-public.2) | Earlier pre-release (2026-09-09) | macOS only |
 
 This README describes `v0.1.3-rc.7.44`. Its measurements were taken on
@@ -36,7 +37,7 @@ each result names the version it was measured on.
 ### Documentation
 
 - [Cross-platform development and configuration](docs/CROSS_PLATFORM.md)
-- [Windows physical-machine runbook](docs/WINDOWS_ACCEPTANCE.md)
+- [Windows physical-machine runbook](docs/WINDOWS_ACCEPTANCE.md) and [early Windows tooling](docs/LEGACY_WINDOWS.md)
 - [Capability and evidence ledger](SYNC.md) and [acceptance scope](docs/ACCEPTANCE.md)
 - [macOS permissions](docs/MAC_PERMISSIONS.md) and [troubleshooting](docs/TROUBLESHOOTING.md)
 - [Shared execution and concurrency](docs/shared-execution-and-concurrency.md)
@@ -92,8 +93,8 @@ run on dev.6. Steps 1–8 were not repeated on dev.6–dev.8.
 
 ## Install
 
-Download `stata-workbench-shared-session-0.1.3-rc.7.44.vsix` and `SHA256SUMS`
-from the [v0.1.3-rc.7.44 release](https://github.com/lzhs1995/stata-workbench-shared-session/releases/tag/v0.1.3-rc.7.44)
+Download `stata-workbench-shared-session-0.1.3-rc.7.45.vsix` and `SHA256SUMS`
+from the [v0.1.3-rc.7.45 release](https://github.com/lzhs1995/stata-workbench-shared-session/releases/tag/v0.1.3-rc.7.45)
 into one folder. Check the VSIX against `SHA256SUMS` before installing (see
 [Verifying a download](#verifying-a-download)); the release notes list the same hash.
 
@@ -109,7 +110,7 @@ export STATA_WORKBENCH_PORT=17485
 "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code" \
   --user-data-dir "$STATA_WORKBENCH_PROFILE/user-data" \
   --extensions-dir "$STATA_WORKBENCH_PROFILE/extensions" \
-  --install-extension ./stata-workbench-shared-session-0.1.3-rc.7.44.vsix
+  --install-extension ./stata-workbench-shared-session-0.1.3-rc.7.45.vsix
 ```
 
 In that profile set `stataMcp.stataPath` to your licensed Stata executable.
@@ -123,7 +124,7 @@ $env:STATA_WORKBENCH_PROFILE = Join-Path $HOME '.stata-workbench-shared'
 $env:STATA_WORKBENCH_PORT = '17485'
 code --user-data-dir "$env:STATA_WORKBENCH_PROFILE\user-data" `
   --extensions-dir "$env:STATA_WORKBENCH_PROFILE\extensions" `
-  --install-extension .\stata-workbench-shared-session-0.1.3-rc.7.44.vsix
+  --install-extension .\stata-workbench-shared-session-0.1.3-rc.7.45.vsix
 ```
 
 `code` is VS Code's `bin\code.cmd`. If it is not on `PATH`, see
@@ -142,7 +143,7 @@ at the release tag, so the tools pin the same version as the installed VSIX:
 ```sh
 git clone https://github.com/lzhs1995/stata-workbench-shared-session.git
 cd stata-workbench-shared-session
-git checkout v0.1.3-rc.7.44
+git checkout v0.1.3-rc.7.45
 python3 -B tools/verified_workbench.py --doctor
 ```
 
@@ -288,7 +289,7 @@ shasum -a 256 -c SHA256SUMS --ignore-missing
 Windows PowerShell:
 
 ```powershell
-$f = 'stata-workbench-shared-session-0.1.3-rc.7.44.vsix'
+$f = 'stata-workbench-shared-session-0.1.3-rc.7.45.vsix'
 $expected = (Select-String -Path SHA256SUMS -SimpleMatch $f).Line.Split(' ')[0]
 (Get-FileHash $f -Algorithm SHA256).Hash.ToLower() -eq $expected
 ```
@@ -297,7 +298,7 @@ The last line must print `True`. Then check the VSIX contents against the
 release identity manifest, from a clone at the release tag:
 
 ```sh
-python3 tools/verify_release.py --vsix /path/to/stata-workbench-shared-session-0.1.3-rc.7.44.vsix
+python3 tools/verify_release.py --vsix /path/to/stata-workbench-shared-session-0.1.3-rc.7.45.vsix
 ```
 
 It prints JSON with `"verdict": "PASS"` when the package version and every
@@ -355,6 +356,7 @@ Dates are UTC. Full details are in the [changelog](CHANGELOG.md).
 
 | Tag | Date | Type | Scope |
 | --- | --- | --- | --- |
+| `v0.1.3-rc.7.45` | 2026-10-31 | Pre-release | macOS and Windows: the first run after a cold start waits until Stata itself is running; Stop during that wait stays a soft Stop; Windows force reset waits for a cold reconnect; named graph exports on the agent path (`set more off` prefix); Stop during the pre-run checkpoint never sends a refused restore |
 | `v0.1.3-rc.7.44` | 2026-10-30 | Pre-release | macOS and Windows: Windows adapters and operator kit, Stop in the pre-run window no longer runs the payload, read-only probe timeouts observed again, backend cold start outside pre-run budgets, default service kept on MCP 1.x, cancellation recheck after connect, Stop wording, Data Browser frame, saved-graph preview, recursive DO-reference scanner |
 | `v0.1.3-rc.7.39-public.2` | 2026-09-09 | Pre-release | macOS permission diagnostics (Mac tools 1.1.0); runtime unchanged |
 | `v0.1.3-rc.7.39-public.1` | 2026-09-07 | Pre-release | Public packaging of the Mac-accepted `0.1.3-rc.7.39`; local maintenance token removed |
