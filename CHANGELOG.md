@@ -1,3 +1,24 @@
+## Pre-run snapshot fix 2026-11-01 — no variables, some observations
+
+- A session with observations but no variables (`c(k)==0`, `c(N)>0`, for example after
+  `set obs 100000` and a failing next line) could no longer run anything. The pre-run
+  snapshot ran `set obs 1` on its copy, Stata refused with r(198) because `set obs` cannot
+  reduce observations, and every later submission was refused with HTTP 500
+  `EXEC_REJECTED` (`preRunStage:"snapshot"`, `payloadDispatched:false`) until
+  `/force-reset`. Agent submissions (`visible-bridge`) and Run File (`human-file`) both
+  use this snapshot.
+- The snapshot now adds the placeholder variable without `set obs` when `c(N)>0`, and
+  writes kind `obs` with the observation count to the ready file
+  (`ready<TAB>nonce<TAB>obs<TAB>N`). Restore runs `clear` and `set obs N`, so the session
+  returns to N observations and no variables. Before, a successful empty snapshot was
+  always restored with `clear`, so a session with 1 observation and no variables came
+  back with 0 observations.
+- `c(k)==0 & c(N)==0` and sessions with variables are unchanged.
+- Regression test `scripts/test_snapshot_k0_states.js` runs the generated snapshot and
+  restore code through a small interpreter for five states. Against the previous
+  `stop_checkpoint_core.js` it fails on both defects. Not yet run in Stata; see
+  `docs/next/LIVE-CHECKS.md` L14.
+
 ## 0.2.0-next.3 — bridge bearer authentication
 
 - Each window's bridge creates a random 32-byte token when it starts. After the bridge

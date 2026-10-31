@@ -454,8 +454,11 @@ try {
     assert.ok(emptyCode.includes("if c(k) == 0"));
     assert.ok(emptyCode.includes("generate byte __codex_empty_state = ."));
     const expectedReadyWrite =
-      `file write \`__codex_sfh' "ready" _tab "${emptySnapshot.checkpointNonce}" _tab "\`__codex_snapshot_kind'" _n`;
+      `file write \`__codex_sfh' "ready" _tab "${emptySnapshot.checkpointNonce}" _tab "\`__codex_snapshot_kind'"`;
     assert.ok(emptyCode.includes(expectedReadyWrite));
+    assert.ok(emptyCode.includes(
+      `if "\`__codex_snapshot_kind'" == "obs" file write \`__codex_sfh' _tab "\`__codex_snapshot_obs'"`));
+    assert.ok(emptyCode.includes("file write `__codex_sfh' _n"));
     const snapshotOnlyCode = checkpoint.snapshotCode(emptySnapshot);
     assert.ok(snapshotOnlyCode.includes("capture noisily break {"));
     assertCleanupScopes(snapshotOnlyCode, [
