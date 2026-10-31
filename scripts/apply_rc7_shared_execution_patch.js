@@ -3433,5 +3433,7 @@ text = require("./apply_next_agent_identity_patch").patchBundle(text, { finalize
 text = require("./apply_next_bridge_auth_patch").patchBundle(text, { finalize: false });
 // next E: accepted diff gate for agent Stata-source edits
 text = require("./apply_edit_proposal_patch").patchBundle(text, { finalize: false });
+// next 0.2.0-next.4: multi-session registry and per-session temp
+text = require("./apply_next_multi_session_patch").patchBundle(text, { finalize: false });
 fs.writeFileSync(target, text, "utf8");
 console.log(baseAlreadyApplied ? "RC7_SHARED_EXECUTION_UPDATED" : "RC7_SHARED_EXECUTION_APPLIED", target);

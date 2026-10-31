@@ -1618,6 +1618,12 @@ const AUXILIARY_MARKERS = [
     marker: "next patch 0.2.0-next.3: bridge bearer authentication",
   },
   {
+    key: "nextMultiSession",
+    label: "next 0.2.0-next.4: multi-session registry and per-session temp",
+    relativePath: path.join("dist", "extension.js"),
+    marker: "next patch 0.2.0-next.4: multi-session registry and per-session temp",
+  },
+  {
     key: "runtimePatchTargetsListenerLoop",
     label: "packaged mcp-stata patch targets the live listener loop",
     relativePath: path.join("scripts", "mcp_stata_runtime_patch.js"),
