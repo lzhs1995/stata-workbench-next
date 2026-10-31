@@ -1,3 +1,11 @@
+## Toolchain 2026-10-31
+
+Pin `minimatch` to 11.0.3 through `overrides`. It is used only by the packaging
+tool `@vscode/vsce` (a devDependency). Advisory GHSA-g3hv-75wg-m249 (minimatch
+before 11.0.1, moderate) was published on 2026-10-30 and made `npm audit` fail in
+CI. The VSIX does not contain minimatch. Packaging with the pin gives the same 319
+files; only the `overrides` entry in `extension/package.json` differs.
+
 ## Recovery guide 2026-10-17
 
 Document the cmux caller-signature, RTK terminal-descriptor and helper-permission
