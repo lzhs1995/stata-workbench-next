@@ -1,9 +1,10 @@
 # macOS / Windows capability and evidence ledger
 
-Candidate: `0.1.3-rc.7.44`, commit
-`21193f7b8aa58e21c20aaad80796d252e5ed0b0e`, bundle SHA256
-`2b9460b29e293148965b73faaa2eb68f77c3c93cc330d0ecfb8e3090038b2118`
-(earlier candidate dev.8: `a7922db`, bundle `ada946f6…30b2`).
+Candidate: `0.1.3-rc.7.45` (pre-release), commit
+`fa76d6db5f43a027b45d26e8fed8495a104c60b8`, bundle SHA256
+`f02ae62736459e89f9bbefc2cfaa55d73edb6e9ef1af662e17d778157d2ceacd`, VSIX
+`b371bc613e049b11fe0d281d4c41268d150f1987a9eb650ef32bee569448455d`
+(previous: `0.1.3-rc.7.44`, commit `21193f7`, bundle `2b9460b2…2118`).
 PR [#8](https://github.com/lzhs1995/stata-workbench-shared-session/pull/8) is
 stacked on draft #7 (`d63b230`). The working research profile remains dev.1.
 The evidence below separates versions and does not certify both desktops.
@@ -12,7 +13,7 @@ The evidence below separates versions and does not certify both desktops.
 | --- | --- | --- | --- | --- |
 | Execution identity, receipts, single POST | Python client and existing bridge | dev.3 Run File → client → Selection shared state passed; dev.5 cleanup client passed | dev.5 native fixtures 01–08 passed: editor Run File, agent shared run, Selection, two competing submissions, cleanup | Physical x64 machine, stage `20261028-184807`; steps 1–8 were not rerun on dev.6/dev.7 |
 | Backend cold start | `__codexEnsureBackendStarted` (rc.7.67) before every execution entry, outside pre-run stage budgets | dev.7 10.6 s and dev.8 14.1 s cold first runs after reload, rc 0 | dev.5 first run after reload failed (62 s cold start inside the 60 s snapshot budget, retained); dev.6 33.1 s, dev.7 25.4 s and dev.8 25.2 s passed; rc.7.44 backend 20.3 s after open and 19.5–24.8 s in three Reload Window cycles | Wait limit is max(180, `STATA_SETUP_TIMEOUT`) + 120 s; a cold start over 60 s is covered by the time-scaled `test_backend_cold_start.js` cases, not by a physical run |
-| Backend Stata warm-up | `__codexEnsureBackendWarm` (rc.7.72) after the connect wait: polls read-only `list_sessions` until the default session is `running`; runtime patch reads the pre-flight limit from `MCP_STATA_PREFLIGHT_TIMEOUT` (default 180 s) | offline tests only on this branch | rc.7.44 (without it): 4 of 10 cold starts refused before dispatch (504 snapshot timeout ×3, 500 after the 60 s pre-flight timed out ×1); live rerun pending on a new stage | `test_backend_warmup.js` (time-scaled; negative control fails on the rc.7.44 bundle) and `test_stata_preflight_timeout_patch.js` |
+| Backend Stata warm-up | `__codexEnsureBackendWarm` (rc.7.72) after the connect wait: polls read-only `list_sessions` until the default session is `running`; runtime patch reads the pre-flight limit from `MCP_STATA_PREFLIGHT_TIMEOUT` (default 180 s) | offline tests only on this branch | rc.7.44 (without it): 4 of 10 cold starts refused before dispatch (504 snapshot timeout ×3, 500 after the 60 s pre-flight timed out ×1); rc.7.45 published VSIX: cold first run rc 0 (backend 31.3 s) | `test_backend_warmup.js` (time-scaled; negative control fails on the rc.7.44 bundle) and `test_stata_preflight_timeout_patch.js` |
 | Default service resolution | `--with mcp<2` on the default `uvx` route; kit constraints pin `colorama`, `pywin32`, `tzdata` on win32 | 58/58 offline behavior checks of the 11 rewritten argument arrays | Kit install with the constraints passed (mcp 1.28.1, mcp-stata 1.26.1, colorama 0.4.6, pywin32 312, tzdata 2026.6). Default-route cold install from an empty cache passed twice with the dev.7 arguments (mcp 1.30.0, server import ok) | Same-day control without the constraint resolved mcp 2.x and failed: `No module named 'mcp.server.fastmcp'`. Attempts 1–2 were cut off by a slow network and a network change; their logs are retained |
 | Stable process lock | OS adapter | Actual dev.3 clients serialized on one backend | msvcrt byte-range lock | Windows CI child-process contention/crash tests passed |
 | Code/profile/listener identity | OS adapter | ps/lsof, exact private profile and loaded runtime checked | CIM/TCP census, exact argv/profile, creation time | Actual Windows OS tests passed; desktop/Stata pending |
@@ -30,6 +31,10 @@ The evidence below separates versions and does not certify both desktops.
 | VS Code launcher resolution | `workbench_platform.code_launch_command` | App CLI launches directly | `Code.exe` and user-local `code.cmd`/`.bat` shims resolve to an existing `Code.exe` and launch without a shell | Python portability tests pass; Windows physical launch still pending disk/Stata/profile prerequisites |
 | Early Windows startup tips | `verified_workbench.py --open`; opt-in `--disable-workspace-trust` (rc.7.45) | Same option, offline tests | Same option, offline tests; the 27-extension disable list is covered by the private extensions folder | Per-file status in [LEGACY_WINDOWS](docs/LEGACY_WINDOWS.md); live cold-open timing with and without the option not yet measured |
 | UU terminal control | `uuyc-cli` + remote PowerShell | CLI 1.0.0, online Windows device, terminal marker and read-only baseline verified on 2026-10-28 | Windows-side baseline JSON written without GUI clicks | Used for bootstrap only. Acceptance jobs now go through a signed LAN job agent kept in the handoff tooling, not shipped. C: had about 22 GB free on 2026-10-29; each stage installs its own profile, extension and service |
+
+Three-platform rc.7.45 CI, PR #15 merge ref `f2d7e2f` (tree `a858fd3b`, the same tree as `fa76d6d`):
+https://github.com/lzhs1995/stata-workbench-shared-session/actions/runs/41134229468
+(the later `main` push run failed only at `npm audit` on GHSA-g3hv-75wg-m249; pinned in #16)
 
 Three-platform rc.7.44 CI, commit `21193f7b8aa58e21c20aaad80796d252e5ed0b0e`:
 https://github.com/lzhs1995/stata-workbench-shared-session/actions/runs/40999915593

@@ -108,6 +108,15 @@ On 2026-10-30 `0.1.3-rc.7.44` passed, on Windows, a cold first run, graph previe
 Data Browser frame, a 32-run stress test, three Reload Window cold starts, five soft
 Stop cycles and Stop timed into the pre-run window; on Mac, the same stress test and
 the timed Stop for Run File and agent runs. These are bounded checks, not FULL45.
+On 2026-10-31 the published `0.1.3-rc.7.45` VSIX (`b371bc61…`) passed, on Windows, install
+and identity, a cold first run, agent do-files that return rc 0 (3/3, and 3/3 after a
+force reset), a failing body with its own rc 603, agent named graph exports, Stop during
+the pre-run checkpoint, and runbook step 10 checked after the fact (same backend and
+extension host after lock, unlock and a declined UAC prompt; the decline rests on the
+user's report). On Mac, 14 FULL45 scenarios were rerun on it: 8 passed every step, 4
+failed only harness evidence checks, S34 could not start and S41 failed as on rc.7.44.
+FULL45 itself ran on the build before the last fix (26 of 45 passed); six scenarios have
+no complete run on rc.7.45. See the README platform status and known limitations.
 New FULL45 coverage, native Mac bitmap recovery, Windows 10, Windows on ARM and
 source-built feature parity remain pending. The research instance and
 scientific acceptance are unchanged.

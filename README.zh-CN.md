@@ -26,8 +26,8 @@
 | [`v0.1.3-rc.7.44`](https://github.com/lzhs1995/stata-workbench-shared-session/releases/tag/v0.1.3-rc.7.44) | 更早的 pre-release（2026-10-30） | macOS 和 Windows |
 | [`v0.1.3-rc.7.39-public.2`](https://github.com/lzhs1995/stata-workbench-shared-session/releases/tag/v0.1.3-rc.7.39-public.2) | 更早的 pre-release（2026-09-09） | 仅 macOS |
 
-本文档对应 `v0.1.3-rc.7.44`。下面的测量来自 `0.1.3-rc.7.44` 本身和候选版
-`0.1.3-rc.7.44-dev.5` 到 `dev.8`，每条结果都写明是在哪个版本上测的。
+本文档对应 `v0.1.3-rc.7.45`。每条结果都写明是在哪个版本上测的；除非另行注明，rc.7.45 的结果
+都是在发布的 VSIX（`b371bc61…`）上测的。
 
 ### 文档
 
@@ -48,9 +48,9 @@
 
 | 平台 | 测试环境 | 结果 |
 | --- | --- | --- |
-| macOS，Apple Silicon | macOS 26.5 arm64、StataNow、VS Code 1.139.1、隔离 profile | rc.7.44：压测 32/32（20 次顺序 + 3 组各 4 个并发的 agent 运行，执行窗口不重叠，backend 不变）；把 Stop 定点到运行前窗口，Run File 和 agent 运行都通过（正文没有执行、backend 不变、没有 force reset）。dev.8：冷启动首次运行 14.1 秒，Data Browser 显示当前 frame，soft Stop 提示文案通过。更早的 `0.1.3-rc.7.39` 通过 FULL45（45 个场景 / 632 步） |
+| macOS，Apple Silicon | macOS 26.5 arm64、StataNow、VS Code 1.139.1、隔离 profile | 本发布文件已安装（身份核对通过）；冷启动首次运行 200、rc 0。在本文件上用物理按键重跑的 FULL45 场景：S2、S6、S10、S12、S16、S20、S26、S40 每一步都通过；S43 的 9 次 agent 选区运行都是 200、rc 0（唯一的失败是测试工具从错误的目录读输出）。在最后一次修复之前的构建上，S2、S6、S10、S16、S20、S26、S43 都因成功的 agent 运行被答成 HTTP 500 而失败。S9、S11、S33 每一步都执行了，只在测试工具的证据检查上失败（transport 回执；reopen 后恢复原前台应用）。S41 与 rc.7.44 一样失败（见已知限制）；S34 第一个按键没能发出（测试工具） |
 | macOS，Intel | 只有 CI（macOS 15 Intel） | 离线测试与打包；没有用授权 Stata 实跑 |
-| Windows 11 x64 | Windows 11 家庭中文版 24H2（build 26100）、Stata 18 MP、VS Code 1.121.0、Windows PowerShell 5.1、隔离 profile | rc.7.44：冷启动首次运行（backend 20.3 秒）、图形预览、Data Browser frame、压测 32/32、三次 Reload Window 冷启动（19.5–24.8 秒）、定点到运行前窗口的 Stop 通过。验收手册第 1–10 步在 dev.5–dev.6 上通过（见下）；dev.7 默认服务约束通过 |
+| Windows 11 x64 | Windows 11 家庭中文版 24H2（build 26100）、Stata 18 MP、VS Code 1.121.0、Windows PowerShell 5.1、隔离 profile | rc.7.45（发布的 VSIX）：安装与身份核对；冷启动首次运行（backend 31.3 秒）；agent `do "<文件>"` 带红字和 `exit 0` 3/3 返回 200、rc 0（上一个构建是 500），force reset 后紧接着跑 3/3 同样通过；失败的正文返回自己的 rc 603 和报错文字；agent 路径的命名图形导出（task5：22 个 PNG、28 个 SVG）；运行前 checkpoint 期间按 Stop 完整恢复。在最后一次修复之前的构建上，代码开始运行后按 soft Stop，118 秒恢复了 160 个估计结果和 80 个图，没有升级。验收手册第 10 步（发布的 VSIX，事后核验）：用户锁屏、解锁并在 UAC 弹窗点「否」之后，backend 和扩展宿主仍是原来的进程（reset generation 不变），agent 运行（200、rc 0）、打开图形和 Data Browser 都正常。锁屏在 Winlogon 通知里有记录；UAC 点「否」只有用户口述。 rc.7.44：压测 32/32，三次 Reload Window 冷启动 |
 | Windows，默认安装路线 | 同一台机器，空的 `uv` 缓存 | 带 `mcp<2` 时服务装好并能导入；不带时 `uv` 解析到 MCP 2.x，服务导入失败 |
 | Windows Server 2022 x64 | 只有 CI | 离线测试、真实文件锁、进程匹配、PowerShell 5.1/7 入口；没有授权 Stata |
 | Windows 10、Windows on ARM、Linux | — | 未验证 |
@@ -59,7 +59,8 @@
 
 来自 [Windows 验收手册](docs/WINDOWS_ACCEPTANCE.md)，只用合成数据。第 1–8 步在
 dev.5 上通过。第 9 步在 dev.5 上失败（backend 冷启动超出 60 秒的运行前预算），修复后
-在 dev.6 上通过。第 10 步在 dev.6 上做。第 1–8 步没有在 dev.6–dev.8 上重跑。
+在 dev.6 上通过。第 10 步在 dev.6 上做过，rc.7.45 上又做了一次（在发布的 VSIX 上事后核验：锁屏、解锁、UAC 点「否」之后 backend 和扩展宿主没变，agent 运行、打开图形和 Data Browser 都通过；UAC 点「否」只有用户口述）。第 1–8 步
+没有在 dev.6–dev.8 上重跑；rc.7.45 做的是平台状态里列出的运行。
 
 | 步骤 | 检查内容 |
 | --- | --- |
@@ -293,8 +294,8 @@ python3 tools/verify_release.py --vsix /path/to/stata-workbench-shared-session-0
 ## 已知限制
 
 - Windows 10、Windows on ARM 和 Linux 未验证。macOS Intel 只有 CI。
-- 上一次完整的授权测试集（FULL45）是在 `0.1.3-rc.7.39` 上通过的。`rc.7.44` 候选版做的是
-  [平台状态](#平台状态)里列出的有限检查，没有新跑 FULL45。
+- 授权完整测试集（FULL45）是在 rc.7.45 最后一次修复之前的构建上跑的。
+  那次 45 个场景通过 26 个。在发布的文件上重跑了 14 个：8 个每一步都通过，S9、S11、S33、S43 只在测试工具的检查上失败，S34 没能开始（测试工具），S41 失败（见下条）。S4、S8、S13、S23、S29、S44 在 rc.7.45 上没有完整运行。
 - 测试中的界面操作用的是 DevTools 自动化点击，不是人工按键。
 - Windows 锁屏/解锁和 UAC 这一步，依据是 Winlogon 事件和会话状态未变；没有实时录屏，取消 UAC
   的情况来自操作者本人的报告。
@@ -302,6 +303,10 @@ python3 tools/verify_release.py --vsix /path/to/stata-workbench-shared-session-0
 - Stata 自身的启动仍算在运行前快照的 60 秒预算里，只有服务连接有单独的预算。在繁忙的 Windows
   机器上，打开或重载后的第一次运行在 6 次冷启动中被拒绝过 1 次（`PRE_RUN_SNAPSHOT_TIMEOUT`，
   代码没有发出），下一次运行通过。
+- 多行选区（Run Selection 或 agent 选区）里，顶层的 `exit` 会结束整个选区。它前面的
+  代码已经执行，但请求按失败返回（HTTP 500），报错文字取最后一行红字。do 文件里或
+  program 里的 `exit` 不受影响。rc.7.44 就有这个问题。
+- FULL45 S41 里，手动 Run Selection 停在 Stata 报错上（r(603)，路径用到了选区上方定义的 global），结果报成失败，但没有带返回码（「execution released without verified completion evidence」）。rc.7.44 也是这样。本版没有进一步排查。
 - 一个 backend 一次只跑一个请求。多个实例需要各自的 profile 和端口；没有通用的多实例调度。
 - Data Browser 的 frame 名在浏览器打开时更新，之后再 `frame change` 不会跟着变。面板较窄时
   FILTER 一行文字会重叠。
@@ -316,7 +321,7 @@ python3 tools/verify_release.py --vsix /path/to/stata-workbench-shared-session-0
 
 | Tag | 日期 | 类型 | 范围 |
 | --- | --- | --- | --- |
-| `v0.1.3-rc.7.45` | 2026-10-31 | Pre-release | macOS 和 Windows：冷启动后的第一次运行等 Stata 本身变成 running；等待期间按 Stop 仍是 soft Stop；Windows 上 force reset 等得起冷重连；agent 路径上的命名图形导出（`set more off` 前缀）；运行前 checkpoint 期间按 Stop 不再发送被拒的恢复命令 |
+| `v0.1.3-rc.7.45` | 2026-10-31 | Pre-release | macOS 和 Windows：冷启动后的第一次运行等 Stata 本身变成 running；等待期间按 Stop 仍是 soft Stop；Windows 上 force reset 等得起冷重连；agent 路径上的命名图形导出（`set more off` 前缀）；运行前 checkpoint 期间按 Stop 不再发送被拒的恢复命令；Windows 上 soft Stop 能恢复大会话；成功的 do 文件运行不再被报成失败 |
 | `v0.1.3-rc.7.44` | 2026-10-30 | Pre-release | macOS 和 Windows：Windows 适配层与验收工具、运行前窗口里的 Stop 不再让正文执行、只读探测超时会重新观测、backend 冷启动不计入运行前预算、默认服务保持在 MCP 1.x、连上后再查取消、Stop 提示文案、Data Browser frame、已保存图形预览、递归 DO 引用扫描 |
 | `v0.1.3-rc.7.39-public.2` | 2026-09-09 | Pre-release | macOS 权限诊断（Mac tools 1.1.0）；运行时不变 |
 | `v0.1.3-rc.7.39-public.1` | 2026-09-07 | Pre-release | 对 Mac 验收过的 `0.1.3-rc.7.39` 做公开打包；去掉本机维护 token |

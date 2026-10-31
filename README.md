@@ -30,9 +30,9 @@ Derived from [tmonk/stata-workbench](https://github.com/tmonk/stata-workbench)
 | [`v0.1.3-rc.7.44`](https://github.com/lzhs1995/stata-workbench-shared-session/releases/tag/v0.1.3-rc.7.44) | Earlier pre-release (2026-10-30) | macOS and Windows |
 | [`v0.1.3-rc.7.39-public.2`](https://github.com/lzhs1995/stata-workbench-shared-session/releases/tag/v0.1.3-rc.7.39-public.2) | Earlier pre-release (2026-09-09) | macOS only |
 
-This README describes `v0.1.3-rc.7.44`. Its measurements were taken on
-`0.1.3-rc.7.44` itself and on the candidates `0.1.3-rc.7.44-dev.5` to `dev.8`;
-each result names the version it was measured on.
+This README describes `v0.1.3-rc.7.45`. Each result names the version it was
+measured on; rc.7.45 results are on the published VSIX (`b371bc61…`) unless a
+line says otherwise.
 
 ### Documentation
 
@@ -54,9 +54,9 @@ endings of bundled documents.
 
 | Platform | Tested environment | Result |
 | --- | --- | --- |
-| macOS, Apple Silicon | macOS 26.5 arm64, StataNow, VS Code 1.139.1, isolated profile | rc.7.44: stress run 32/32 (20 sequential and 3 groups of 4 concurrent agent runs, no overlapping executions, same backend); Stop timed into the pre-run window passed for Run File and agent runs (payload not run, same backend, no force reset). dev.8: cold-start first run 14.1 s, Data Browser shows the active frame, soft Stop message passed. Earlier `0.1.3-rc.7.39` passed FULL45 (45 scenarios / 632 steps) |
+| macOS, Apple Silicon | macOS 26.5 arm64, StataNow, VS Code 1.139.1, isolated profile | This release file installed (identity check passed); cold first run 200 rc 0. FULL45 scenarios rerun on this file with physical keys: S2, S6, S10, S12, S16, S20, S26 and S40 passed every step, and S43 ran 9/9 agent selections with 200 rc 0 (its one failure is the harness reading outputs from the wrong folder). On the build before the last fix, S2, S6, S10, S16, S20, S26 and S43 had failed because successful agent runs were answered as HTTP 500. S9, S11 and S33 ran every step and failed only harness evidence checks (transport receipts; restoring the previous app after a reopen). S41 failed as on rc.7.44 (see Known limitations); S34 could not send its first key (harness) |
 | macOS, Intel | CI only (macOS 15 Intel) | Offline tests and packaging; no licensed Stata run |
-| Windows 11 x64 | Windows 11 Home 24H2 (build 26100), Stata 18 MP, VS Code 1.121.0, Windows PowerShell 5.1, isolated profile | rc.7.44: cold-start first run (backend 20.3 s), graph preview, Data Browser frame, stress run 32/32, three Reload Window cold starts (19.5–24.8 s), and a Stop timed into the pre-run window passed. Runbook steps 1–10 passed on dev.5–dev.6 (see below); dev.7 default service constraint passed |
+| Windows 11 x64 | Windows 11 Home 24H2 (build 26100), Stata 18 MP, VS Code 1.121.0, Windows PowerShell 5.1, isolated profile | rc.7.45 (published VSIX): install and identity check, cold-start first run (backend 31.3 s), agent `do "<file>"` with a red line and `exit 0` 3/3 returned 200 rc 0 (500 on the earlier build), the same right after a force reset 3/3, a failing body returned its own rc 603 and error text, agent named graph exports (task5: 22 PNG, 28 SVG), Stop during the pre-run checkpoint recovered fully. On the build before the last fix, a soft Stop after the code had started restored 160 estimates and 80 graphs in 118 s without escalation. Runbook step 10 on the published VSIX, checked after the fact: after the user locked and unlocked the screen and declined a UAC prompt, the same backend and extension host were running (reset generation unchanged), and an agent run (200 rc 0), graph Open and Data Browser worked. The lock shows in Winlogon notifications; the UAC decline rests on the user's report. rc.7.44: stress run 32/32 and three Reload Window cold starts |
 | Windows, default install route | Same machine, empty `uv` cache | With `mcp<2` the service installed and imported; without it `uv` resolved MCP 2.x and the server failed to import |
 | Windows Server 2022 x64 | CI only | Offline tests, real file locks, process matching, PowerShell 5.1/7 entry points; no licensed Stata |
 | Windows 10, Windows on ARM, Linux | — | Not verified |
@@ -66,7 +66,8 @@ endings of bundled documents.
 From the [Windows runbook](docs/WINDOWS_ACCEPTANCE.md), synthetic data only.
 Steps 1–8 passed on dev.5. Step 9 failed on dev.5 (the backend cold start
 exceeded a 60 s pre-run budget) and passed on dev.6 after the fix. Step 10 was
-run on dev.6. Steps 1–8 were not repeated on dev.6–dev.8.
+run on dev.6 and again on rc.7.45 (checked after the fact on the published VSIX: same backend and extension host after lock, unlock and a declined UAC prompt; agent run, graph Open and Data Browser passed; the UAC decline rests on the user's report). Steps 1–8 were not
+repeated on dev.6–dev.8; rc.7.45 covered the runs listed in Platform status.
 
 | Step | Check |
 | --- | --- |
@@ -326,9 +327,11 @@ More cases: [Troubleshooting](docs/TROUBLESHOOTING.md) and the
 ## Known limitations
 
 - Windows 10, Windows on ARM and Linux are not verified. macOS Intel has CI only.
-- The last full licensed suite (FULL45) passed on `0.1.3-rc.7.39`. The
-  `rc.7.44` candidates have the bounded checks listed in
-  [Platform status](#platform-status), not a new FULL45 run.
+- The licensed full suite (FULL45) was run on rc.7.45 before the last fix.
+  26 of 45 scenarios passed there. On the published file 14 scenarios were rerun: 8
+  passed every step, S9, S11, S33 and S43 failed only harness checks, S34 could not
+  start (harness) and S41 failed (below). S4, S8, S13, S23, S29 and S44 have no complete
+  run on rc.7.45.
 - UI checks in the test runs used automated DevTools clicks, not human keypresses.
 - The Windows lock/unlock and UAC step is supported by Winlogon events and
   unchanged session state. There was no live screen recording, and the UAC
@@ -339,6 +342,15 @@ More cases: [Troubleshooting](docs/TROUBLESHOOTING.md) and the
   only the service connection has its own budget. On a busy Windows machine the
   first run after opening or reloading was refused once in 6 cold starts
   (`PRE_RUN_SNAPSHOT_TIMEOUT`, code not sent); the next run passed.
+- A top-level `exit` inside a multi-line selection (Run Selection, or an agent
+  selection) ends the whole selection. The code before it has run, but the
+  request is answered as a failure (HTTP 500), and the error text is the last
+  red line. `exit` inside a do-file or a program is not affected. This already
+  happened in rc.7.44.
+- In FULL45 S41, a manual Run Selection that stopped at a Stata error (r(603), a path
+  built from a global defined above the selection) was reported as failed, but without
+  its return code ("execution released without verified completion evidence"). rc.7.44
+  behaves the same. Not investigated further in this release.
 - One backend runs one request at a time. Several instances need separate
   profiles and ports; there is no general multi-instance scheduler.
 - The Data Browser frame name updates when the browser opens, not after a later
@@ -356,7 +368,7 @@ Dates are UTC. Full details are in the [changelog](CHANGELOG.md).
 
 | Tag | Date | Type | Scope |
 | --- | --- | --- | --- |
-| `v0.1.3-rc.7.45` | 2026-10-31 | Pre-release | macOS and Windows: the first run after a cold start waits until Stata itself is running; Stop during that wait stays a soft Stop; Windows force reset waits for a cold reconnect; named graph exports on the agent path (`set more off` prefix); Stop during the pre-run checkpoint never sends a refused restore |
+| `v0.1.3-rc.7.45` | 2026-10-31 | Pre-release | macOS and Windows: the first run after a cold start waits until Stata itself is running; Stop during that wait stays a soft Stop; Windows force reset waits for a cold reconnect; named graph exports on the agent path (`set more off` prefix); Stop during the pre-run checkpoint never sends a refused restore; Windows soft-Stop restore of large sessions; successful do-file runs no longer reported as failures |
 | `v0.1.3-rc.7.44` | 2026-10-30 | Pre-release | macOS and Windows: Windows adapters and operator kit, Stop in the pre-run window no longer runs the payload, read-only probe timeouts observed again, backend cold start outside pre-run budgets, default service kept on MCP 1.x, cancellation recheck after connect, Stop wording, Data Browser frame, saved-graph preview, recursive DO-reference scanner |
 | `v0.1.3-rc.7.39-public.2` | 2026-09-09 | Pre-release | macOS permission diagnostics (Mac tools 1.1.0); runtime unchanged |
 | `v0.1.3-rc.7.39-public.1` | 2026-09-07 | Pre-release | Public packaging of the Mac-accepted `0.1.3-rc.7.39`; local maintenance token removed |
