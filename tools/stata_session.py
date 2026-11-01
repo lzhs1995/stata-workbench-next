@@ -367,7 +367,7 @@ class Sessions:
                     return {"verdict": "CLOSED", "name": name, "signalled": pids, "removedRegistryFiles": removed,
                             "removedTmpFiles": self._remove_dead_tmp(name)}
             self.sleep(0.5)
-        return {"verdict": "CLOSE_PENDING", "name": name, "signalled": pids,
+        return {"verdict": "CLOSE_PENDING", "name": name, "signalled": pids, "removedTmpFiles": self._remove_dead_tmp(name),
                 "note": "normal quit was requested; VS Code may be waiting on an unsaved-changes prompt; nothing was force-killed"}
 
     def _remove_dead_records(self, name):
@@ -395,7 +395,8 @@ class Sessions:
 
     def _remove_dead_tmp(self, name):
         """注册表原子写的残留 .<sessionId>.<pid>.<hex>.tmp（next_bridge_auth_core.js writeRecord）。
-        只删写入进程确定已死、且内容属于本会话或还是空文件的；别的会话的留给它自己的 close。"""
+        写入进程确定已死，这个文件就不会再被改名成记录，读注册表的一方也只读 *.json，所以按写入 pid 判定：
+        确定已死才删（未知、活着、pid 被复用都不删），不看内容。publish() 写的记录里没有 sessionName，按内容认不出归属。"""
         removed = []
         try:
             candidates = sorted((self.root / "sessions").glob(".*.tmp"))
@@ -404,13 +405,6 @@ class Sessions:
         for path in candidates:
             m = TMP_RE.fullmatch(path.name)
             if not m or self.alive(int(m.group("pid"))) is not False:
-                continue
-            try:
-                text = path.read_text(encoding="utf-8")
-                record = json.loads(text) if text.strip() else None
-            except (OSError, ValueError):
-                continue
-            if record is not None and (not isinstance(record, dict) or record.get("sessionName") != name):
                 continue
             try:
                 path.unlink()

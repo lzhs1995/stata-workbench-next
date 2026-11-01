@@ -121,6 +121,64 @@ class WindowsBindingTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "truncated"):
             win.parse_tcp_owner_table(v4[:30], 2)
 
+    def test_tcp_owner_table_retries_on_small_buffer_and_asks_for_listeners_only(self):
+        import ctypes
+        import struct
+        table = struct.pack("<I", 1) + struct.pack("<II", 2, 0) + struct.pack(">H", 17601) + b"\0\0" + struct.pack("<III", 0, 0, 4242)
+        calls = []
+
+        def api_with(codes):
+            def get(buffer, size_ref, order, family, table_class, reserved):
+                calls.append((ctypes.sizeof(buffer), family, table_class))
+                code = codes.pop(0)
+                if code == 122:
+                    size_ref._obj.value = len(table)
+                elif code == 0:
+                    ctypes.memmove(buffer, table, len(table))
+                return code
+            return type("Api", (), {"GetExtendedTcpTable": staticmethod(get)})()
+
+        self.assertEqual(win.tcp_owner_table(2, api=api_with([122, 0])), [(17601, 4242)])
+        self.assertEqual(calls, [(4, 2, 3), (len(table), 2, 3)], "first call sizes the buffer; table class 3 = LISTENER")
+        with self.assertRaises(OSError):
+            win.tcp_owner_table(23, api=api_with([5]))
+        with self.assertRaisesRegex(RuntimeError, "kept growing"):
+            win.tcp_owner_table(2, api=api_with([122] * 8))
+
+    def test_listener_pids_reads_ipv4_and_ipv6_tables(self):
+        seen = []
+        tables = {2: [(17601, 10), (8787, 99)], 23: [(17601, 11), (17601, 10)]}
+        self.assertEqual(win.listener_pids(17601, table=lambda f: seen.append(f) or tables[f]), [10, 11])
+        self.assertEqual(seen, [2, 23])
+
+    def test_process_rows_with_only_invalid_pids_never_falls_back_to_all_processes(self):
+        with patch.object(win, "powershell_json", side_effect=AssertionError("must not query")):
+            self.assertEqual(win.process_rows(pids=[-1, 0, "7"]), [])
+
+    def test_one_observation_starts_one_powershell_and_rereads_listeners(self):
+        now = [100.0]
+        with patch.object(win, "code_executable", side_effect=lambda c: Path(c)):
+            adapter = win.WindowsWorkbench(Path(self.profile), self.exe, 17601, clock=lambda: now[0])
+        queries, listeners = [], [[101]]
+        foreign = {"pid": 300, "ppid": 1, "createdAt": "2026-10-27T01:00:05Z", "executable": r"C:\Python\python.exe"}
+        rows = lambda names=(), pids=(): queries.append(tuple(pids)) or [self.root, self.owner, foreign]
+        with patch.object(win, "process_rows", side_effect=rows), \
+                patch.object(win, "listener_pids", side_effect=lambda port: listeners[0]):
+            adapter.code_instances()
+            adapter.bridge_owner()
+            self.assertEqual(queries, [(101,)], "code_instances and bridge_owner share one process query")
+            listeners[0] = [300]
+            self.assertFalse(adapter.bridge_owner()["launcher"])
+            self.assertEqual(queries[-1], (300,), "a new listener pid forces a fresh query")
+            now[0] += 2.5
+            adapter.bridge_owner()
+            self.assertEqual(len(queries), 3, "rows older than the cache window are re-read")
+        with patch.object(win, "code_executable", side_effect=lambda c: Path(c)):
+            no_port = win.WindowsWorkbench(Path(self.profile), self.exe, 0)
+        with patch.object(win, "process_rows", return_value=[]), \
+                patch.object(win, "listener_pids", side_effect=AssertionError("port 0 has no listener lookup")):
+            self.assertEqual(no_port.code_instances(), [])
+
     def test_process_query_is_filtered_and_quoted(self):
         scripts = []
         with patch.object(win, "powershell_json", side_effect=lambda s: scripts.append(s) or None):

@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import time
 
 from workbench_platform import code_executable
 
@@ -70,15 +71,23 @@ def parse_tcp_owner_table(buffer, family):
     return rows
 
 
-def tcp_owner_table(family):
+TCP_TABLE_OWNER_PID_LISTENER = 3
+
+
+def iphlpapi():
     api = ctypes.WinDLL("iphlpapi", use_last_error=True)
     api.GetExtendedTcpTable.argtypes = [ctypes.c_void_p, ctypes.POINTER(wintypes.DWORD), wintypes.BOOL,
                                         wintypes.ULONG, ctypes.c_int, wintypes.ULONG]
     api.GetExtendedTcpTable.restype = wintypes.DWORD
+    return api
+
+
+def tcp_owner_table(family, api=None):
+    api = api or iphlpapi()
     size = wintypes.DWORD(0)
     for _ in range(8):  # 表在两次调用之间可能变大：按返回的新大小重试
         buffer = ctypes.create_string_buffer(max(size.value, 4))
-        code = api.GetExtendedTcpTable(buffer, ctypes.byref(size), False, family, 3, 0)  # 3 = OWNER_PID_LISTENER
+        code = api.GetExtendedTcpTable(buffer, ctypes.byref(size), False, family, TCP_TABLE_OWNER_PID_LISTENER, 0)
         if code == 0:
             return parse_tcp_owner_table(buffer.raw, family)
         if code != 122:  # ERROR_INSUFFICIENT_BUFFER
@@ -86,10 +95,12 @@ def tcp_owner_table(family):
     raise RuntimeError("TCP owner table kept growing")
 
 
-def listener_pids(port):
-    if sys.platform != "win32":
-        raise RuntimeError("Windows listener query requires Windows")
-    return sorted({pid for family in (2, 23) for p, pid in tcp_owner_table(family) if p == port})
+def listener_pids(port, table=None):
+    if table is None:
+        if sys.platform != "win32":
+            raise RuntimeError("Windows listener query requires Windows")
+        table = tcp_owner_table
+    return sorted({pid for family in (2, 23) for p, pid in table(family) if p == port})  # IPv4 和 IPv6 都查
 
 
 def split_command_line(command):
@@ -171,20 +182,37 @@ def bind_listener(rows, listener_pids, launchers):
 
 
 class WindowsWorkbench:
-    def __init__(self, profile, code, port):
+    # observe() 先 code_instances() 再 bridge_owner()：同一次检查只起一个 PowerShell（冷启动 2–7 s）。
+    # 监听 pid 每次都用 IP Helper 现读；只有进程行在 ROW_CACHE_SECONDS 内复用，且必须已含这些 pid。
+    ROW_CACHE_SECONDS = 2.0
+
+    def __init__(self, profile, code, port, clock=time.monotonic):
         self.profile, self.code, self.port = Path(profile), code_executable(code), port
+        self.clock, self._rows_cache = clock, None
+
+    def _valid_port(self):
+        return type(self.port) is int and 1024 <= self.port <= 65535
+
+    def _process_rows(self, pids):
+        cached = self._rows_cache
+        if cached and self.clock() - cached[0] <= self.ROW_CACHE_SECONDS and set(pids) <= cached[1]:
+            return cached[2]
+        # 扩展宿主和它到主进程的父链都是 Code.exe；另取监听 pid 本身，外来监听者照样认得出来、照样拒绝。
+        rows = process_rows(names=[ntpath.basename(str(self.code))], pids=pids)
+        self._rows_cache = (self.clock(), set(pids), rows)
+        return rows
 
     def code_instances(self):
-        return matching_launchers(process_rows(names=[ntpath.basename(str(self.code))]), self.code, self.profile)
+        pids = listener_pids(self.port) if self._valid_port() else []
+        return matching_launchers(self._process_rows(pids), self.code, self.profile)
 
     def bridge_owner(self):
-        if type(self.port) is not int or not 1024 <= self.port <= 65535:
+        if not self._valid_port():
             raise ValueError("invalid bridge port")
         pids = listener_pids(self.port)
         if not pids:
             return None
-        # 扩展宿主和它到主进程的父链都是 Code.exe；另取监听 pid 本身，外来监听者照样认得出来、照样拒绝。
-        rows = process_rows(names=[ntpath.basename(str(self.code))], pids=pids)
+        rows = self._process_rows(pids)
         return bind_listener(rows, pids, matching_launchers(rows, self.code, self.profile))
 
     def screen_locked(self):

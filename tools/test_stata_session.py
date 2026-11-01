@@ -302,24 +302,44 @@ class ListCloseTests(Base):
         self.assertTrue((self.root / "sessions/live-p1.json").exists())
         self.assertTrue((self.root / "sessions/dead-p2.json").exists())
 
-    def test_close_removes_only_dead_tmp_files_of_this_session(self):
-        s = self.sessions(alive=lambda pid: pid != 18392)
-        s.open("p1", runtime_source=self.source, launch=False)
+    def test_close_removes_tmp_files_whose_writer_is_dead_on_every_close_path(self):
         d = self.root / "sessions"
-        d.mkdir(parents=True, exist_ok=True)
+        publish = json.dumps({"schema": entry.SESSION_SCHEMA, "sessionId": "s20261101T022743Z-5cf656f6", "port": 17601,
+                              "token": "t" * 43, "extensionHostPid": 18392})  # publish() 的形状：没有 sessionName
         files = {
-            "mine": (".s20261101T022743Z-5cf656f6.18392.407142d0.tmp", json.dumps({"sessionName": "p1"})),
-            "empty": (".s20261101T022744Z-aaaaaaaa.18392.0000ffff.tmp", ""),
-            "other": (".s20261101T022745Z-bbbbbbbb.18392.11112222.tmp", json.dumps({"sessionName": "p2"})),
-            "live": (".s20261101T022746Z-cccccccc.702.33334444.tmp", json.dumps({"sessionName": "p1"})),
+            "publish": (".s20261101T022743Z-5cf656f6.18392.407142d0.tmp", publish),
+            "update": (".s20261101T022744Z-aaaaaaaa.18392.0000ffff.tmp", json.dumps({"sessionName": "p1"})),
+            "empty": (".s20261101T022745Z-bbbbbbbb.18392.11112222.tmp", ""),
             "torn": (".s20261101T022747Z-dddddddd.18392.55556666.tmp", '{"sessionName": "p1"'),
+            "live": (".s20261101T022746Z-cccccccc.702.33334444.tmp", publish),
+            "unknown": (".s20261101T022748Z-eeeeeeee.703.77778888.tmp", publish),
+            "other_tmp": (".settings.json.18392.tmp", ""),
         }
-        for fname, text in files.values():
-            (d / fname).write_text(text, encoding="utf-8")
-        removed = sorted(Path(p).name for p in s.close("p1")["removedTmpFiles"])
-        self.assertEqual(removed, sorted([files["mine"][0], files["empty"][0]]))
-        for key in ("other", "live", "torn"):
-            self.assertTrue((d / files[key][0]).exists(), key)
+        dead = {"publish", "update", "empty", "torn"}
+        alive = lambda pid: {18392: False, 702: True, 703: None}.get(pid, True)
+
+        def seed():
+            d.mkdir(parents=True, exist_ok=True)
+            for fname, text in files.values():
+                (d / fname).write_text(text, encoding="utf-8")
+
+        def check(result):
+            self.assertEqual(sorted(Path(p).name for p in result["removedTmpFiles"]), sorted(files[k][0] for k in dead))
+            for key in set(files) - dead:
+                self.assertTrue((d / files[key][0]).exists(), key)
+
+        s = self.sessions(alive=alive)
+        s.open("p1", runtime_source=self.source, launch=False)
+        seed()
+        check(s.close("p1"))                     # NOT_RUNNING
+        seed()
+        clock = iter(range(0, 1000, 5))
+        pending = self.sessions(alive=alive, clock=lambda: next(clock))
+        self.running["p1"] = [601]
+        pending.kill = Mock()
+        r = pending.close("p1", wait=20)         # CLOSE_PENDING：F-win 收尾时 w1、w2 实际走的路径
+        self.assertEqual(r["verdict"], "CLOSE_PENDING")
+        check(r)
 
     def test_real_kill_is_a_normal_quit(self):
         with patch.object(ss.os, "kill") as k:
