@@ -106,6 +106,11 @@ const REQUIRED_MARKERS = [
     marker: "next patch F1: explicit bridge busy notice names agent connectivity",
   },
   {
+    key: "guardCancelRestoresCheckpoint",
+    label: "guard cancel of a dispatched payload restores the pre-run checkpoint",
+    marker: "next patch F2: guard cancel restores the pre-run checkpoint",
+  },
+  {
     key: "sharedExecutionLifecycle",
     label: "all visible entry points share the rc.7 execution lifecycle",
     marker: "codex patch rc.7: shared execution lifecycle",

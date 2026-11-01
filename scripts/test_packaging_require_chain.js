@@ -27,6 +27,7 @@ const SCRIPTS_DIR = __dirname;
 const REQUIRED_CLOSURE = [
   "prerun_stage_guard.js", "execution_guard.js",
   "restore_readiness_core.js", "edit_proposal_core.js", "next_bridge_auth_core.js",
+  "guard_cancel_restore_core.js",
 ];
 const DARWIN_CLOSURE = [
   "darwin_compat_adapter.js", "stata_source_compat_core.js", "stata_do_references.js",
