@@ -60,6 +60,45 @@ function forceResetTail(source) {
   return source.slice(start, end);
 }
 
+// The shipped recovery-smoke helper the KILL path now calls.
+async function runKillSmoke(source, options) {
+  const segment = cut(source, "globalThis.__codexRunRecoverySmoke=",
+    "globalThis.__codexGuardCancelRef=require(", "smoke helper");
+  let request = null;
+  const httpStub = {
+    request(opts, onResponse) {
+      request = opts;
+      const res = {
+        statusCode: options.smokeStatus || 200,
+        on(event, fn) {
+          if (event === "data") fn(JSON.stringify({ ok: options.smokeOk === true, markerVerified: options.smokeOk === true }));
+          if (event === "end") fn();
+          return res;
+        },
+      };
+      return {
+        setTimeout() {}, on() { return this; },
+        end() { setImmediate(() => onResponse(res)); },
+        destroy() {},
+      };
+    },
+  };
+  const g = {
+    __codexBridgePort: options.port === undefined ? 17601 : options.port,
+    __codexRecoveryState: { required: options.recoveryRequired === true, generation: 1, token: "rtok" },
+    __codexNextAuthRef: { headers: () => ({ authorization: "Bearer tok" }) },
+  };
+  const control = { ensureRecoveryState: (s) => s || { required: false } };
+  const sandbox = {
+    globalThis: g, __codexControl: control, RI: () => {}, console,
+    require: (name) => (name === "node:http" ? httpStub : require(name)),
+  };
+  vm.runInNewContext(segment, sandbox);
+  assert.equal(typeof g.__codexRunRecoverySmoke, "function", "smoke helper installed");
+  const result = await g.__codexRunRecoverySmoke("panic-kill-command");
+  return { result, request, g };
+}
+
 // Stand-in for the pre-wrapper soft Stop, reproducing the live snapshotless
 // escalation: it throws, and its catch tail runs the automatic force reset,
 // which reconnects and (the defect) reopens READY and clears recovery.
@@ -319,6 +358,35 @@ async function runSoftStop(source, options) {
     assert.equal(userReset.pending, 0, "an explicit user force reset does clear it");
     assert.deepEqual(userReset.resets, ["force-reset-complete"],
       "and it does reset restore readiness");
+  }
+
+  // --- F-2: one confirmed KILL clears the fence ---------------------------
+  // The status-bar "Stata: KILL" item force-resets and now also runs the
+  // recovery smoke, because POST /recovery-smoke alone is a no-op while
+  // continuityLost is set and there is no UI path that runs it.
+  {
+    const r = await runKillSmoke(bundle, { recoveryRequired: true, smokeStatus: 200, smokeOk: true });
+    assert.equal(r.result.ok, true, "the KILL path runs the smoke and it passes");
+    assert.equal(r.request.path, "/recovery-smoke", "it drives the existing route");
+    assert.equal(r.request.method, "POST");
+    assert.equal(r.request.headers.authorization, "Bearer tok", "with the bearer token the user lacks");
+    assert.equal(r.g.__codexLastAutoRecoverySmoke.ok, true);
+    assert.equal(r.g.__codexLastAutoRecoverySmoke.reason, "panic-kill-command");
+
+    // A failed smoke must say so, not claim READY.
+    const bad = await runKillSmoke(bundle, { recoveryRequired: true, smokeStatus: 500, smokeOk: false });
+    assert.equal(bad.result.ok, false, "a failed smoke is reported as failed");
+    assert.equal(bad.g.__codexLastAutoRecoverySmoke.ok, false);
+
+    // Nothing to do when recovery is not required.
+    const none = await runKillSmoke(bundle, { recoveryRequired: false });
+    assert.equal(none.result.skipped, "recovery not required");
+    assert.equal(none.request, null, "no request is made");
+
+    // No bridge port: fail soft, never throw into the command handler.
+    const noPort = await runKillSmoke(bundle, { recoveryRequired: true, port: null });
+    assert.equal(noPort.result.ok, false);
+    assert.equal(noPort.result.skipped, "no bridge port");
   }
 
   // --- negative control: main 06e3886c / 4854832b bundle --------------------
