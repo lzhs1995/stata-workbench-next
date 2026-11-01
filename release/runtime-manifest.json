@@ -343,7 +343,7 @@
       "bytes": 4729
     },
     "tools/verified_workbench.py": {
-      "sha256": "71df2ca727d777f99d774001bbee2b0f9beee2d7cbd5cb7713b092f62bf2479d",
+      "sha256": "f038a911d071f88cd1ed9eb17215557b0527b9fa09a8ee45edddf87949d1cc26",
       "bytes": 20125
     },
     "tools/workbench_platform.py": {
