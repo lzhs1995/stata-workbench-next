@@ -119,6 +119,20 @@ class OpenTests(Base):
             s.open("p1", runtime_source=self.source, launch=False)
         self.assertIn("// comment", (u / "settings.json").read_text())
 
+    def test_new_profile_turns_off_vscode_and_extension_updates_but_keeps_explicit_values(self):
+        s = self.sessions()
+        s.open("fresh", runtime_source=self.source, launch=False)
+        fresh = json.loads((self.root / "profiles/fresh/user-data/User/settings.json").read_text())
+        self.assertEqual((fresh["update.mode"], fresh["extensions.autoUpdate"], fresh["extensions.autoCheckUpdates"]),
+                         ("none", False, False))
+        u = self.root / "profiles/kept/user-data/User"
+        u.mkdir(parents=True)
+        (u / "settings.json").write_text(json.dumps({"update.mode": "manual", "extensions.autoUpdate": "onlyEnabledExtensions"}))
+        s.open("kept", runtime_source=self.source, launch=False)
+        kept = json.loads((u / "settings.json").read_text())
+        self.assertEqual((kept["update.mode"], kept["extensions.autoUpdate"], kept["extensions.autoCheckUpdates"]),
+                         ("manual", "onlyEnabledExtensions", False))
+
     def test_sixth_session_is_refused_before_anything_is_created(self):
         s = self.sessions()
         for n in range(1, 6):
@@ -287,6 +301,46 @@ class ListCloseTests(Base):
         self.assertEqual([Path(p).name for p in removed], ["dead-p1.json"])
         self.assertTrue((self.root / "sessions/live-p1.json").exists())
         self.assertTrue((self.root / "sessions/dead-p2.json").exists())
+
+    def test_close_removes_tmp_files_whose_writer_is_dead_on_every_close_path(self):
+        d = self.root / "sessions"
+        publish = json.dumps({"schema": entry.SESSION_SCHEMA, "sessionId": "s20261101T022743Z-5cf656f6", "port": 17601,
+                              "token": "t" * 43, "extensionHostPid": 18392})  # publish() 的形状：没有 sessionName
+        files = {
+            "publish": (".s20261101T022743Z-5cf656f6.18392.407142d0.tmp", publish),
+            "update": (".s20261101T022744Z-aaaaaaaa.18392.0000ffff.tmp", json.dumps({"sessionName": "p1"})),
+            "empty": (".s20261101T022745Z-bbbbbbbb.18392.11112222.tmp", ""),
+            "torn": (".s20261101T022747Z-dddddddd.18392.55556666.tmp", '{"sessionName": "p1"'),
+            "other_session": (".s20261101T022749Z-ffffffff.4001.9999aaaa.tmp", json.dumps({"sessionName": "p2"})),
+            "live": (".s20261101T022746Z-cccccccc.702.33334444.tmp", publish),
+            "unknown": (".s20261101T022748Z-eeeeeeee.703.77778888.tmp", publish),
+            "other_tmp": (".settings.json.18392.tmp", ""),
+        }
+        dead = {"publish", "update", "empty", "torn", "other_session"}  # 不分会话：关 p1 也删 p2 的死写入者 tmp
+        alive = lambda pid: {18392: False, 4001: False, 702: True, 703: None}.get(pid, True)
+
+        def seed():
+            d.mkdir(parents=True, exist_ok=True)
+            for fname, text in files.values():
+                (d / fname).write_text(text, encoding="utf-8")
+
+        def check(result):
+            self.assertEqual(sorted(Path(p).name for p in result["removedTmpFiles"]), sorted(files[k][0] for k in dead))
+            for key in set(files) - dead:
+                self.assertTrue((d / files[key][0]).exists(), key)
+
+        s = self.sessions(alive=alive)
+        s.open("p1", runtime_source=self.source, launch=False)
+        seed()
+        check(s.close("p1"))                     # NOT_RUNNING
+        seed()
+        clock = iter(range(0, 1000, 5))
+        pending = self.sessions(alive=alive, clock=lambda: next(clock))
+        self.running["p1"] = [601]
+        pending.kill = Mock()
+        r = pending.close("p1", wait=20)         # CLOSE_PENDING：F-win 收尾时 w1、w2 实际走的路径
+        self.assertEqual(r["verdict"], "CLOSE_PENDING")
+        check(r)
 
     def test_real_kill_is_a_normal_quit(self):
         with patch.object(ss.os, "kill") as k:

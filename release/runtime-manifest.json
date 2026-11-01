@@ -327,8 +327,8 @@
       "bytes": 1829
     },
     "tools/windows_workbench.py": {
-      "sha256": "d962450e215e3e6140ef1f0d118e5e32da244f698a9adb9a40c38156f985e93d",
-      "bytes": 11938
+      "sha256": "70f03550cb0cef941295994ef71ab51af159bff214a3222cf485417b85d14aca",
+      "bytes": 15742
     },
     "tools/mac_workbench.py": {
       "sha256": "9eec67a12eee087574f2d53b4492f315004c055da506d0a8eac1906494474c7f",
