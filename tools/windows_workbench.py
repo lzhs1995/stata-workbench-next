@@ -31,12 +31,65 @@ def powershell_json(script):
     return json.loads(text) if text else None
 
 
-def process_rows():
-    rows = powershell_json("@(Get-CimInstance Win32_Process | Select-Object "
+def process_filter(names=(), pids=()):
+    """WQL 条件。多会话时全量 Win32_Process（约 470 个进程）要 9.5 s，只取需要的那几个。"""
+    terms = ["Name='" + str(n).replace("\\", "\\\\").replace("'", "\\'") + "'" for n in names]
+    terms += ["ProcessId=" + str(int(p)) for p in pids if type(p) is int and p > 0]
+    return " OR ".join(terms)
+
+
+def process_rows(names=(), pids=()):
+    where = process_filter(names, pids)
+    if (names or pids) and not where:
+        return []
+    # PowerShell 单引号字符串不做 $ 和反引号展开；里面的单引号写成两个。
+    query = "Get-CimInstance Win32_Process" + (" -Filter '" + where.replace("'", "''") + "'" if where else "")
+    rows = powershell_json("@(" + query + " | Select-Object "
         "@{n='pid';e={[int]$_.ProcessId}},@{n='ppid';e={[int]$_.ParentProcessId}},"
         "@{n='executable';e={$_.ExecutablePath}},@{n='commandLine';e={$_.CommandLine}},"
         "@{n='createdAt';e={if ($_.CreationDate) {$_.CreationDate.ToUniversalTime().ToString('o')} else {$null}}}) | ConvertTo-Json -Depth 4 -Compress")
-    return rows if isinstance(rows, list) else [rows]
+    return [] if rows is None else rows if isinstance(rows, list) else [rows]
+
+
+# GetExtendedTcpTable(TCP_TABLE_OWNER_PID_LISTENER)。Get-NetTCPConnection 在三会话、提交过 28 GB 时单次 18.3 s，
+# 加上 PowerShell 冷启动就过 20 s 超时；IP Helper 直接读内核表，不经 WMI，也不受系统语言影响。
+_TCP_ROW = {2: (24, 8, 20), 23: (56, 20, 52)}  # 地址族: (行字节数, 本地端口偏移, 所属 pid 偏移)
+
+
+def parse_tcp_owner_table(buffer, family):
+    """解析 MIB_TCPTABLE_OWNER_PID / MIB_TCP6TABLE_OWNER_PID：返回 [(本地端口, pid)]。"""
+    size, port_at, pid_at = _TCP_ROW[family]
+    count = int.from_bytes(buffer[0:4], "little")
+    if 4 + count * size > len(buffer):
+        raise RuntimeError("TCP owner table is truncated")
+    rows = []
+    for i in range(count):
+        row = buffer[4 + i * size: 4 + (i + 1) * size]
+        port = int.from_bytes(row[port_at:port_at + 2], "big")  # dwLocalPort 低 2 字节是网络字节序
+        rows.append((port, int.from_bytes(row[pid_at:pid_at + 4], "little")))
+    return rows
+
+
+def tcp_owner_table(family):
+    api = ctypes.WinDLL("iphlpapi", use_last_error=True)
+    api.GetExtendedTcpTable.argtypes = [ctypes.c_void_p, ctypes.POINTER(wintypes.DWORD), wintypes.BOOL,
+                                        wintypes.ULONG, ctypes.c_int, wintypes.ULONG]
+    api.GetExtendedTcpTable.restype = wintypes.DWORD
+    size = wintypes.DWORD(0)
+    for _ in range(8):  # 表在两次调用之间可能变大：按返回的新大小重试
+        buffer = ctypes.create_string_buffer(max(size.value, 4))
+        code = api.GetExtendedTcpTable(buffer, ctypes.byref(size), False, family, 3, 0)  # 3 = OWNER_PID_LISTENER
+        if code == 0:
+            return parse_tcp_owner_table(buffer.raw, family)
+        if code != 122:  # ERROR_INSUFFICIENT_BUFFER
+            raise OSError(code, "GetExtendedTcpTable failed")
+    raise RuntimeError("TCP owner table kept growing")
+
+
+def listener_pids(port):
+    if sys.platform != "win32":
+        raise RuntimeError("Windows listener query requires Windows")
+    return sorted({pid for family in (2, 23) for p, pid in tcp_owner_table(family) if p == port})
 
 
 def split_command_line(command):
@@ -122,16 +175,17 @@ class WindowsWorkbench:
         self.profile, self.code, self.port = Path(profile), code_executable(code), port
 
     def code_instances(self):
-        return matching_launchers(process_rows(), self.code, self.profile)
+        return matching_launchers(process_rows(names=[ntpath.basename(str(self.code))]), self.code, self.profile)
 
     def bridge_owner(self):
         if type(self.port) is not int or not 1024 <= self.port <= 65535:
             raise ValueError("invalid bridge port")
-        pids = powershell_json("@(Get-NetTCPConnection -State Listen | Where-Object LocalPort -eq "
-            + str(self.port) + " | Select-Object -ExpandProperty OwningProcess -Unique) | ConvertTo-Json -Compress")
-        rows = process_rows()
-        return bind_listener(rows, [] if pids is None else pids if isinstance(pids, list) else [pids],
-                             matching_launchers(rows, self.code, self.profile))
+        pids = listener_pids(self.port)
+        if not pids:
+            return None
+        # 扩展宿主和它到主进程的父链都是 Code.exe；另取监听 pid 本身，外来监听者照样认得出来、照样拒绝。
+        rows = process_rows(names=[ntpath.basename(str(self.code))], pids=pids)
+        return bind_listener(rows, pids, matching_launchers(rows, self.code, self.profile))
 
     def screen_locked(self):
         return not automation_granted(permission_status())

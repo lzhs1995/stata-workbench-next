@@ -119,6 +119,20 @@ class OpenTests(Base):
             s.open("p1", runtime_source=self.source, launch=False)
         self.assertIn("// comment", (u / "settings.json").read_text())
 
+    def test_new_profile_turns_off_vscode_and_extension_updates_but_keeps_explicit_values(self):
+        s = self.sessions()
+        s.open("fresh", runtime_source=self.source, launch=False)
+        fresh = json.loads((self.root / "profiles/fresh/user-data/User/settings.json").read_text())
+        self.assertEqual((fresh["update.mode"], fresh["extensions.autoUpdate"], fresh["extensions.autoCheckUpdates"]),
+                         ("none", False, False))
+        u = self.root / "profiles/kept/user-data/User"
+        u.mkdir(parents=True)
+        (u / "settings.json").write_text(json.dumps({"update.mode": "manual", "extensions.autoUpdate": "onlyEnabledExtensions"}))
+        s.open("kept", runtime_source=self.source, launch=False)
+        kept = json.loads((u / "settings.json").read_text())
+        self.assertEqual((kept["update.mode"], kept["extensions.autoUpdate"], kept["extensions.autoCheckUpdates"]),
+                         ("manual", "onlyEnabledExtensions", False))
+
     def test_sixth_session_is_refused_before_anything_is_created(self):
         s = self.sessions()
         for n in range(1, 6):
@@ -287,6 +301,25 @@ class ListCloseTests(Base):
         self.assertEqual([Path(p).name for p in removed], ["dead-p1.json"])
         self.assertTrue((self.root / "sessions/live-p1.json").exists())
         self.assertTrue((self.root / "sessions/dead-p2.json").exists())
+
+    def test_close_removes_only_dead_tmp_files_of_this_session(self):
+        s = self.sessions(alive=lambda pid: pid != 18392)
+        s.open("p1", runtime_source=self.source, launch=False)
+        d = self.root / "sessions"
+        d.mkdir(parents=True, exist_ok=True)
+        files = {
+            "mine": (".s20261101T022743Z-5cf656f6.18392.407142d0.tmp", json.dumps({"sessionName": "p1"})),
+            "empty": (".s20261101T022744Z-aaaaaaaa.18392.0000ffff.tmp", ""),
+            "other": (".s20261101T022745Z-bbbbbbbb.18392.11112222.tmp", json.dumps({"sessionName": "p2"})),
+            "live": (".s20261101T022746Z-cccccccc.702.33334444.tmp", json.dumps({"sessionName": "p1"})),
+            "torn": (".s20261101T022747Z-dddddddd.18392.55556666.tmp", '{"sessionName": "p1"'),
+        }
+        for fname, text in files.values():
+            (d / fname).write_text(text, encoding="utf-8")
+        removed = sorted(Path(p).name for p in s.close("p1")["removedTmpFiles"])
+        self.assertEqual(removed, sorted([files["mine"][0], files["empty"][0]]))
+        for key in ("other", "live", "torn"):
+            self.assertTrue((d / files[key][0]).exists(), key)
 
     def test_real_kill_is_a_normal_quit(self):
         with patch.object(ss.os, "kill") as k:

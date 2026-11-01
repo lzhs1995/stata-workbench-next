@@ -109,6 +109,52 @@ class WindowsBindingTests(unittest.TestCase):
         adapter = win.WindowsWorkbench(Path.home() / "absent-test-profile", self.exe, port)
         self.assertIsNone(adapter.bridge_owner())
 
+    def test_tcp_owner_tables_parse_listener_port_and_pid(self):
+        import struct
+        v4 = struct.pack("<I", 2) + struct.pack("<II", 2, 0) + struct.pack(">H", 17601) + b"\0\0" + struct.pack("<III", 0, 0, 4242) \
+            + struct.pack("<II", 2, 0x0100007F) + struct.pack(">H", 8787) + b"\0\0" + struct.pack("<III", 0, 0, 30584)
+        self.assertEqual(win.parse_tcp_owner_table(v4 + b"\0" * 16, 2), [(17601, 4242), (8787, 30584)])
+        v6 = struct.pack("<I", 1) + b"\0" * 16 + struct.pack("<I", 0) + struct.pack(">H", 17602) + b"\0\0" \
+            + b"\0" * 24 + struct.pack("<II", 2, 777)
+        self.assertEqual(win.parse_tcp_owner_table(v6, 23), [(17602, 777)])
+        self.assertEqual(win.parse_tcp_owner_table(struct.pack("<I", 0), 2), [])
+        with self.assertRaisesRegex(RuntimeError, "truncated"):
+            win.parse_tcp_owner_table(v4[:30], 2)
+
+    def test_process_query_is_filtered_and_quoted(self):
+        scripts = []
+        with patch.object(win, "powershell_json", side_effect=lambda s: scripts.append(s) or None):
+            self.assertEqual(win.process_rows(names=["Code.exe"], pids=[4242, -1, "7"]), [])
+            self.assertEqual(win.process_rows(names=["it's$x`.exe"]), [])
+            win.process_rows()
+        self.assertIn("-Filter 'Name=''Code.exe'' OR ProcessId=4242'", scripts[0])
+        self.assertNotIn("ProcessId=-1", scripts[0])
+        self.assertIn("-Filter 'Name=''it\\''s$x`.exe'''", scripts[1])
+        self.assertNotIn("-Filter", scripts[2], "no filter means every process, as before")
+
+    def test_bridge_owner_uses_listener_table_and_still_refuses_foreign_or_ambiguous_owners(self):
+        profile = Path(self.profile)
+        with patch.object(win, "code_executable", side_effect=lambda c: Path(c)):
+            adapter = win.WindowsWorkbench(profile, self.exe, 17601)
+        foreign = {"pid": 300, "ppid": 1, "createdAt": "2026-10-27T01:00:05Z", "executable": r"C:\Python\python.exe"}
+        queries = []
+        rows = lambda names=(), pids=(): queries.append((tuple(names), tuple(pids))) or [self.root, self.owner, foreign]
+        with patch.object(win, "process_rows", side_effect=rows), \
+                patch.object(win, "matching_launchers", side_effect=lambda r, c, p: [x | {"launcher": True} for x in r if x["pid"] == 100]):
+            with patch.object(win, "listener_pids", return_value=[101]):
+                self.assertEqual(adapter.bridge_owner()["launcherPid"], 100)
+            self.assertEqual(queries[-1], (("Code.exe",), (101,)))
+            with patch.object(win, "listener_pids", return_value=[300]):
+                self.assertFalse(adapter.bridge_owner()["launcher"])
+            with patch.object(win, "listener_pids", return_value=[101, 300]), self.assertRaisesRegex(RuntimeError, "not unique"):
+                adapter.bridge_owner()
+            count = len(queries)
+            with patch.object(win, "listener_pids", return_value=[]):
+                self.assertIsNone(adapter.bridge_owner())
+            self.assertEqual(len(queries), count, "no listener: no process query")
+        with patch.object(win, "listener_pids", side_effect=OSError(5, "denied")), self.assertRaises(OSError):
+            adapter.bridge_owner()
+
     def test_empty_powershell_output_is_none_not_a_parse_error(self):
         done = subprocess.CompletedProcess([], 0, stdout="\ufeff\r\n", stderr="")
         with patch.object(win.sys, "platform", "win32"), patch.dict(os.environ, {"SystemRoot": "C:\\Windows"}), \
