@@ -101,6 +101,11 @@ const REQUIRED_MARKERS = [
     marker: "codex patch rc.7.10.31: bridge retries transient EADDRINUSE",
   },
   {
+    key: "explicitBridgeBusyNotice",
+    label: "explicit bridge busy port explains agent connectivity failure",
+    marker: "next patch F1: explicit bridge busy notice names agent connectivity",
+  },
+  {
     key: "sharedExecutionLifecycle",
     label: "all visible entry points share the rc.7 execution lifecycle",
     marker: "codex patch rc.7: shared execution lifecycle",

@@ -6,12 +6,6 @@ const path = require("path");
 
 const target = path.join(__dirname, "..", "dist", "extension.js");
 let text = fs.readFileSync(target, "utf8");
-// Keep the terminal busy-port wording replayable when the retry patch marker already exists.
-text = text.replace(
-  'Stata bridge port "+__port+" failed: "+(__e&&__e.message||__e)+" (set stataMcp.visibleBridgePort)"',
-  'Stata bridge port "+__port+" is unavailable; the agent cannot connect: "+(__e&&__e.message||__e)+" (set stataMcp.visibleBridgePort)"'
-);
-
 function replaceOnce(name, before, after) {
   const first = text.indexOf(before);
   const second = first < 0 ? -1 : text.indexOf(before, first + before.length);
@@ -1250,7 +1244,7 @@ if (!text.includes("codex patch rc.7.10.31: bridge retries transient EADDRINUSE"
   replaceOnce(
     "retry transient bridge port ownership races",
     'try{globalThis.__codexBridgePort=__port;}catch{}__srv.on("error",function(__e){try{RI("[Codex bridge] listen error on "+__port+": "+(__e&&__e.message||__e));}catch{}try{iA.window.showErrorMessage("Stata bridge port "+__port+" failed: "+(__e&&__e.message||__e)+" (set stataMcp.visibleBridgePort)");}catch{}});__srv.listen(__port,"127.0.0.1",()=>{try{globalThis.__codexBridgePort=__port;}catch{}RI(`Codex visible bridge listening on 127.0.0.1:${__port}`);});',
-    'let __codexBridgeBinder=__codexBridgeRebind.createBridgeBinder({server:__srv,port:__port,host:"127.0.0.1",onState:__state=>{globalThis.__codexBridgeBindState=__state},onRetry:({delayMs,state:__state})=>{try{RI("[Codex bridge] port "+__port+" busy; retry "+__state.retriesScheduled+" after "+delayMs+"ms")}catch{}},onBound:__state=>{try{globalThis.__codexBridgePort=__port;}catch{}RI(`Codex visible bridge listening on 127.0.0.1:${__port} after ${__state.attempts} attempt(s)`);},onTerminalError:__e=>{try{RI("[Codex bridge] listen error on "+__port+": "+(__e&&__e.message||__e));}catch{}try{iA.window.showErrorMessage("Stata bridge port "+__port+" is unavailable; the agent cannot connect: "+(__e&&__e.message||__e)+" (set stataMcp.visibleBridgePort)");}catch{}}});globalThis.__codexBridgeBinder=__codexBridgeBinder;__codexBridgeBinder.start();/* codex patch rc.7.10.31: bridge retries transient EADDRINUSE */'
+    'let __codexBridgeBinder=__codexBridgeRebind.createBridgeBinder({server:__srv,port:__port,host:"127.0.0.1",onState:__state=>{globalThis.__codexBridgeBindState=__state},onRetry:({delayMs,state:__state})=>{try{RI("[Codex bridge] port "+__port+" busy; retry "+__state.retriesScheduled+" after "+delayMs+"ms")}catch{}},onBound:__state=>{try{globalThis.__codexBridgePort=__port;}catch{}RI(`Codex visible bridge listening on 127.0.0.1:${__port} after ${__state.attempts} attempt(s)`);},onTerminalError:__e=>{try{RI("[Codex bridge] listen error on "+__port+": "+(__e&&__e.message||__e));}catch{}try{iA.window.showErrorMessage("Stata bridge port "+__port+" failed: "+(__e&&__e.message||__e)+" (set stataMcp.visibleBridgePort)");}catch{}}});globalThis.__codexBridgeBinder=__codexBridgeBinder;__codexBridgeBinder.start();/* codex patch rc.7.10.31: bridge retries transient EADDRINUSE */'
   );
   replaceOnce(
     "dispose bridge bind retry timer",
@@ -3444,5 +3438,6 @@ text = require("./apply_edit_proposal_patch").patchBundle(text, { finalize: fals
 text = require("./apply_next_multi_session_patch").patchBundle(text, { finalize: false });
 // next F0: checkpoint restore owns READY
 text = require("./apply_restore_readiness_patch").patchBundle(text, { finalize: false });
+text = require("./apply_next_bridge_busy_notice_patch").patchBundle(text, { finalize: false });
 fs.writeFileSync(target, text, "utf8");
 console.log(baseAlreadyApplied ? "RC7_SHARED_EXECUTION_UPDATED" : "RC7_SHARED_EXECUTION_APPLIED", target);
