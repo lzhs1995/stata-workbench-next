@@ -12,12 +12,14 @@ const SESSION_EVENT_INIT = 'createEditGate({onEvent:__event=>{try{let __session=
 function patchBundle(source, options = {}) {
   if (source.includes(MARKER)) {
     if (source.includes(OLD_EVENT_INIT)) source = source.replace(OLD_EVENT_INIT, SESSION_EVENT_INIT);
+    source = source.replaceAll("iA.Uri.file(__record.path)", "YQ.Uri.file(__record.path)")
+      .replaceAll("iA.Uri.file(__tmp)", "YQ.Uri.file(__tmp)");
     if (!source.includes(SESSION_EVENT_INIT)) throw new Error("edit gate event stream wiring missing");
     return options.finalize === false ? source : fingerprint.finalize(source).text;
   }
   const initNeedle = 'let __send=(o,s,n)=>{o.writeHead(s,{"content-type":"application/json"}),o.end(JSON.stringify(n))};';
   if (source.indexOf(initNeedle) < 0 || source.indexOf(initNeedle, source.indexOf(initNeedle) + initNeedle.length) >= 0) throw new Error("edit gate send anchor missing or ambiguous");
-  const init = `${MARKER}${REQUIRE_ANCHOR}.createEditGate${SESSION_EVENT_INIT.slice("createEditGate".length)};globalThis.__codexReviewEdit=async(__record,__content)=>{let __tmp=require("node:path").join(require("node:os").tmpdir(),"stata-workbench-edit-"+String(__record.id)+".do");try{require("node:fs").writeFileSync(__tmp,__content,{mode:384});let __current=await iA.workspace.openTextDocument(iA.Uri.file(__record.path)),__proposed=await iA.workspace.openTextDocument(iA.Uri.file(__tmp));await iA.commands.executeCommand("vscode.diff",__current.uri,__proposed.uri,"Stata edit proposal: "+__record.agentName);let __choice=await iA.window.showInformationMessage("Agent proposes an edit to "+__record.path,"Accept","Reject");return{status:__choice==="Accept"?"accepted":"rejected",reasonCode:__choice==="Accept"?"USER_ACCEPTED":"USER_REJECTED"}}finally{try{require("node\u003afs").unlinkSync(__tmp)}catch{}}};`;
+  const init = `${MARKER}${REQUIRE_ANCHOR}.createEditGate${SESSION_EVENT_INIT.slice("createEditGate".length)};globalThis.__codexReviewEdit=async(__record,__content)=>{let __tmp=require("node:path").join(require("node:os").tmpdir(),"stata-workbench-edit-"+String(__record.id)+".do");try{require("node:fs").writeFileSync(__tmp,__content,{mode:384});let __current=await iA.workspace.openTextDocument(YQ.Uri.file(__record.path)),__proposed=await iA.workspace.openTextDocument(YQ.Uri.file(__tmp));await iA.commands.executeCommand("vscode.diff",__current.uri,__proposed.uri,"Stata edit proposal: "+__record.agentName);let __choice=await iA.window.showInformationMessage("Agent proposes an edit to "+__record.path,"Accept","Reject");return{status:__choice==="Accept"?"accepted":"rejected",reasonCode:__choice==="Accept"?"USER_ACCEPTED":"USER_REJECTED"}}finally{try{require("node\u003afs").unlinkSync(__tmp)}catch{}}};`;
   source = source.replace(initNeedle, `${initNeedle}${init}`);
   const routeNeedle = 'if(__req.method!=="POST"||__req.url!=="/run-command"){__res.writeHead(404);__res.end("not found");return}';
   if (source.indexOf(routeNeedle) < 0 || source.indexOf(routeNeedle, source.indexOf(routeNeedle) + routeNeedle.length) >= 0) throw new Error("edit gate route anchor missing or ambiguous");

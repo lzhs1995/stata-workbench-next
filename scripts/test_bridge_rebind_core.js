@@ -110,6 +110,7 @@ function main() {
   assert.ok(bundle.includes("bridge_rebind_core.js"));
   assert.ok(bundle.includes("bridgeBind:globalThis.__codexBridgeBindState||null"));
   assert.ok(bundle.includes("__codexBridgeBinder.start()"));
+  assert.ok(bundle.includes("the agent cannot connect"), "busy explicit bridge port explains agent connectivity failure");
   console.log("BRIDGE_REBIND_CORE_PASS");
 }
 

@@ -12,6 +12,10 @@ A VS Code extension that lets a person and AI agents use one visible Stata
 session in turn. Both send code to the same backend, so data, macros, scalars,
 results and graphs are shared.
 
+## Next multi-session launcher
+
+`python3 -B tools/stata_session.py open <name>` keeps VS Code's Workspace Trust prompt by default. A new workspace needs one Trust click before the bridge starts. Use `--disable-workspace-trust` only for a workspace you created for this session and fully trust. Each named session has an independent profile, port, runtime, and private lock, so named sessions can run concurrently.
+
 ## What it is
 
 - In the editor: **Run Current File**, **Run Selection/Current Line**, the

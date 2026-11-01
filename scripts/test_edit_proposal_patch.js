@@ -18,6 +18,8 @@ assert.ok(sealed.includes(patch.MARKER));
 assert.ok(sealed.includes("/propose-edit"));
 assert.ok(sealed.includes("edit_proposal_core.js"));
 assert.ok(sealed.includes("__codexNextSessionRef"));
+assert.ok(sealed.includes("YQ.Uri.file(__record.path)"), "review uses the real vscode Uri binding");
+assert.equal(sealed.includes("iA.Uri.file(__record.path)"), false, "wrapped vscode module is not used for Uri construction");
 assert.equal(sealed.includes("eventLogPath"), false);
 assert.equal(fingerprint.finalize(sealed).text.includes(patch.MARKER), true);
 const sendAnchor = 'let __send=(o,s,n)=>{o.writeHead(s,{"content-type":"application/json"}),o.end(JSON.stringify(n))};';

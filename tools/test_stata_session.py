@@ -220,6 +220,21 @@ class LaunchTests(Base):
         self.assertTrue(kw["creationflags"] & 0x8 and kw["creationflags"] & 0x200)
         self.assertFalse(any(c[:2] == ["/bin/cp", "-c"] for c in self.calls), "no APFS clone on Windows")
 
+    def test_workspace_trust_is_opt_in_on_both_platforms(self):
+        s = self.sessions()
+        s.open("trusted", runtime_source=self.source, disable_workspace_trust=True)
+        mac_argv = next(c for c in self.calls if c[:3] == ["/usr/bin/open", "-n", "-a"])
+        self.assertEqual(mac_argv[-1], "--disable-workspace-trust")
+        plain = self.sessions()
+        plain_calls = []
+        plain.run = lambda argv: (plain_calls.append(list(argv)), self.run_cmd(argv))[1]
+        plain.open("prompt", runtime_source=self.source)
+        plain_argv = next(c for c in plain_calls if c[:3] == ["/usr/bin/open", "-n", "-a"])
+        self.assertNotIn("--disable-workspace-trust", plain_argv)
+        win = self.sessions(platform="win32", popen=Mock())
+        win.open("w-trusted", runtime_source=self.source, disable_workspace_trust=True)
+        self.assertEqual(win.popen.call_args.args[0][-1], "--disable-workspace-trust")
+
 
 class ListCloseTests(Base):
     def test_list_shows_profiles_and_sessions_without_tokens(self):
@@ -260,6 +275,18 @@ class ListCloseTests(Base):
         r = s.close("p1", wait=20)
         self.assertEqual(r["verdict"], "CLOSE_PENDING")
         kill.assert_called_once_with(601)
+
+    def test_close_removes_only_dead_records_for_this_session(self):
+        s = self.sessions(alive=lambda pid: pid != 701)
+        s.open("p1", runtime_source=self.source, launch=False)
+        s.open("p2", runtime_source=self.source, launch=False)
+        write_record(self.root, "dead-p1", 17610, "p1", pid=701)
+        write_record(self.root, "live-p1", 17611, "p1", pid=702)
+        write_record(self.root, "dead-p2", 17612, "p2", pid=701)
+        removed = s.close("p1")["removedRegistryFiles"]
+        self.assertEqual([Path(p).name for p in removed], ["dead-p1.json"])
+        self.assertTrue((self.root / "sessions/live-p1.json").exists())
+        self.assertTrue((self.root / "sessions/dead-p2.json").exists())
 
     def test_real_kill_is_a_normal_quit(self):
         with patch.object(ss.os, "kill") as k:

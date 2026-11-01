@@ -45,6 +45,19 @@ class LockTests(unittest.TestCase):
             with host.file_lock(la[0]), host.file_lock(lb[0]):
                 self.assertNotEqual(la, lb)
 
+    def test_named_next_profile_uses_only_its_private_lock(self):
+        with tempfile.TemporaryDirectory() as directory:
+            profile = Path(directory) / "profiles" / "p1"
+            paths = host.lock_paths(profile, "execute", "darwin")
+            self.assertEqual(paths, [profile / "locks" / "execute.lock"])
+
+    def test_default_mac_profile_keeps_global_controller_locks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            profile = Path(directory) / ".stata-workbench-shared"
+            paths = host.lock_paths(profile, "execute", "darwin")
+            self.assertEqual(len(paths), 3)
+            self.assertTrue(any(p.name == "stata-workbench-shared-client.lock" for p in paths))
+
 
 class WindowsBindingTests(unittest.TestCase):
     def setUp(self):

@@ -137,7 +137,10 @@ def lock_paths(profile, purpose, platform=None):
     platform = platform or sys.platform
     paths = []
     # Cooperate with existing Mac controllers; never remove their lock inodes.
-    if platform == "darwin":
+    # A named Next profile owns an independent port and may submit concurrently.
+    # Legacy/default profiles retain the global Mac controller locks.
+    named_next = Path(profile).parent.name == "profiles"
+    if platform == "darwin" and not named_next:
         if purpose == "open":
             paths.append(Path("/private/tmp/stata-workbench-verified-open.lock"))
         else:
