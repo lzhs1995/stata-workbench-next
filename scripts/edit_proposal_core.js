@@ -84,6 +84,10 @@ function createEditGate(options = {}) {
         Promise.resolve().then(() => decide(record, request.content)),
         new Promise(resolve => setTimeout(() => resolve({ status: "timeout", reasonCode: "DECISION_TIMEOUT" }), request.timeoutMs)),
       ]);
+    } catch (error) {
+      const result = { ...record, status: "rejected", reasonCode: "REVIEW_ERROR", error: String(error?.message || error) };
+      event("edit_proposal_rejected", result);
+      return result;
     } finally {
       pending.delete(id);
     }

@@ -4,6 +4,7 @@
 // __codexResolveArtifactPath 与 __codexHandleArtifact 运行，而不是复写其逻辑。
 const fs = require('node:fs'), vm = require('node:vm'), assert = require('node:assert/strict'), path = require('node:path');
 const source = fs.readFileSync(path.join(__dirname, '../dist/extension.js'), 'utf8');
+assert(!source.includes('visibleBridgePort)/* next patch F1'), 'bridge busy marker must stay outside the popup string');
 // The maintenance replay must preserve the same bytes, with strict anchors.
 const patch = require('./apply_manual_graph_preview_patch');
 const fingerprint = require('./finalize_bundle_identity');

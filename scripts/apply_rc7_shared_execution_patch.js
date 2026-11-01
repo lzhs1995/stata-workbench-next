@@ -6,7 +6,6 @@ const path = require("path");
 
 const target = path.join(__dirname, "..", "dist", "extension.js");
 let text = fs.readFileSync(target, "utf8");
-
 function replaceOnce(name, before, after) {
   const first = text.indexOf(before);
   const second = first < 0 ? -1 : text.indexOf(before, first + before.length);
@@ -3439,5 +3438,6 @@ text = require("./apply_edit_proposal_patch").patchBundle(text, { finalize: fals
 text = require("./apply_next_multi_session_patch").patchBundle(text, { finalize: false });
 // next F0: checkpoint restore owns READY
 text = require("./apply_restore_readiness_patch").patchBundle(text, { finalize: false });
+text = require("./apply_next_bridge_busy_notice_patch").patchBundle(text, { finalize: false });
 fs.writeFileSync(target, text, "utf8");
 console.log(baseAlreadyApplied ? "RC7_SHARED_EXECUTION_UPDATED" : "RC7_SHARED_EXECUTION_APPLIED", target);

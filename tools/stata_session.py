@@ -82,7 +82,7 @@ def write_json_atomic(path, data, mode=0o600):
         raise
 
 
-def mac_launch_argv(code, profile, workspace, env):
+def mac_launch_argv(code, profile, workspace, env, disable_workspace_trust=False):
     """macOS：`open -n -a <app> --env K=V ... --args ...`。A2 实测这条路径能把环境变量传进扩展宿主。"""
     app = next((p for p in Path(code).expanduser().parents if p.suffix == ".app"), None)
     if app is None:
@@ -90,13 +90,19 @@ def mac_launch_argv(code, profile, workspace, env):
     argv = ["/usr/bin/open", "-n", "-a", str(app)]
     for key in sorted(env):
         argv += ["--env", f"{key}={env[key]}"]
-    return argv + ["--args", "--user-data-dir", str(profile / "user-data"), "--extensions-dir", str(profile / "extensions"),
-                   "--new-window", str(Path(workspace).resolve())]
+    tail = ["--user-data-dir", str(profile / "user-data"), "--extensions-dir", str(profile / "extensions"),
+            "--new-window", str(Path(workspace).resolve())]
+    if disable_workspace_trust:
+        tail.append("--disable-workspace-trust")
+    return argv + ["--args", *tail]
 
 
-def windows_launch_argv(code, profile, workspace):
-    return [str(host.code_executable(code, "win32")), "--user-data-dir", str(profile / "user-data"),
+def windows_launch_argv(code, profile, workspace, disable_workspace_trust=False):
+    argv = [str(host.code_executable(code, "win32")), "--user-data-dir", str(profile / "user-data"),
             "--extensions-dir", str(profile / "extensions"), "--new-window", str(Path(workspace).resolve())]
+    if disable_workspace_trust:
+        argv.append("--disable-workspace-trust")
+    return argv
 
 
 def tree_bytes(root):
@@ -272,12 +278,12 @@ class Sessions:
             env.update(TEMP=str(profile / "tmp"), TMP=str(profile / "tmp"))
         return env
 
-    def launch(self, profile, workspace, env):
+    def launch(self, profile, workspace, env, disable_workspace_trust=False):
         if self.platform == "darwin":
-            argv = mac_launch_argv(self.code, profile, workspace, env)
+            argv = mac_launch_argv(self.code, profile, workspace, env, disable_workspace_trust)
             self.run(argv)
         elif self.platform == "win32":
-            argv = windows_launch_argv(self.code, profile, workspace)
+            argv = windows_launch_argv(self.code, profile, workspace, disable_workspace_trust)
             flags = getattr(subprocess, "DETACHED_PROCESS", 0x8) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x200)
             self.popen(argv, env={**self.environ, **env}, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                        stderr=subprocess.DEVNULL, close_fds=True, creationflags=flags)
@@ -285,7 +291,7 @@ class Sessions:
             raise SessionError("UNSUPPORTED_PLATFORM: macOS and Windows only")
         return argv
 
-    def open(self, name, workspace=None, runtime_source=None, shared_extensions=None, launch=True):
+    def open(self, name, workspace=None, runtime_source=None, shared_extensions=None, launch=True, disable_workspace_trust=False):
         profile = self.profile(name)
         workspace = Path(workspace or profile / "workspace")
         if workspace != profile / "workspace" and not workspace.is_dir():
@@ -314,13 +320,15 @@ class Sessions:
             write_json_atomic(profile / "session.json", {"name": name, "port": port, "profile": str(profile),
                 "runtime": runtime, "mcpConfig": str(config), "extensions": extensions,
                 "workspace": str(workspace.resolve()), "openedAt": time.strftime("%Y-%m-%dT%H:%M:%S%z")})
-            argv = self.launch(profile, workspace, env) if launch else None
+            argv = self.launch(profile, workspace, env, disable_workspace_trust) if launch else None
         installed = any((profile / "extensions").glob("lzhs1995.stata-workbench-next-*"))
         return {"verdict": "LAUNCHED" if launch else "PREPARED", "launchCount": int(bool(launch)), "name": name,
                 "port": port, "profile": str(profile), "runtime": runtime, "mcpConfig": str(config), "settings": str(settings),
                 "extensions": extensions, "extensionInstalled": installed, "argv": argv,
                 "next": f"python3 -B tools/verified_workbench.py --status --session {name}",
-                "note": "launch is not execution; no bridge wait, no activation, no Stata command was sent"}
+                "note": ("workspace trust was disabled for this session; use only with a workspace you created"
+                          if disable_workspace_trust else "new workspaces require one Trust click before the bridge starts; "
+                          "launch is not execution; no bridge wait, no activation, no Stata command was sent")}
 
     def list(self):
         records = self.records()
@@ -341,16 +349,41 @@ class Sessions:
             raise SessionError(f"SESSION_UNKNOWN: {profile} does not exist")
         pids = self.instances(profile)
         if not pids:
-            return {"verdict": "NOT_RUNNING", "name": name, "signalled": []}
+            return {"verdict": "NOT_RUNNING", "name": name, "signalled": [], "removedRegistryFiles": self._remove_dead_records(name)}
         for pid in pids:
             self.kill(pid)
         deadline = self.clock() + wait
         while self.clock() < deadline:
-            if not self.instances(profile) and not any(r.get("sessionName") == name for r in self.records()):
-                return {"verdict": "CLOSED", "name": name, "signalled": pids}
+            if not self.instances(profile):
+                removed = self._remove_dead_records(name)
+                if not any(r.get("sessionName") == name for r in self.records()):
+                    return {"verdict": "CLOSED", "name": name, "signalled": pids, "removedRegistryFiles": removed}
             self.sleep(0.5)
         return {"verdict": "CLOSE_PENDING", "name": name, "signalled": pids,
                 "note": "normal quit was requested; VS Code may be waiting on an unsaved-changes prompt; nothing was force-killed"}
+
+    def _remove_dead_records(self, name):
+        removed = []
+        directory = self.root / "sessions"
+        try:
+            candidates = sorted(directory.glob("*.json"))
+        except OSError:
+            candidates = []
+        for path in candidates:
+            try:
+                record = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if not isinstance(record, dict) or record.get("sessionName") != name:
+                continue
+            if self.alive(record.get("extensionHostPid")) is not False:
+                continue
+            try:
+                path.unlink()
+            except OSError:
+                continue
+            removed.append(str(path))
+        return removed
 
 
 def main(argv=None, sessions=None):
@@ -363,6 +396,8 @@ def main(argv=None, sessions=None):
                     help="mcp-stata runtime to clone (default: env STATA_WORKBENCH_RUNTIME_SOURCE or the machine runtime)")
     op.add_argument("--extensions-dir", type=Path, default=None, help="shared extensions directory (default <home>/extensions-shared)")
     op.add_argument("--prepare-only", action="store_true", help="create the profile and runtime but do not start VS Code")
+    op.add_argument("--disable-workspace-trust", action="store_true",
+                    help="opt in only for a workspace you created; otherwise keep the Trust prompt")
     sub.add_parser("list")
     cl = sub.add_parser("close")
     cl.add_argument("name")
@@ -370,7 +405,8 @@ def main(argv=None, sessions=None):
     args = parser.parse_args(argv)
     s = sessions or Sessions()
     if args.command == "open":
-        result = s.open(args.name, args.workspace, args.runtime_source, args.extensions_dir, launch=not args.prepare_only)
+        result = s.open(args.name, args.workspace, args.runtime_source, args.extensions_dir,
+                        launch=not args.prepare_only, disable_workspace_trust=args.disable_workspace_trust)
     elif args.command == "list":
         result = s.list()
     else:
