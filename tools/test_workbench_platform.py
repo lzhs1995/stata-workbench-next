@@ -167,6 +167,12 @@ class WindowsBindingTests(unittest.TestCase):
             adapter.code_instances()
             adapter.bridge_owner()
             self.assertEqual(queries, [(101,)], "code_instances and bridge_owner share one process query")
+            self.root = dict(self.root, createdAt="2026-10-27T01:00:10Z")  # 新一代进程，同一 pid
+            now[0] += 1.0
+            cached = adapter.code_instances()
+            self.assertEqual(queries, [(101,)], "same listener pid inside the 2 s window reuses the rows")
+            self.assertEqual([r["createdAt"] for r in cached], ["2026-10-27T01:00:00Z"],
+                             "inside the window the rows may be up to 2 s old; the live /status and window checks cover that")
             listeners[0] = [300]
             self.assertFalse(adapter.bridge_owner()["launcher"])
             self.assertEqual(queries[-1], (300,), "a new listener pid forces a fresh query")

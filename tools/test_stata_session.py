@@ -311,12 +311,13 @@ class ListCloseTests(Base):
             "update": (".s20261101T022744Z-aaaaaaaa.18392.0000ffff.tmp", json.dumps({"sessionName": "p1"})),
             "empty": (".s20261101T022745Z-bbbbbbbb.18392.11112222.tmp", ""),
             "torn": (".s20261101T022747Z-dddddddd.18392.55556666.tmp", '{"sessionName": "p1"'),
+            "other_session": (".s20261101T022749Z-ffffffff.4001.9999aaaa.tmp", json.dumps({"sessionName": "p2"})),
             "live": (".s20261101T022746Z-cccccccc.702.33334444.tmp", publish),
             "unknown": (".s20261101T022748Z-eeeeeeee.703.77778888.tmp", publish),
             "other_tmp": (".settings.json.18392.tmp", ""),
         }
-        dead = {"publish", "update", "empty", "torn"}
-        alive = lambda pid: {18392: False, 702: True, 703: None}.get(pid, True)
+        dead = {"publish", "update", "empty", "torn", "other_session"}  # 不分会话：关 p1 也删 p2 的死写入者 tmp
+        alive = lambda pid: {18392: False, 4001: False, 702: True, 703: None}.get(pid, True)
 
         def seed():
             d.mkdir(parents=True, exist_ok=True)
