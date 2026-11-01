@@ -23,6 +23,18 @@ const NEW_PLAN = "let __codexRestoreSnapshot=globalThis.__codexStopCheckpointRef
   + "?{dispatch:false,restore:{ok:false,path:__snapshot&&__snapshot.path||null,"
   + "error:__codexRestoreSnapshot.error||\"pre-run dataset snapshot missing or unreadable\","
   + "continuityLost:true}}"
+  + ":{dispatch:true};";
+const LEGACY_PLAN = "let __codexRestoreSnapshot=globalThis.__codexStopCheckpointRef"
+  + "&&typeof globalThis.__codexStopCheckpointRef.classifyRestoreSnapshot===\"function\""
+  + "?globalThis.__codexStopCheckpointRef.classifyRestoreSnapshot(__snapshot):"
+  + "(__snapshot&&__snapshot.path?{kind:\"present\"}:{kind:\"none\"}),"
+  + "__codexRestorePlan=__codexRestoreSnapshot.kind===\"present\""
+  + "&&globalThis.__codexStopCheckpointRef.restorePlan"
+  + "?globalThis.__codexStopCheckpointRef.restorePlan(globalThis.__codexStopCheckpointRef.restoreCode(__snapshot,__codexStataString),__codexPayloadAdmittedAtStop)"
+  + ":__codexRestoreSnapshot.kind===\"missing\""
+  + "?{dispatch:false,restore:{ok:false,path:__snapshot&&__snapshot.path||null,"
+  + "error:__codexRestoreSnapshot.error||\"pre-run dataset snapshot missing or unreadable\","
+  + "continuityLost:true}}"
   + ":{dispatch:false,restore:{ok:true,skipped:__codexRestoreSnapshot.skipped||\"no pre-run dataset snapshot\"}};";
 
 function uniqueAt(source, needle) {
@@ -35,7 +47,11 @@ function uniqueAt(source, needle) {
 
 function patchBundle(source, options = {}) {
   if (source.includes(MARKER)) {
-    uniqueAt(source, NEW_PLAN);
+    if (source.includes(NEW_PLAN)) uniqueAt(source, NEW_PLAN);
+    else {
+      uniqueAt(source, LEGACY_PLAN + MARKER);
+      source = source.replace(LEGACY_PLAN + MARKER, () => NEW_PLAN + MARKER);
+    }
   } else {
     uniqueAt(source, OLD_PLAN);
     source = source.replace(OLD_PLAN, () => NEW_PLAN + MARKER);

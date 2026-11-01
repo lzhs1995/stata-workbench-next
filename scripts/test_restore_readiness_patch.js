@@ -69,4 +69,31 @@ gate.reset("recovery-smoke-verified");
 assert.equal(ready(globalState.__codexBridgeState, "idle").ready, true);
 const recoveredSubmission = acquireDecision({ bridge: globalState.__codexBridgeState, readiness: gate.status(), recovery: null, request: { kind: "normal" } });
 assert.equal(recoveredSubmission.ok, true);
+
+// Execute the reviewed force-reset tail for the three relevant outcomes:
+// only a successful reconnect with no smoke requirement may reset READY.
+const resetNeedle = '__codexRestoreReadinessRef&&globalThis.__codexRestoreReadinessRef.reset("force-reset-complete")';
+const resetAt = bundle.indexOf(resetNeedle);
+const resetStart = bundle.lastIndexOf("let __needsSmoke=", resetAt);
+const resetEnd = bundle.indexOf("}catch{}let __state=__current();", resetAt)
+  + "}catch{}let __state=__current();".length;
+assert.ok(resetStart >= 0 && resetEnd > resetStart);
+const forceResetTail = bundle.slice(resetStart, resetEnd);
+function runForceResetTail(reconnect, recoveryRequired, continuityLost, reason) {
+  const resetCalls = [];
+  const global = {
+    __codexRestoreReadinessRef: { reset: (value) => resetCalls.push(value) },
+    __codexControl: { requestRecovery: (state, why) => ({ state, reason: why }) },
+  };
+  const fn = new Function(
+    "globalThis", "__reconnect", "__codexRecoveryWasRequired", "__codexHadContinuityLost", "o", "__codexGraphMark", "__current", "resetCalls",
+    "try{" + forceResetTail + ";return {resetCalls, state:__state};"
+  );
+  return fn(global, reconnect, recoveryRequired, continuityLost, reason,
+    () => {}, () => ({ ready: true }), resetCalls);
+}
+assert.deepEqual(runForceResetTail({ ok: true }, false, false, "done").resetCalls,
+  ["force-reset-complete"]);
+assert.deepEqual(runForceResetTail({ ok: false, error: "offline" }, false, false, "done").resetCalls, []);
+assert.deepEqual(runForceResetTail({ ok: true }, false, true, "done").resetCalls, []);
 console.log("PASS restore readiness patch: idempotence, status gate, completion, and failure refusal");
