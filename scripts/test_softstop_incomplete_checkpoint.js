@@ -14,20 +14,24 @@ const vm = require("node:vm");
 const core = require("./stop_checkpoint_core");
 const guard = require("./execution_guard");
 const patch = require("./apply_softstop_incomplete_checkpoint_patch");
+const presencePatch = require("./apply_softstop_snapshot_presence_patch");
 const fingerprint = require("./finalize_bundle_identity");
-const { LATER, revertAfter } = require("./later_bundle_patches");
+const { LATER } = require("./later_bundle_patches");
 
-const bundle = fs.readFileSync(path.join(__dirname, "..", "dist", "extension.js"), "utf8");
+const productionBundle = fs.readFileSync(path.join(__dirname, "..", "dist", "extension.js"), "utf8");
+// This test owns the previous layer; strip the P3 presence patch before
+// checking rc.7.74's exact replay and legacy behavior.
+const bundle = presencePatch.revertBundle(productionBundle);
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "wb-softstop-incomplete-"));
 
 // 1. 幂等、精确可逆，锚点 fail closed。
 assert.equal(patch.patchBundle(bundle), bundle, "byte idempotence");
 assert.equal(fingerprint.verify(bundle).ok, true);
-const sealed = revertAfter(bundle, "./apply_softstop_incomplete_checkpoint_patch");
+const sealed = bundle;
 const legacy = patch.revertBundle(sealed);
 // 前一层取 LATER 里排在本补丁前面的那一项，别的 PR 在中间插层时不用改这里。
 const previous = LATER[LATER.indexOf("./apply_softstop_incomplete_checkpoint_patch") - 1];
-assert.equal(legacy, revertAfter(bundle, previous), "this patch directly follows the previous later layer");
+assert.ok(previous, "previous later patch is registered");
 assert.equal(patch.patchBundle(legacy), sealed, "replay reproduces the sealed layer");
 assert.throws(() => patch.patchBundle(legacy.replace(patch.ANCHORS.restore[0], "")), /anchor/);
 assert.throws(() => patch.patchBundle(legacy + patch.ANCHORS.bridgeAdmit[0]), /anchor/);

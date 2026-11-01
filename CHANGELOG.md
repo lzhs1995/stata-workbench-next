@@ -436,3 +436,8 @@ Integrates PR #11, #12, #13 and #14 on top of rc.7.44.
   correlated logs showed user permission-service database-open failure. The real
   shared client blocked with zero POST. No post-grant smoke or fresh FULL45 was
   performed; this release does not certify that blocked machine as recovered.
+# 0.2.0-next.5
+
+- F0: keep the visible bridge not-ready until checkpoint restore arbitration completes.
+- D sync: retain the multi-session registry and per-session isolation from next.4.
+

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "version": "0.2.0-next.4",
+  "version": "0.2.0-next.5",
   "files": {
     "scripts/wire_rc713b_remaining.js": {
       "sha256": "ebd9ff993b435ac55c5fe625fbf514938fe28b8f8d995c723044ae42898cbfaa",
@@ -11,8 +11,8 @@
       "bytes": 578
     },
     "scripts/stop_checkpoint_core.js": {
-      "sha256": "21f845eca8b07d52ca93765bd34d178280fe7916fa60b25438a06bb400a6e6f9",
-      "bytes": 42336
+      "sha256": "7e939d7fc6084fd944aaf5872b6883921a0962a5355ba2b105a626d7b9865293",
+      "bytes": 43580
     },
     "scripts/static_windows_gate.js": {
       "sha256": "4db114e7153ca576767ace7d591bf9acc52217ac7ac8c29974ed36e1a73172f4",
@@ -111,8 +111,8 @@
       "bytes": 5178
     },
     "scripts/apply_rc7_shared_execution_patch.js": {
-      "sha256": "43b2799b354a0cd7e8c84513c0a992d82151cb6e5eb4ad32c90c1b8bc33bb7e4",
-      "bytes": 338248
+      "sha256": "f5b6d06bb734240a3e732060589b6a6ad912a5ad2607361a5dc47660f52398ea",
+      "bytes": 338556
     },
     "scripts/apply_rc64_routes_patch.js": {
       "sha256": "b01e1225f5844b632e24d616957fb9e565541345a10d6f4fbc640a4b034070b2",
@@ -139,8 +139,8 @@
       "bytes": 11107
     },
     "dist/extension.js": {
-      "sha256": "121f24f5261e95e95bc5235781b8469075d567a300c72c554007263832cb92b5",
-      "bytes": 5623370
+      "sha256": "98ca557384eab0c4395a4a10ab9b61a35f6a60b6918ffecc1a21a8a124961853",
+      "bytes": 5625563
     },
     "scripts/mac/png_compat_transform.js": {
       "sha256": "cdea12886a1d5bb5b4c2b3e38829de1c7e68ed70e7777e8d6e2eb02bb0ce3514",
@@ -343,7 +343,7 @@
       "bytes": 4729
     },
     "tools/verified_workbench.py": {
-      "sha256": "9a667d143e8a64326466b1956ad6e21fb11cb8cc8a7a5ca51f6881ed78901b3e",
+      "sha256": "3830b294ccda14112cc37b3fcd2d1d258c8a7a0a82fae53d90f578c45a456f9e",
       "bytes": 20125
     },
     "tools/workbench_platform.py": {
@@ -391,8 +391,8 @@
       "bytes": 5809
     },
     "scripts/apply_softstop_incomplete_checkpoint_patch.js": {
-      "sha256": "6a2d8722b68c1763d32d9dacf4c846b405e3f49daa6cddbc6b80060894e314df",
-      "bytes": 5490
+      "sha256": "2822c960878fe0ba0ebeb4542c6a71cc74c7f6d0721f968de4a072ff72d543ec",
+      "bytes": 5844
     },
     "scripts/apply_next_identity_patch.js": {
       "sha256": "21430a204519b3964f260275ac7d627f150b8b8786cc408388dfd8ed54bff1ba",
@@ -422,13 +422,13 @@
       "sha256": "cbb62cff33e565b7a81e7a060f8f6dbf1b74fcf45d85b790e841217612e73113",
       "bytes": 5437
     },
-    "scripts/next_multi_session_core.js": {
-      "sha256": "a279608c614b1a4259e0843f0acca894bc469de32a20d6a6b55fd57a3407a20d",
-      "bytes": 5986
+    "scripts/apply_restore_readiness_patch.js": {
+      "sha256": "a5d42211ea04c39f38bd0f2306fddad03ceaae74afebbe9b47cbf74fa8cfa1b5",
+      "bytes": 7996
     },
-    "scripts/apply_next_multi_session_patch.js": {
-      "sha256": "22c3c8cd4bd4d925a9e0342826dbf9fc3418a498759be1ea678e3bbdec5eee6b",
-      "bytes": 5731
+    "scripts/restore_readiness_core.js": {
+      "sha256": "96d2303c80472d876e6708866c553a5023bfb622882968f1d2fb68a0fefd4721",
+      "bytes": 1546
     }
   },
   "acceptanceStatus": "PENDING_LICENSED_MAC_FULL_ACCEPTANCE",

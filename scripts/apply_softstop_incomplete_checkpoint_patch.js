@@ -21,6 +21,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const fingerprint = require("./finalize_bundle_identity");
 const MARKER = "/* codex patch rc.7.74: soft Stop never dispatches a refused checkpoint restore */";
+const PRESENCE_MARKER = "/* codex patch rc.7.75: missing ready snapshot fails closed */";
 
 // Computed before the restore branch so the rc.7.13 guard-wiring anchor after
 // `let __restoreCode=…;try{` stays byte-identical.
@@ -63,7 +64,12 @@ function uniqueAt(source, needle) {
 
 function patchBundle(source, options = {}) {
   if (source.includes(MARKER)) {
-    for (const [, after] of EDITS) uniqueAt(source, after);
+    // P3 deliberately replaces the restore-plan sub-anchor.  The old layer
+    // must still be idempotent when replay runs over that newer layer.
+    for (const [name, [, after]] of Object.entries(ANCHORS)) {
+      if (name === "restore" && source.includes(PRESENCE_MARKER)) continue;
+      uniqueAt(source, after);
+    }
     if (source.split("__codexPayloadAdmittedAtStop").length - 1 !== 4) {
       throw new Error("partial soft-stop incomplete checkpoint patch");
     }

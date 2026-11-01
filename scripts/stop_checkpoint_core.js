@@ -722,6 +722,35 @@ function isRestoreCapable(snapshot) {
   }
 }
 
+// Distinguish an absent pre-run snapshot from a registered checkpoint whose
+// dataset file disappeared (or became unreadable) before Stop.  The latter is
+// a continuity loss: reporting it as "no snapshot" would let the next request
+// run on post-run data while claiming the session is ready.
+function classifyRestoreSnapshot(snapshot) {
+  if (!snapshot || typeof snapshot.path !== "string" || !snapshot.path) {
+    return { kind: "none", ok: true, skipped: "no pre-run dataset snapshot" };
+  }
+  let readyRecord = null;
+  try { readyRecord = snapshotReadyRecord(snapshot); } catch { readyRecord = null; }
+  try {
+    const stat = fs.statSync(snapshot.path);
+    if (!stat.isFile() || stat.size < 512) throw new Error("dataset snapshot is not a readable file");
+    fs.accessSync(snapshot.path, fs.constants.R_OK);
+    return { kind: "present", ok: true, readyRecord };
+  } catch (error) {
+    if (readyRecord) {
+      return {
+        kind: "missing",
+        ok: false,
+        readyRecord,
+        error: "pre-run dataset snapshot missing or unreadable",
+        detail: error?.message || String(error),
+      };
+    }
+    return { kind: "none", ok: true, skipped: "no ready pre-run dataset snapshot" };
+  }
+}
+
 function isSnapshotReady(snapshot) {
   if (!isRestoreCapable(snapshot)) return false;
   return snapshotReadyRecord(snapshot) !== null;
@@ -987,6 +1016,7 @@ module.exports = {
   setupBudgetMs,
   initializeCheckpoint,
   isRestoreCapable,
+  classifyRestoreSnapshot,
   isSnapshotReady,
   reconnectTimeoutMs,
   restoreDowngradeSummary,
