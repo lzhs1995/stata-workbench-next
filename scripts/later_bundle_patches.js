@@ -20,6 +20,7 @@ const LATER = [
   "./apply_restore_readiness_patch",
   "./apply_next_bridge_busy_notice_patch",
   "./apply_f0b_stop_button_fallback_patch",
+  "./apply_softstop_quiescence_rc_patch",
 ];
 
 function revertLaterPatches(source) {

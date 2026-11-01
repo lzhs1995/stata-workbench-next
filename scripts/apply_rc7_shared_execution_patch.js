@@ -3440,5 +3440,8 @@ text = require("./apply_next_multi_session_patch").patchBundle(text, { finalize:
 text = require("./apply_restore_readiness_patch").patchBundle(text, { finalize: false });
 text = require("./apply_next_bridge_busy_notice_patch").patchBundle(text, { finalize: false });
 text = require("./apply_f0b_stop_button_fallback_patch").patchBundle(text, { finalize: false });
+// F fix3: the snapshotless soft-stop quiescence probe owns its rc instead of
+// inheriting Stata's residual _rc from the Break.
+text = require("./apply_softstop_quiescence_rc_patch").patchBundle(text, { finalize: false });
 fs.writeFileSync(target, text, "utf8");
 console.log(baseAlreadyApplied ? "RC7_SHARED_EXECUTION_UPDATED" : "RC7_SHARED_EXECUTION_APPLIED", target);

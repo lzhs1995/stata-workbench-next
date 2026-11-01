@@ -1461,6 +1461,11 @@ const REQUIRED_MARKERS = [
     label: "graph PDF download preserves artifact baseDir",
     marker: "baseDir: activeModalArtifact.baseDir",
   },
+  {
+    key: "softStopQuiescenceRc",
+    label: "snapshotless soft-stop quiescence probe owns its rc",
+    marker: "codex patch rc.7.76: soft-stop quiescence probe owns its rc",
+  },
 ];
 
 const AUXILIARY_MARKERS = [
