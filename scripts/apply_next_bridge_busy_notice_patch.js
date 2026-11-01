@@ -9,12 +9,19 @@ const LEGACY_AFTER = AFTER.slice(0, -1);
 const LEGACY_BEFORE = BEFORE.slice(0, -1);
 function patchBundle(source, options = {}) {
   if (source.includes(MARKER)) {
-    // Migrate the first draft, which accidentally placed the marker inside the string literal.
-    source = source.replace(LEGACY_AFTER + MARKER, AFTER).replace(LEGACY_BEFORE + MARKER, BEFORE);
-    if (source.includes(MARKER)) throw new Error("bridge busy notice marker has an unknown placement");
+    // A correctly placed marker is already stable; migrate the first draft if needed.
+    if (!source.includes(AFTER + MARKER) && !source.includes(BEFORE + MARKER)) {
+      source = source.replace(LEGACY_AFTER + MARKER, AFTER).replace(LEGACY_BEFORE + MARKER, BEFORE);
+    }
+    if (source.includes(MARKER) && !source.includes(AFTER + MARKER) && !source.includes(BEFORE + MARKER)) {
+      throw new Error("bridge busy notice marker has an unknown placement");
+    }
     return options.finalize === false ? source : fingerprint.finalize(source).text;
   }
-  if (source.split(AFTER).length - 1 === 1) return options.finalize === false ? source : fingerprint.finalize(source).text;
+  if (source.split(AFTER).length - 1 === 1) {
+    source = source.replace(AFTER, AFTER + MARKER);
+    return options.finalize === false ? source : fingerprint.finalize(source).text;
+  }
   if (source.split(BEFORE).length - 1 !== 1) throw new Error("bridge busy notice anchor missing or ambiguous");
   source = source.replace(BEFORE, AFTER + MARKER);
   return options.finalize === false ? source : fingerprint.finalize(source).text;
