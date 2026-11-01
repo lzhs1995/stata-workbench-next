@@ -106,6 +106,11 @@ const REQUIRED_MARKERS = [
     marker: "next patch F1: explicit bridge busy notice names agent connectivity",
   },
   {
+    key: "f0bStopButtonFallback",
+    label: "Terminal Stop falls back to the registered cancel command",
+    marker: "next F0b: Terminal Stop falls back to the registered cancel command",
+  },
+  {
     key: "guardCancelRestoresCheckpoint",
     label: "guard cancel of a dispatched payload restores the pre-run checkpoint",
     marker: "next patch F2: guard cancel restores the pre-run checkpoint",
