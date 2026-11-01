@@ -48,6 +48,18 @@ function trueReadySegment(source) {
   throw new Error("unbalanced trueReady");
 }
 
+// The shipped force-reset tail, from F0's reset through the statement after it.
+function forceResetTail(source) {
+  const needle = 'globalThis.__codexPendingOutcomesRef.clear("force-reset-complete")';
+  const at = source.indexOf(needle);
+  assert.ok(at >= 0, "force-reset clear is present");
+  const start = source.lastIndexOf("if(!__needsSmoke&&__reconnect", at);
+  const endNeedle = "}catch{}let __state=__current();";
+  const end = source.indexOf(endNeedle, at) + endNeedle.length;
+  assert.ok(start >= 0 && end > start, "force-reset tail bounds");
+  return source.slice(start, end);
+}
+
 // Stand-in for the pre-wrapper soft Stop, reproducing the live snapshotless
 // escalation: it throws, and its catch tail runs the automatic force reset,
 // which reconnects and (the defect) reopens READY and clears recovery.
@@ -269,6 +281,44 @@ async function runSoftStop(source, options) {
     assert.equal(r.g.__codexLastSoftStopRestoreVerdict.fenceReason, "snapshot-expected-not-restored");
     assert.equal(r.verdict.ready, false);
     assert.equal(r.g.__codexRecoveryState.required, true);
+  }
+
+  // --- F-3 / M1: the automatic-vs-user reset guard, executed --------------
+  // M1 (survived all 8 suites in review r1) drops `&&!globalThis
+  // .__codexSoftStopInFlight` from the force-reset tail, which lets the
+  // automatic force reset inside a soft-Stop escalation clear the
+  // pending-outcome fence.  This runs the shipped force-reset tail twice on the
+  // same state: once inside the escalation window, once as a user reset.
+  {
+    const tail = forceResetTail(bundle);
+    function runTail(inFlight, reason) {
+      const core = require("./guard_cancel_restore_core");
+      const pending = core.createPendingOutcomes();
+      pending.open("f1-cold", { reason: "transport timed out; it may still run in Stata" });
+      const resets = [];
+      const g = {
+        __codexSoftStopInFlight: inFlight,
+        __codexPendingOutcomesRef: pending,
+        __codexRestoreReadinessRef: { reset: (why) => resets.push(why) },
+        __codexControl: { requestRecovery: (s, why) => ({ required: true, reason: why }) },
+      };
+      const fn = new Function("globalThis", "__reconnect", "__needsSmoke", "__smokeReason",
+        "__codexGraphMark", "__current", "o",
+        "try{" + tail + ";return {state:__state};");
+      fn(g, { ok: true }, false, reason, () => {}, () => ({ ready: true }), reason);
+      return { pending: pending.status().pending, resets };
+    }
+    // The reason used here is outside the needs-smoke regex, so the guard is
+    // the only thing that can decide (the reviewer's isolating scenario).
+    const automatic = runTail("http /soft-stop", "soft-stop escalation: snapshotless backend not quiescent");
+    assert.equal(automatic.pending, 1,
+      "M1: the automatic force reset inside a soft-Stop escalation must not clear the pending fence");
+    assert.deepEqual(automatic.resets, [],
+      "M1: it must not reset restore readiness either");
+    const userReset = runTail(null, "user force reset");
+    assert.equal(userReset.pending, 0, "an explicit user force reset does clear it");
+    assert.deepEqual(userReset.resets, ["force-reset-complete"],
+      "and it does reset restore readiness");
   }
 
   // --- negative control: main 06e3886c / 4854832b bundle --------------------
