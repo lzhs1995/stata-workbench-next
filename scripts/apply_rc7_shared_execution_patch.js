@@ -3442,5 +3442,7 @@ text = require("./apply_next_bridge_busy_notice_patch").patchBundle(text, { fina
 // next F2: a guard cancel or a post-dispatch transport timeout restores the
 // pre-run checkpoint and refuses the next submit until the smoke passes.
 text = require("./apply_guard_cancel_restore_patch").patchBundle(text, { finalize: false });
+// next F2b: Download builds its save-dialog Uri through the unwrapped binding.
+text = require("./apply_download_uri_binding_patch").patchBundle(text, { finalize: false });
 fs.writeFileSync(target, text, "utf8");
 console.log(baseAlreadyApplied ? "RC7_SHARED_EXECUTION_UPDATED" : "RC7_SHARED_EXECUTION_APPLIED", target);

@@ -20,6 +20,7 @@ const LATER = [
   "./apply_restore_readiness_patch",
   "./apply_next_bridge_busy_notice_patch",
   "./apply_guard_cancel_restore_patch",
+  "./apply_download_uri_binding_patch",
 ];
 
 function revertLaterPatches(source) {

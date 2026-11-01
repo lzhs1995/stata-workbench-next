@@ -27,8 +27,8 @@
       "bytes": 17618
     },
     "scripts/patch_manager.js": {
-      "sha256": "2ba2bf103f19f0bb5672b3f8bd3da3d5dc589a0968515f0182a260e01012f2ae",
-      "bytes": 95022
+      "sha256": "6b268f9b9e5184fabf0cdc34c5c5d01766099c30b4546638351392a844fd846d",
+      "bytes": 95241
     },
     "scripts/mcp_stata_runtime_patch.js": {
       "sha256": "64013014e8598af5c7f70a276cd80a2f5c21d218eaa6fba59f079096c8f75ac9",
@@ -111,8 +111,8 @@
       "bytes": 5178
     },
     "scripts/apply_rc7_shared_execution_patch.js": {
-      "sha256": "294bfb96f25b154b51d9df87fcb30a9179a51b1092f52fc76f8c513461ea5c99",
-      "bytes": 338895
+      "sha256": "132466af9496cf388e5278b325653fd76de9a4438fb4569c7e65aa44f6394861",
+      "bytes": 339068
     },
     "scripts/apply_rc64_routes_patch.js": {
       "sha256": "b01e1225f5844b632e24d616957fb9e565541345a10d6f4fbc640a4b034070b2",
@@ -139,8 +139,8 @@
       "bytes": 11107
     },
     "dist/extension.js": {
-      "sha256": "147ce6af6acde70e4a602d23a67aed2c50f1463d14bf2600f34c062447589b58",
-      "bytes": 5631009
+      "sha256": "c222977d4148f9e2fe4913dc0d55568822f62719a074105e64ebb57bc09cdbb7",
+      "bytes": 5631080
     },
     "scripts/mac/png_compat_transform.js": {
       "sha256": "cdea12886a1d5bb5b4c2b3e38829de1c7e68ed70e7777e8d6e2eb02bb0ce3514",
@@ -343,7 +343,7 @@
       "bytes": 4729
     },
     "tools/verified_workbench.py": {
-      "sha256": "8468cbbed56db8f07bc71a5072b4b0481de56abacd5c29fa8c5c4060d127bbb5",
+      "sha256": "406f1615df09575812f4d3034941588111313686f5e3a90ba3428d999c5aa1b4",
       "bytes": 20125
     },
     "tools/workbench_platform.py": {
