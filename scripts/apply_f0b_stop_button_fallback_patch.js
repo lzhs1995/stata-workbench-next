@@ -5,7 +5,7 @@ const fingerprint = require("./finalize_bundle_identity");
 
 const MARKER = "/* next F0b: Terminal Stop falls back to the registered cancel command */";
 const BEFORE = 'static async _handleCancelRun(){return bE.startSpan({name:"terminal.cancelRun",op:"extension.operation"},async()=>{if(typeof g._cancelHandler=="function")try{await g._cancelHandler();let A=g._activeRunId;A&&(g._postMessage({type:"runCancelled",runId:A,message:"Run cancelled by user."}),g._postMessage({type:"busy",value:!1}))}catch(A){console.error("[TerminalPanel] cancelRun failed:",A)}})}';
-const AFTER = 'static async _handleCancelRun(){return bE.startSpan({name:"terminal.cancelRun",op:"extension.operation"},async()=>{let A=g._activeRunId;try{let I=globalThis.__codexBridgeState;if(I&&I.busy!==!0){g._postMessage({type:"busy",value:!1});return}if(typeof g._cancelHandler=="function")await g._cancelHandler();A&&(g._postMessage({type:"runCancelled",runId:A,message:"Run cancelled by user."}),g._postMessage({type:"busy",value:!1}))}catch(I){console.error("[TerminalPanel] cancelRun failed:",I)}})}';
+const AFTER = 'static async _handleCancelRun(){return bE.startSpan({name:"terminal.cancelRun",op:"extension.operation"},async()=>{let A=g._activeRunId;try{let I=globalThis.__codexBridgeState;if(!I||I.busy!==!0){g._postMessage({type:"busy",value:!1});return}if(typeof g._cancelHandler=="function")await g._cancelHandler();A&&(g._postMessage({type:"runCancelled",runId:A,message:"Run cancelled by user."}),g._postMessage({type:"busy",value:!1}))}catch(I){console.error("[TerminalPanel] cancelRun failed:",I)}})}';
 const UI_BEFORE = `stopBtn.addEventListener('click', () => {
             if (!busy) return;
             stopBtn.disabled = true;`;

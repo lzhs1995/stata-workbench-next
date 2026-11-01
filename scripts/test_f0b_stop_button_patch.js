@@ -7,7 +7,7 @@ const patch = require("./apply_f0b_stop_button_fallback_patch");
 
 const bundle = fs.readFileSync(path.join(__dirname, "..", "dist", "extension.js"), "utf8");
 assert.equal(bundle.split(patch.MARKER).length - 1, 1, "F0b marker must be installed once");
-assert.match(bundle, /I&&I\.busy!==!0/, "host idle guard missing");
+assert.match(bundle, /!I||I\.busy!==!0/, "host idle guard missing");
 assert.doesNotMatch(bundle, /executeCommand\("stata-workbench\.cancelRequest"\)/, "dead fallback must be removed");
 assert.match(bundle, /I\.type===\"cancelRun\"/, "webview cancelRun route missing");
 assert.doesNotMatch(bundle, /if \(!busy\) return;/, "webview idle guard must not suppress cancelRun");
@@ -15,10 +15,10 @@ assert.doesNotMatch(bundle, /if \(!busy\) return;/, "webview idle guard must not
 const reverted = patch.revertBundle(bundle);
 assert.equal(reverted.includes(patch.MARKER), false, "revert must remove F0b marker");
 const replayed = patch.patchBundle(reverted);
-assert.match(replayed, /I&&I\.busy!==!0/);
+assert.match(replayed, /!I||I\.busy!==!0/);
 assert.equal(patch.patchBundle(replayed), replayed, "F0b replay must be idempotent");
 
-function loadHost(source, busy) {
+function loadHost(source, busy, cancelHandler) {
   const a = source.indexOf("static async _handleCancelRun()");
   const b = source.indexOf("static async _handleCancelTask", a);
   assert.ok(a >= 0 && b > a, "host handler segment missing");
@@ -27,7 +27,7 @@ function loadHost(source, busy) {
   const context = {
     globalThis: { __codexBridgeState: { busy }, __codexSoftStop: async () => { calls.push("softStop"); return { ok: true }; } },
     bE: { startSpan: (_meta, fn) => fn() },
-    g: { _activeRunId: "run-test", _cancelHandler: async () => { calls.push("cancelHandler"); }, _postMessage: msg => calls.push(msg) },
+    g: { _activeRunId: "run-test", _cancelHandler: cancelHandler || (async () => { calls.push("cancelHandler"); }), _postMessage: msg => calls.push(msg) },
     console: { error: () => calls.push("error") },
   };
   const fn = vm.runInNewContext(`({${method}})._handleCancelRun`, context);
@@ -39,9 +39,20 @@ function loadHost(source, busy) {
   assert.equal(idle.calls.includes("softStop"), false, "idle host must not soft-stop");
   const idleBusy = idle.calls.find(x => x && x.type === "busy");
   assert.ok(idleBusy && idleBusy.type === "busy" && idleBusy.value === false, "idle host must re-arm busy=false");
+  const missing = loadHost(bundle, undefined); await missing.run();
+  assert.equal(missing.calls.includes("cancelHandler"), false, "missing bridge state must fail closed");
+  const missingBusy = missing.calls.find(x => x && x.type === "busy");
+  assert.ok(missingBusy && missingBusy.value === false, "missing bridge state must re-arm busy=false");
   const active = loadHost(bundle, true); await active.run();
   assert.equal(active.calls.includes("cancelHandler"), true, "busy host must cancel");
   assert.equal(active.calls.includes("softStop"), false, "handler owns soft-stop; host must not call it twice");
+  const hoistCalls = [];
+  const ha = bundle.indexOf("static async _handleCancelRun()"); const hb = bundle.indexOf("static async _handleCancelTask", ha);
+  const hm = bundle.slice(ha, hb).replace(/^static /, "");
+  const hctx = { globalThis: { __codexBridgeState: { busy: true } }, bE: { startSpan: (_m, fn) => fn() }, console: { error: () => {} }, g: { _activeRunId: "run-hoist", _cancelHandler: async () => { hctx.g._activeRunId = null; }, _postMessage: x => hoistCalls.push(x) } };
+  await vm.runInNewContext(`({${hm}})._handleCancelRun`, hctx)();
+  assert.ok(hoistCalls.some(x => x && x.type === "runCancelled"), "active run must emit runCancelled after handler clears id");
+  assert.ok(hoistCalls.some(x => x && x.type === "busy" && x.value === false), "active run must re-arm busy after handler clears id");
 
   const uiMatch = bundle.match(/stopBtn\.addEventListener\('click', \(\) => \{[\s\S]*?\n        \}\);/);
   assert.ok(uiMatch, "Stop click segment missing");
@@ -52,7 +63,7 @@ function loadHost(source, busy) {
   assert.equal(messages.length, 1);
   assert.equal(messages[0].type, "cancelRun", "webview idle click must still post cancelRun");
 
-  const unsafe = bundle.replace(/let I=globalThis\.__codexBridgeState;if\(I&&I\.busy!==!0\)\{g\._postMessage\(\{type:"busy",value:!1\}\);return\}/, "");
+  const unsafe = bundle.replace(/let I=globalThis\.__codexBridgeState;if\(!I\|\|I\.busy!==!0\)\{g\._postMessage\(\{type:"busy",value:!1\}\);return\}/, "");
   const negative = loadHost(unsafe, false); await negative.run();
   assert.equal(negative.calls.includes("cancelHandler"), true, "negative control must fail without idle guard");
   console.log("F0B_STOP_BUTTON_PATCH_PASS");
