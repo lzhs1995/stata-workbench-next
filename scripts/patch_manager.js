@@ -106,6 +106,11 @@ const REQUIRED_MARKERS = [
     marker: "next patch F1: explicit bridge busy notice names agent connectivity",
   },
   {
+    key: "f0bStopButtonFallback",
+    label: "Terminal Stop falls back to the registered cancel command",
+    marker: "next F0b: Terminal Stop falls back to the registered cancel command",
+  },
+  {
     key: "sharedExecutionLifecycle",
     label: "all visible entry points share the rc.7 execution lifecycle",
     marker: "codex patch rc.7: shared execution lifecycle",
