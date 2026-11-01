@@ -117,32 +117,87 @@ assert.equal(pending.gate().ready, false);
 // The live case — snapshotless /soft-stop, escalation, automatic force reset.
 const escalated = core.classifySoftStopRestore({
   ok: false, restored: false, recoveryClass: "RECOVERY_FAILED", hardEscalated: true,
+  restore: { ok: false, path: "/tmp/pre.dta", escalated: true, initialError: "missing" },
   error: "snapshotless backend not quiescent",
-}, null);
+}, null, { snapshotExpected: true, payloadDispatched: true });
 assert.equal(escalated.restored, false);
 assert.equal(escalated.escalated, true);
+assert.equal(escalated.fenced, true);
+assert.equal(escalated.fenceReason, "restore-failed");
 assert.equal(escalated.continuityLost.reason, "soft-stop-did-not-restore-checkpoint");
 assert.equal(escalated.continuityLost.requiresExplicitReset, true);
 assert.equal(escalated.continuityLost.automaticForceResetIsNotAReset, true);
 assert.match(escalated.continuityLost.detail, /force reset replaced the backend, not the data/);
 
 // A thrown soft Stop.
-const threwStop = core.classifySoftStopRestore(null, "cancel_task never returned");
+const threwStop = core.classifySoftStopRestore(null, "cancel_task never returned", {});
 assert.equal(threwStop.continuityLost.reason, "soft-stop-threw-without-restore");
 assert.match(threwStop.continuityLost.detail, /cancel_task never returned/);
 
-// No record at all.
-assert.equal(core.classifySoftStopRestore(null, null).continuityLost.reason,
+// No record at all, but a snapshot was expected for the run: fenced.
+assert.equal(core.classifySoftStopRestore(null, null, { snapshotExpected: true }).continuityLost.reason,
   "soft-stop-did-not-restore-checkpoint");
+// No record and nothing was expected: not fenced (F-1).
+const bare = core.classifySoftStopRestore(null, null, {});
+assert.equal(bare.fenced, false);
+assert.equal(bare.continuityLost, null);
+assert.equal(bare.fenceReason, "nothing-to-restore");
 
-// Degraded recovery restored the dataset but lost estimates/graphs: still lost.
-const degraded = core.classifySoftStopRestore({ ok: true, restored: true, recoveryClass: "RECOVERED_DEGRADED" }, null);
+// Degraded recovery restored the dataset but lost estimates/graphs: still lost
+// when a snapshot was expected for the run.
+const degraded = core.classifySoftStopRestore(
+  { ok: true, restored: true, recoveryClass: "RECOVERED_DEGRADED", restore: { ok: true, path: "/tmp/pre.dta" } },
+  null, { snapshotExpected: true, payloadDispatched: true });
 assert.equal(degraded.restored, false);
+assert.equal(degraded.fenced, true);
+assert.equal(degraded.fenceReason, "snapshot-expected-not-restored");
 assert.match(degraded.continuityLost.detail, /RECOVERED_DEGRADED/);
 assert.equal(degraded.continuityLost.escalated, false);
 
+// F-1: the three legitimate snapshotless successes must not be fenced.
+const warmupStop = core.classifySoftStopRestore({
+  ok: true, restored: false, recoveryClass: "RECOVERED_FULL",
+  restore: { ok: true, skipped: "no pre-run dataset snapshot",
+             quiescenceProbe: { skipped: "Stata was still starting; no payload dispatched" } },
+}, null, {});
+assert.equal(warmupStop.fenced, false, "a warmup Stop has no payload to lose");
+assert.equal(warmupStop.fenceReason, "warmup-no-payload-dispatched");
+assert.equal(warmupStop.continuityLost, null);
+
+const quiescentStop = core.classifySoftStopRestore({
+  ok: true, restored: false, recoveryClass: "RECOVERED_FULL",
+  restore: { ok: true, skipped: "no pre-run dataset snapshot", quiescenceProbe: { ok: true, rc: 0 } },
+}, null, {});
+assert.equal(quiescentStop.fenced, false, "a proven-quiescent snapshotless Stop is clean");
+assert.equal(quiescentStop.fenceReason, "snapshotless-quiescence-proved");
+
+// But the same shape with a snapshot that was expected for the run is fenced:
+// this is what the reviewer's suggested wording would have reopened.
+const expectedButGone = core.classifySoftStopRestore({
+  ok: true, restored: false, recoveryClass: "RECOVERED_FULL",
+  restore: { ok: true, skipped: "no pre-run dataset snapshot", quiescenceProbe: { ok: true, rc: 0 } },
+}, null, { snapshotExpected: true, payloadDispatched: true });
+assert.equal(expectedButGone.fenced, true, "an expected-but-missing snapshot is still a loss");
+assert.equal(expectedButGone.fenceReason, "snapshot-expected-not-restored");
+
+// A failed quiescence probe (restore.ok false) stays fenced with no snapshot.
+const probeFailed = core.classifySoftStopRestore({
+  ok: false, restored: false, recoveryClass: "RECOVERY_FAILED", hardEscalated: true,
+  restore: { ok: false, skipped: "no pre-run dataset snapshot", escalated: true,
+             initialError: "snapshotless soft-stop quiescence probe failed" },
+}, null, {});
+assert.equal(probeFailed.fenced, true, "an unproven backend is fenced even with no snapshot");
+assert.equal(probeFailed.fenceReason, "restore-failed");
+
+// F-2: the record names the real way out, both steps.
+assert.match(core.RESET_STEPS, /Stata: KILL/);
+assert.match(core.RESET_STEPS, /recovery smoke/);
+assert.equal(expectedButGone.continuityLost.howToClear, core.RESET_STEPS);
+
 // A genuine full restore is not blocked.
-const fullStop = core.classifySoftStopRestore({ ok: true, restored: true, recoveryClass: "RECOVERED_FULL" }, null);
+const fullStop = core.classifySoftStopRestore(
+  { ok: true, restored: true, recoveryClass: "RECOVERED_FULL", restore: { ok: true, path: "/tmp/pre.dta" } },
+  null, { snapshotExpected: true });
 assert.equal(fullStop.restored, true);
 assert.equal(fullStop.continuityLost, null);
 

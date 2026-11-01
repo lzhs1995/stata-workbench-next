@@ -109,16 +109,82 @@ function continuityNote(verdict, stopRecord, stopError) {
 //
 // The automatic force reset inside the escalation is not a user reset, so it
 // must not be what clears the block.
-function classifySoftStopRestore(stopRecord, stopError) {
+// F-2.  The only reset that clears this is a force reset followed by the
+// recovery smoke.  The status-bar flame ("Stata: KILL") runs the force reset and
+// now also runs the smoke once the reconnect succeeds, so confirming it is one
+// human action.  POST /recovery-smoke alone is a no-op while continuityLost is
+// set, which is what the README used to tell people to do.
+const RESET_STEPS = 'click the "Stata: KILL" status-bar item and confirm '
+  + "(it force-resets the backend and then runs the recovery smoke), "
+  + "or POST /force-reset followed by POST /recovery-smoke";
+
+// F-1.  Not every unrestored soft Stop has something to lose.  `restored` in
+// the bundle is `!!(restore && restore.path && restore.ok)`, so it needs a
+// snapshot *path*: the legitimate snapshotless successes (a Stop during warmup,
+// where the bundle itself says "no payload dispatched", and a Stop whose
+// quiescence probe proved the backend idle) are false by construction.  Fencing
+// those would put an ordinary human Terminal/selection run — which registers no
+// pre-run snapshot at all — into recovery-required until a destructive force
+// reset.  That must not ship.
+//
+// The rule keys on whether a snapshot was *expected* for this run, not on
+// whether `restore` happens to carry a path.  `expectation` is captured before
+// the stop runs, from __codexPreRunSnapshots / __codexActivePreRunSnapshot.
+//
+// Fence when any of these holds:
+//   (i)   a snapshot was expected for this run and was not restored;
+//   (ii)  the stop escalated to a force reset while a payload was dispatched;
+//   (iii) restore.ok === false (the P3 escalation: probe failed or restore failed).
+// Do not fence when no snapshot was registered and the quiescence probe passed,
+// nor when warmup reports that no payload was dispatched.
+function classifySoftStopRestore(stopRecord, stopError, expectation = {}) {
   const restored = restoreEstablished(stopRecord);
+  const restore = (stopRecord && stopRecord.restore) || null;
+  const probe = (restore && restore.quiescenceProbe) || null;
+  const snapshotExpected = expectation.snapshotExpected === true
+    || !!(restore && typeof restore.path === "string" && restore.path);
+  const payloadDispatched = expectation.payloadDispatched === true;
+  const escalated = !!(stopRecord && (stopRecord.hardEscalated === true || stopRecord.forceReset != null))
+    || !!(restore && restore.escalated === true);
+  // Warmup: the bundle's own branch says Stata was still starting.
+  const warmupNoPayload = !!(probe && typeof probe.skipped === "string"
+    && /no payload dispatched/i.test(probe.skipped));
+  // rc.7.10.4: a snapshotless Stop that proved the backend quiescent is clean.
+  const quiescenceProved = !!(probe && probe.ok === true)
+    && !!(restore && restore.ok === true) && !escalated;
+  const restoreFailed = !!(restore && restore.ok === false) || stopError != null;
+
   const verdict = {
     restored,
+    snapshotExpected,
+    payloadDispatched,
+    escalated,
+    warmupNoPayload,
+    quiescenceProved,
+    restoreFailed,
     reason: stopRecord ? text(stopRecord.reason) || null : null,
     recoveryClass: (stopRecord && stopRecord.recoveryClass) || (stopError ? "RECOVERY_FAILED" : null),
-    escalated: !!(stopRecord && (stopRecord.hardEscalated === true || stopRecord.forceReset != null)),
+    fenced: false,
+    fenceReason: null,
     continuityLost: null,
   };
-  if (restored) return verdict;
+  if (restored) {
+    verdict.fenceReason = "restored";
+    return verdict;
+  }
+  // The three fence conditions, in the order they are reported.
+  if (restoreFailed) verdict.fenceReason = "restore-failed";
+  else if (snapshotExpected) verdict.fenceReason = "snapshot-expected-not-restored";
+  else if (escalated && payloadDispatched) verdict.fenceReason = "escalated-after-dispatch";
+  verdict.fenced = verdict.fenceReason != null;
+  if (!verdict.fenced) {
+    // Nothing was at risk: no snapshot was registered for this run and either
+    // warmup never dispatched a payload or the quiescence probe passed.
+    verdict.fenceReason = warmupNoPayload
+      ? "warmup-no-payload-dispatched"
+      : (quiescenceProved ? "snapshotless-quiescence-proved" : "nothing-to-restore");
+    return verdict;
+  }
   // An escalation that ended in a force reset looks "ok" to the old gate: the
   // backend is fresh and quiescent.  Freshness is not the pre-run dataset.
   const detail = stopError
@@ -133,8 +199,12 @@ function classifySoftStopRestore(stopRecord, stopError) {
     detail,
     recoveryClass: verdict.recoveryClass || "RECOVERY_FAILED",
     escalated: verdict.escalated,
+    fenceReason: verdict.fenceReason,
+    snapshotExpected,
     requiresExplicitReset: true,
     automaticForceResetIsNotAReset: true,
+    // F-2: name the real way out, not half of it.
+    howToClear: RESET_STEPS,
   };
   return verdict;
 }
@@ -237,5 +307,5 @@ function createPendingOutcomes(options = {}) {
 module.exports = {
   CANCEL_OUTCOMES, DISPATCH_POLICIES, UNKNOWN_CODE, UNKNOWN_MESSAGE,
   isTransportTimeout, classifyGuardFailure, restoreEstablished, continuityNote,
-  classifySoftStopRestore, unknownEnvelope, annotateEnvelope, createPendingOutcomes,
+  classifySoftStopRestore, RESET_STEPS, unknownEnvelope, annotateEnvelope, createPendingOutcomes,
 };

@@ -32,7 +32,7 @@ function cut(source, start, end, label) {
   return source.slice(a, b);
 }
 
-const WRAP_START = "globalThis.__codexSoftStopRestoreFence=";
+const WRAP_START = "globalThis.__codexSoftStopExpectation=";
 function wrapSegment(source) {
   return cut(source, WRAP_START, patch.MARKER, "soft-stop wrapper");
 }
@@ -52,8 +52,31 @@ function trueReadySegment(source) {
 // escalation: it throws, and its catch tail runs the automatic force reset,
 // which reconnects and (the defect) reopens READY and clears recovery.
 function makeInnerSoftStop(options, log, g, control) {
+  // The real soft Stop publishes globalThis.__codexLastSoftStop before
+  // returning; the wrapper annotates that record with its decision.
+  const publish = (record) => { g.__codexLastSoftStop = record; return record; };
   return async (reason) => {
     log.push(["softStop", String(reason)]);
+    // F-1 cases: legitimate snapshotless successes. The bundle's own branches.
+    if (options.mode === "warmup") {
+      // rc.7.67 warmup: __codexWarmupSkipsQuiescence() true, nothing dispatched.
+      return publish({ ok: true, restored: false, recoveryClass: "RECOVERED_FULL", runId: options.runId || null,
+               drained: true, restore: { ok: true, skipped: "no pre-run dataset snapshot",
+                 quiescenceProbe: { skipped: "Stata was still starting; no payload dispatched" } } });
+    }
+    if (options.mode === "snapshotless-quiescent") {
+      // rc.7.10.4: no snapshot, but the probe proved the backend idle.
+      return publish({ ok: true, restored: false, recoveryClass: "RECOVERED_FULL", runId: options.runId || null,
+               drained: true, restore: { ok: true, skipped: "no pre-run dataset snapshot",
+                 quiescenceProbe: { ok: true, rc: 0, logPath: "/tmp/q.log" } } });
+    }
+    if (options.mode === "snapshotless-probe-failed") {
+      // The probe could not prove quiescence: restore.ok false, escalated.
+      return publish({ ok: false, restored: false, recoveryClass: "RECOVERY_FAILED", hardEscalated: true,
+               runId: options.runId || null,
+               restore: { ok: false, skipped: "no pre-run dataset snapshot", escalated: true,
+                          initialError: "snapshotless soft-stop quiescence probe failed" } });
+    }
     if (options.mode === "escalate") {
       // The real tail: restoreReadiness.fail, then __codexForceReset(...).
       try { g.__codexRestoreReadinessRef.fail(null, "snapshotless backend not quiescent"); } catch {}
@@ -67,15 +90,17 @@ function makeInnerSoftStop(options, log, g, control) {
         g.__codexRestoreReadinessRef.reset("force-reset-complete");
         log.push(["pendingCleared", "force-reset-complete"]);
       }
-      return { ok: false, restored: false, recoveryClass: "RECOVERY_FAILED",
+      return publish({ ok: false, restored: false, recoveryClass: "RECOVERY_FAILED",
                hardEscalated: true, runId: options.runId || null,
-               error: "snapshotless backend not quiescent", reason: String(reason) };
+               restore: { ok: false, path: options.snapshotPath || "/tmp/pre.dta", escalated: true,
+                          initialError: "snapshotless backend not quiescent" },
+               error: "snapshotless backend not quiescent", reason: String(reason) });
     }
     if (options.mode === "throws") throw new Error(options.message || "soft stop exploded");
     if (options.mode === "degraded") {
-      return { ok: true, restored: true, recoveryClass: "RECOVERED_DEGRADED", runId: options.runId || null };
+      return publish({ ok: true, restored: true, recoveryClass: "RECOVERED_DEGRADED", runId: options.runId || null });
     }
-    return { ok: true, restored: true, recoveryClass: "RECOVERED_FULL", runId: options.runId || null };
+    return publish({ ok: true, restored: true, recoveryClass: "RECOVERED_FULL", runId: options.runId || null });
   };
 }
 
@@ -101,12 +126,28 @@ async function runSoftStop(source, options) {
     __codexGuardIdentityVerdict: () => null,
   };
   g.__codexSoftStop = makeInnerSoftStop(options, log, g, control);
+  // The shipped expectation helper reads the real registry, so build it here.
+  // Agent visible-bridge and human-file runs register a snapshot; ordinary
+  // human Terminal/selection runs do not.
+  const runId = options.runId || "run-x";
+  g.__codexBridgeState.runId = runId;
+  g.__codexPreRunSnapshots = new Map();
+  g.__codexActivePreRunSnapshot = null;
+  if (options.snapshotRegistered) {
+    const snapshot = { runId, path: options.snapshotPath || "/tmp/pre.dta",
+                       payloadAdmitted: options.payloadAdmitted !== false };
+    g.__codexPreRunSnapshots.set(runId, snapshot);
+    g.__codexActivePreRunSnapshot = snapshot;
+  }
   const sandbox = {
     globalThis: g, __codexControl: control, RI: () => {},
     __codexGraphMark: g.__codexGraphMark, console, require,
+    // The helper resolves the lifecycle runId through this module-local.
+    __codexExecution: { ensureLifecycle: (s) => ({ runId: s && s.runId }) },
   };
   g.__codexControl = control;
   vm.runInNewContext(wrapSegment(source), sandbox);
+  assert.equal(typeof g.__codexSoftStopExpectation, "function", "expectation helper installed");
   assert.equal(typeof g.__codexSoftStopRestoreFence, "function", "restore fence installed");
   let threw = null;
   try { await g.__codexSoftStop(options.reason || "http /soft-stop"); }
@@ -121,7 +162,8 @@ async function runSoftStop(source, options) {
 (async () => {
   // --- the live P3 case: snapshotless soft Stop, automatic force reset -------
   for (const reason of ["http /soft-stop", "terminal Stop button", "guard cancel: EXEC_PRELOG_STALL"]) {
-    const r = await runSoftStop(bundle, { mode: "escalate", reason, runId: "run_mvxiiqqf_sqas2crq" });
+    const r = await runSoftStop(bundle, { mode: "escalate", reason, runId: "run_mvxiiqqf_sqas2crq",
+      snapshotRegistered: true, snapshotOnDisk: false, payloadAdmitted: true });
     const kinds = r.log.map((e) => e[0]);
     assert.ok(kinds.includes("forceReset"), "the escalation ran its automatic force reset (" + reason + ")");
     assert.ok(r.g.__codexContinuityLost, "continuityLost is set after a soft Stop that did not restore (" + reason + ")");
@@ -146,7 +188,8 @@ async function runSoftStop(source, options) {
 
   // soft Stop that threw outright: same block, different reason code.
   {
-    const r = await runSoftStop(bundle, { mode: "throws", message: "cancel_task never returned" });
+    const r = await runSoftStop(bundle, { mode: "throws", message: "cancel_task never returned",
+      runId: "r-throw", snapshotRegistered: true, snapshotOnDisk: true, payloadAdmitted: true });
     assert.equal(r.threw, "cancel_task never returned", "the original error still propagates");
     assert.equal(r.g.__codexContinuityLost.reason, "soft-stop-threw-without-restore");
     assert.match(r.g.__codexContinuityLost.detail, /cancel_task never returned/);
@@ -156,7 +199,8 @@ async function runSoftStop(source, options) {
 
   // A degraded recovery is not a restore either (estimates/graphs lost).
   {
-    const r = await runSoftStop(bundle, { mode: "degraded", runId: "r-deg" });
+    const r = await runSoftStop(bundle, { mode: "degraded", runId: "r-deg",
+      snapshotRegistered: true, snapshotOnDisk: true, payloadAdmitted: true });
     assert.equal(r.g.__codexContinuityLost.reason, "soft-stop-did-not-restore-checkpoint");
     assert.match(r.g.__codexContinuityLost.detail, /RECOVERED_DEGRADED/);
     assert.equal(r.verdict.ready, false);
@@ -164,11 +208,67 @@ async function runSoftStop(source, options) {
 
   // A real full restore must not be blocked: no false positive.
   {
-    const r = await runSoftStop(bundle, { mode: "full", runId: "r-ok" });
+    const r = await runSoftStop(bundle, { mode: "full", runId: "r-ok",
+      snapshotRegistered: true, snapshotOnDisk: true, payloadAdmitted: true });
     assert.equal(r.g.__codexContinuityLost, undefined, "a full restore sets no continuityLost");
     assert.equal(r.g.__codexRecoveryState, undefined, "a full restore requests no recovery");
     assert.equal(r.verdict.ready, true, "a full restore stays ready");
     assert.equal(r.g.__codexLastSoftStopRestoreVerdict.restored, true);
+  }
+
+  // --- F-1: the fence must not fire when there is nothing to lose ----------
+  // (a) An ordinary human Terminal/selection run registers no pre-run snapshot
+  //     (the bundle registers them only for agent visible-bridge
+  //     codex_prerun_agent_state_* and human-file codex_prerun_state_* runs).
+  //     A human who types a long command and presses Stop must stay READY.
+  for (const reason of ["terminal Stop button", "http /soft-stop"]) {
+    const r = await runSoftStop(bundle, { mode: "snapshotless-quiescent", reason,
+      runId: "debug_terminal_human_1", snapshotRegistered: false });
+    assert.equal(r.g.__codexSoftStopExpectation().snapshotExpected, false,
+      "a human Terminal run registers no snapshot (" + reason + ")");
+    assert.equal(r.g.__codexContinuityLost, undefined,
+      "a human Stop with no registered snapshot is not fenced (" + reason + ")");
+    assert.equal(r.g.__codexRecoveryState, undefined, "no recovery is requested (" + reason + ")");
+    assert.equal(r.verdict.ready, true, "the human session stays READY (" + reason + ")");
+    assert.equal(r.g.__codexLastSoftStopRestoreVerdict.fenced, false);
+    assert.equal(r.g.__codexLastSoftStopRestoreVerdict.fenceReason, "snapshotless-quiescence-proved");
+    assert.equal(r.g.__codexLastSoftStop.fenced, false, "the decision is recorded in lastSoftStop");
+    assert.equal(r.g.__codexLastSoftStop.snapshotExpected, false);
+  }
+
+  // (b) A Stop during warmup: the bundle itself says no payload was dispatched.
+  {
+    const r = await runSoftStop(bundle, { mode: "warmup", runId: "run-warm", snapshotRegistered: false });
+    assert.equal(r.g.__codexContinuityLost, undefined, "a warmup Stop is not fenced");
+    assert.equal(r.verdict.ready, true, "warmup Stop stays READY");
+    assert.equal(r.g.__codexLastSoftStopRestoreVerdict.fenceReason, "warmup-no-payload-dispatched");
+    assert.equal(r.g.__codexLastSoftStopRestoreVerdict.warmupNoPayload, true);
+    assert.equal(r.g.__codexRecoveryState, undefined);
+  }
+
+  // (c) Still closed for the escalated snapshotless path: restore.ok === false.
+  //     This is the case the reviewer's suggested wording would have reopened.
+  {
+    const r = await runSoftStop(bundle, { mode: "snapshotless-probe-failed", runId: "run-noq",
+      snapshotRegistered: false });
+    assert.ok(r.g.__codexContinuityLost, "a failed quiescence probe is still fenced");
+    assert.equal(r.g.__codexLastSoftStopRestoreVerdict.fenceReason, "restore-failed");
+    assert.equal(r.verdict.ready, false);
+    assert.equal(r.g.__codexRecoveryState.required, true);
+  }
+
+  // (d) A snapshot was expected for this run but is gone: fenced even though
+  //     the stop reports a snapshotless success shape (the P3 shape).
+  {
+    const r = await runSoftStop(bundle, { mode: "snapshotless-quiescent", runId: "run_agent_1",
+      snapshotRegistered: true, snapshotOnDisk: false, payloadAdmitted: true });
+    const expect = r.g.__codexSoftStopExpectation();
+    assert.equal(expect.snapshotExpected, true, "the registry says a snapshot was expected");
+    assert.equal(expect.snapshotClass, "registered", "the registry entry is what marks it expected");
+    assert.ok(r.g.__codexContinuityLost, "an expected-but-missing snapshot is fenced");
+    assert.equal(r.g.__codexLastSoftStopRestoreVerdict.fenceReason, "snapshot-expected-not-restored");
+    assert.equal(r.verdict.ready, false);
+    assert.equal(r.g.__codexRecoveryState.required, true);
   }
 
   // --- negative control: main 06e3886c / 4854832b bundle --------------------
