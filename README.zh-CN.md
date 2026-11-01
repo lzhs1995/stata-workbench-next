@@ -287,7 +287,8 @@ python3 tools/verify_release.py --vsix /path/to/stata-workbench-shared-session-0
 | Terminal 长时间显示忙 | 先查 bridge 状态（`python3 tools/verified_workbench.py --status`）再运行别的代码；不要再排一个长任务 |
 | 长脚本卡住或超时 | 先核对原请求、原始日志和输出。超时不能证明 Stata 没有执行。见[存储与日志恢复](docs/storage-and-log-recovery.md) |
 | 端口已被占用 | 别的编辑器占着。另选空闲的 `stataMcp.visibleBridgePort`，`STATA_WORKBENCH_PORT` 设成同一个值 |
-| 状态栏显示 **Stata: STALE**，运行返回 HTTP 423 `recovery-required` | force reset 后没能确认 backend。运行一次经验证的恢复：`curl -X POST http://127.0.0.1:17485/recovery-smoke`（Windows：`Invoke-WebRequest -UseBasicParsing -Method Post -Uri http://127.0.0.1:17485/recovery-smoke`；端口换成你的）。它运行一条固定的标记命令，确认 rc 0 且日志里有标记后才解锁。不要杀 Stata，也不要删会话 |
+| 状态栏显示 **Stata: STALE**，运行返回 HTTP 423 `recovery-required` | 点状态栏的 **Stata: KILL** 并确认。它会 force reset 自己拥有的 backend，然后自动运行那次经验证的恢复 smoke——解锁靠的是 smoke。确认即表示接受 Stata 内存状态丢失。不要删会话 |
+| 状态里出现 `continuityLost`（例如 `soft-stop-did-not-restore-checkpoint`） | 某次 Stop 没能把运行前的快照放回去，Stata 里的数据已经不是你的代码预期的那份。**两步都要做，且按这个顺序**：先 force reset（状态栏的 **Stata: KILL**，或 `curl -X POST http://127.0.0.1:17485/force-reset`），再运行经验证的恢复 smoke（`curl -X POST http://127.0.0.1:17485/recovery-smoke`；Windows：`Invoke-WebRequest -UseBasicParsing -Method Post -Uri http://127.0.0.1:17485/recovery-smoke`；端口换成你的）。`continuityLost` 还在时，**只跑 smoke 是空操作**。KILL 会帮你把两步都做完。smoke 运行一条固定的标记命令，确认 rc 0 且日志里有标记后才解锁 |
 | 图形不出现 | 给图命名；多个未命名的图会互相覆盖唯一的 `Graph` 窗口 |
 | Windows：`code` 装不上 VSIX | 运行 `Get-Command code` 和 `code --version`；把 `PATH` 改成指向 VS Code 的 `bin\code.cmd`，或用 **Extensions: Install from VSIX...** |
 | macOS：错误 `-1743` 或找不到窗口 | 在与 agent 相同的宿主里运行 `--doctor`，再运行一次 `--request-permissions`。见 [macOS 权限](docs/MAC_PERMISSIONS.md) |

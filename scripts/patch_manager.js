@@ -111,6 +111,16 @@ const REQUIRED_MARKERS = [
     marker: "next F0b: Terminal Stop falls back to the registered cancel command",
   },
   {
+    key: "guardCancelRestoresCheckpoint",
+    label: "guard cancel of a dispatched payload restores the pre-run checkpoint",
+    marker: "next patch F2: guard cancel restores the pre-run checkpoint",
+  },
+  {
+    key: "downloadUnwrappedUriBinding",
+    label: "Download builds its save dialog Uri through the unwrapped vscode binding",
+    marker: "next patch F2b: Download uses the unwrapped vscode Uri binding",
+  },
+  {
     key: "sharedExecutionLifecycle",
     label: "all visible entry points share the rc.7 execution lifecycle",
     marker: "codex patch rc.7: shared execution lifecycle",
