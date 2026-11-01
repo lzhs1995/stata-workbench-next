@@ -27,6 +27,7 @@ import workbench_platform as host
 import verified_workbench as entry
 
 NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,39}")
+TMP_RE = re.compile(r"\.(?P<sid>[^/\\]+)\.(?P<pid>[0-9]+)\.[0-9a-f]{8}\.tmp")
 MAX_SESSIONS = 5
 PORTS = range(17601, 17621)
 FORBIDDEN_PORTS = {17485, 17416, 17497, 17507}
@@ -266,6 +267,11 @@ class Sessions:
         updated = {**current, "stataMcp.visibleBridgePort": port, "stataMcp.nextSessionName": name,
                    "stataMcp.nextProfilePath": str(profile), "stataMcp.nextMcpConfigPath": str(config_path)}
         updated.setdefault("stataMcp.loadStataOnStartup", False)
+        # 测试窗口不更新 VS Code 和扩展：Windows 上会话里自动装更新会改用户的安装，并让下一个 open 报
+        # 「Code is currently being updated」。setdefault：这个 profile 里已有的显式值不动。
+        updated.setdefault("update.mode", "none")
+        updated.setdefault("extensions.autoUpdate", False)
+        updated.setdefault("extensions.autoCheckUpdates", False)
         if updated != current:
             write_json_atomic(path, updated)
         return path
@@ -349,7 +355,8 @@ class Sessions:
             raise SessionError(f"SESSION_UNKNOWN: {profile} does not exist")
         pids = self.instances(profile)
         if not pids:
-            return {"verdict": "NOT_RUNNING", "name": name, "signalled": [], "removedRegistryFiles": self._remove_dead_records(name)}
+            return {"verdict": "NOT_RUNNING", "name": name, "signalled": [], "removedRegistryFiles": self._remove_dead_records(name),
+                    "removedTmpFiles": self._remove_orphan_tmp()}
         for pid in pids:
             self.kill(pid)
         deadline = self.clock() + wait
@@ -357,9 +364,10 @@ class Sessions:
             if not self.instances(profile):
                 removed = self._remove_dead_records(name)
                 if not any(r.get("sessionName") == name for r in self.records()):
-                    return {"verdict": "CLOSED", "name": name, "signalled": pids, "removedRegistryFiles": removed}
+                    return {"verdict": "CLOSED", "name": name, "signalled": pids, "removedRegistryFiles": removed,
+                            "removedTmpFiles": self._remove_orphan_tmp()}
             self.sleep(0.5)
-        return {"verdict": "CLOSE_PENDING", "name": name, "signalled": pids,
+        return {"verdict": "CLOSE_PENDING", "name": name, "signalled": pids, "removedTmpFiles": self._remove_orphan_tmp(),
                 "note": "normal quit was requested; VS Code may be waiting on an unsaved-changes prompt; nothing was force-killed"}
 
     def _remove_dead_records(self, name):
@@ -377,6 +385,27 @@ class Sessions:
             if not isinstance(record, dict) or record.get("sessionName") != name:
                 continue
             if self.alive(record.get("extensionHostPid")) is not False:
+                continue
+            try:
+                path.unlink()
+            except OSError:
+                continue
+            removed.append(str(path))
+        return removed
+
+    def _remove_orphan_tmp(self):
+        """注册表原子写的残留 .<sessionId>.<pid>.<hex>.tmp（next_bridge_auth_core.js writeRecord）。
+        写入进程确定已死，这个文件就不会再被改名成记录，读注册表的一方也只读 *.json，所以按写入 pid 判定：
+        确定已死才删（未知、活着、pid 被复用都不删），不看内容。publish() 写的记录里没有 sessionName，按内容认不出归属，
+        所以不分会话：关任何一个会话，都会删掉 sessions/ 里所有写入者已死的 .tmp（包括别的会话留下的）。"""
+        removed = []
+        try:
+            candidates = sorted((self.root / "sessions").glob(".*.tmp"))
+        except OSError:
+            candidates = []
+        for path in candidates:
+            m = TMP_RE.fullmatch(path.name)
+            if not m or self.alive(int(m.group("pid"))) is not False:
                 continue
             try:
                 path.unlink()
