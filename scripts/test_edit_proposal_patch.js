@@ -1,6 +1,7 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const vm = require("node:vm");
 const fs = require("node:fs");
 const path = require("node:path");
 const patch = require("./apply_edit_proposal_patch");
@@ -18,8 +19,45 @@ assert.ok(sealed.includes(patch.MARKER));
 assert.ok(sealed.includes("/propose-edit"));
 assert.ok(sealed.includes("edit_proposal_core.js"));
 assert.ok(sealed.includes("__codexNextSessionRef"));
-assert.ok(sealed.includes("YQ.Uri.file(__record.path)"), "review uses the real vscode Uri binding");
+assert.ok(sealed.includes("FHg().Uri.file(__record.path)"), "review uses the unwrapped vscode Uri binding");
 assert.equal(sealed.includes("iA.Uri.file(__record.path)"), false, "wrapped vscode module is not used for Uri construction");
+assert.equal(sealed.includes("YQ.Uri.file(__record.path)"), false, "cross-module vscode binding is not used");
+
+function extractReview(source) {
+  const start = source.indexOf("globalThis.__codexReviewEdit=");
+  const end = source.indexOf("};let __acquire", start) + 2;
+  assert.ok(start >= 0 && end > start, "review function is present in the executable bundle");
+  return source.slice(start, end);
+}
+async function executeReview(source, iAOverride = null) {
+  const file = path.join(reviewTmp, "review.do");
+  fs.writeFileSync(file, "display 1\n");
+  const vscode = {
+    Uri: { file: (value) => ({ fsPath: value }) },
+    workspace: { openTextDocument: async (uri) => ({ uri }) },
+    commands: { executeCommand: async () => {} },
+    window: { showInformationMessage: async () => "Accept" },
+  };
+  const context = { globalThis: {}, FHg: () => vscode, iA: iAOverride || vscode, require };
+  vm.runInNewContext(extractReview(source), context);
+  return context.globalThis.__codexReviewEdit({ id: "exec", path: file, agentName: "test" }, "display 2\n");
+}
+const reviewTmp = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "wb-edit-review-"));
+executeReview(sealed).then((result) => {
+  assert.equal(result.status, "accepted", "the review function executes with the real vscode module shape");
+  return executeReview(sealed.replaceAll("FHg().Uri.file", "YQ.Uri.file")).then(
+    () => assert.fail("broken cross-module binding unexpectedly executed"),
+    (error) => assert.match(String(error), /YQ is not defined/)
+  ).then(() => executeReview(sealed.replaceAll("FHg().Uri.file", "iA.Uri.file"), {
+    Uri: function Uri() {},
+    workspace: { openTextDocument: async (uri) => ({ uri }) },
+    commands: { executeCommand: async () => {} },
+    window: { showInformationMessage: async () => "Accept" },
+  })).then(
+    () => assert.fail("wrapped Uri binding unexpectedly executed"),
+    (error) => assert.match(String(error), /iA\.Uri\.file is not a function/)
+  );
+}).catch((error) => { console.error(error); process.exitCode = 1; });
 assert.equal(sealed.includes("eventLogPath"), false);
 assert.equal(fingerprint.finalize(sealed).text.includes(patch.MARKER), true);
 const sendAnchor = 'let __send=(o,s,n)=>{o.writeHead(s,{"content-type":"application/json"}),o.end(JSON.stringify(n))};';

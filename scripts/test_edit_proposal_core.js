@@ -29,6 +29,10 @@ async function run() {
   assert.equal(timedOut.reasonCode, "DECISION_TIMEOUT");
   assert.deepEqual(fs.readFileSync(file), original);
 
+  const failedReview = await gate.propose({ path: file, content: "display \"error\"\n", expectedSha256: sha256(original) }, async () => { throw new Error("review UI failed"); });
+  assert.equal(failedReview.reasonCode, "REVIEW_ERROR");
+  assert.equal(gate.pending().length, 0, "failed review leaves no pending proposal");
+
   const accepted = await gate.propose({ path: file, content: "display \"accepted\"\n", expectedSha256: sha256(original) }, async () => ({ status: "accepted" }));
   assert.equal(accepted.status, "accepted");
   assert.equal(fs.readFileSync(file, "utf8"), "display \"accepted\"\n");
@@ -44,8 +48,8 @@ async function run() {
   const eventTypes = eventRecords.map(event => event.type);
   assert.deepEqual(eventTypes, [
     "edit_proposal_rejected", "edit_proposal_pending", "edit_proposal_rejected",
-    "edit_proposal_pending", "edit_proposal_timeout", "edit_proposal_pending",
-    "edit_proposal_accepted", "edit_proposal_pending", "edit_proposal_rejected",
+    "edit_proposal_pending", "edit_proposal_timeout", "edit_proposal_pending", "edit_proposal_rejected",
+    "edit_proposal_pending", "edit_proposal_accepted", "edit_proposal_pending", "edit_proposal_rejected",
   ]);
   console.log("PASS edit proposal core: mismatch, reject, timeout, accept+snapshot, and concurrent SHA change");
   // The timeout case intentionally leaves a late decision promise detached;

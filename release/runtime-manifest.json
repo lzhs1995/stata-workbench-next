@@ -139,8 +139,8 @@
       "bytes": 11107
     },
     "dist/extension.js": {
-      "sha256": "08388857714dc3f6c782b24072e82bc9359146a26302027cd48be46bd988db69",
-      "bytes": 5625597
+      "sha256": "7500c76447cdd28026f50c5bb252262ab03e641f678db5225a26ef7966c60dbf",
+      "bytes": 5625603
     },
     "scripts/mac/png_compat_transform.js": {
       "sha256": "cdea12886a1d5bb5b4c2b3e38829de1c7e68ed70e7777e8d6e2eb02bb0ce3514",
@@ -343,12 +343,12 @@
       "bytes": 4729
     },
     "tools/verified_workbench.py": {
-      "sha256": "d7be3d6bd8b71419430b47cc6b86c1134e8812d1d7100953dbf76033122a3572",
+      "sha256": "c81311acbbd518dc3c267a523bf006c033d121b69efdfbff9552335919b92c75",
       "bytes": 20125
     },
     "tools/workbench_platform.py": {
-      "sha256": "20ff114a93dda9381a2cd4f8051a110772afbda60c7c29e2d289342f5a565e68",
-      "bytes": 8353
+      "sha256": "1e393f9070e53f475ba98a88e1ea3760e504f05919019f22da7c942d4af717f8",
+      "bytes": 8578
     },
     "tools/mac_permissions.py": {
       "sha256": "afcbe7773caad7209745e5149c9dd7b7a7cea3e9a51968f66d75c2aceeb673d4",
@@ -415,12 +415,12 @@
       "bytes": 5988
     },
     "scripts/apply_edit_proposal_patch.js": {
-      "sha256": "a2c53826f15c530247ff310ae878933bc0d70a4c4f689b5586f89f7f2f2ed7b0",
-      "bytes": 5182
+      "sha256": "24e324a11deae29b5bceb75bcf38fa1703da7d00452a219538d69704bfe1cab0",
+      "bytes": 5340
     },
     "scripts/edit_proposal_core.js": {
-      "sha256": "cbb62cff33e565b7a81e7a060f8f6dbf1b74fcf45d85b790e841217612e73113",
-      "bytes": 5437
+      "sha256": "f9486b98d163470c823eee9fc9152429bc83c31f5ef2c8f75b4a5f94f594f428",
+      "bytes": 5651
     },
     "scripts/apply_restore_readiness_patch.js": {
       "sha256": "a5d42211ea04c39f38bd0f2306fddad03ceaae74afebbe9b47cbf74fa8cfa1b5",

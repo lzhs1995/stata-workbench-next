@@ -48,7 +48,8 @@ class LockTests(unittest.TestCase):
     def test_named_next_profile_uses_only_its_private_lock(self):
         with tempfile.TemporaryDirectory() as directory:
             profile = Path(directory) / "profiles" / "p1"
-            paths = host.lock_paths(profile, "execute", "darwin")
+            with patch.dict(os.environ, {"STATA_WORKBENCH_NEXT_HOME": directory}):
+                paths = host.lock_paths(profile, "execute", "darwin")
             self.assertEqual(paths, [profile / "locks" / "execute.lock"])
 
     def test_default_mac_profile_keeps_global_controller_locks(self):
