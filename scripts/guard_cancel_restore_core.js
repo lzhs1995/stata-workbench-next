@@ -97,6 +97,48 @@ function continuityNote(verdict, stopRecord, stopError) {
   };
 }
 
+// P3.  Any soft Stop that did not put the checkpoint back is a continuity loss,
+// whoever asked for it (Stop button, HTTP /soft-stop, or the guard fence).
+//
+// Live evidence on main 06e3886c: the snapshot was renamed away, /soft-stop
+// escalated ("soft-stop escalation: snapshotless backend not quiescent"), the
+// automatic force reset inside that escalation reconnected a fresh mcp-stata,
+// and because continuityLost had never been set the force reset decided no
+// smoke was needed and reopened READY.  trueReady=true, recoveryRequired=false,
+// and the next Terminal input printed c(N)=0 k=0: the human's data was gone.
+//
+// The automatic force reset inside the escalation is not a user reset, so it
+// must not be what clears the block.
+function classifySoftStopRestore(stopRecord, stopError) {
+  const restored = restoreEstablished(stopRecord);
+  const verdict = {
+    restored,
+    reason: stopRecord ? text(stopRecord.reason) || null : null,
+    recoveryClass: (stopRecord && stopRecord.recoveryClass) || (stopError ? "RECOVERY_FAILED" : null),
+    escalated: !!(stopRecord && (stopRecord.hardEscalated === true || stopRecord.forceReset != null)),
+    continuityLost: null,
+  };
+  if (restored) return verdict;
+  // An escalation that ended in a force reset looks "ok" to the old gate: the
+  // backend is fresh and quiescent.  Freshness is not the pre-run dataset.
+  const detail = stopError
+    ? ("soft Stop failed and did not restore the pre-run checkpoint: " + text(stopError))
+    : (stopRecord
+      ? ("soft Stop ended " + text(stopRecord.recoveryClass || "without a restore")
+        + " and did not restore the pre-run checkpoint"
+        + (verdict.escalated ? "; the automatic force reset replaced the backend, not the data" : ""))
+      : "soft Stop produced no result, so the pre-run checkpoint was not restored");
+  verdict.continuityLost = {
+    reason: stopError ? "soft-stop-threw-without-restore" : "soft-stop-did-not-restore-checkpoint",
+    detail,
+    recoveryClass: verdict.recoveryClass || "RECOVERY_FAILED",
+    escalated: verdict.escalated,
+    requiresExplicitReset: true,
+    automaticForceResetIsNotAReset: true,
+  };
+  return verdict;
+}
+
 // Client-visible envelope for a dispatched payload with no trusted outcome.
 function unknownEnvelope(verdict, context = {}) {
   return {
@@ -195,5 +237,5 @@ function createPendingOutcomes(options = {}) {
 module.exports = {
   CANCEL_OUTCOMES, DISPATCH_POLICIES, UNKNOWN_CODE, UNKNOWN_MESSAGE,
   isTransportTimeout, classifyGuardFailure, restoreEstablished, continuityNote,
-  unknownEnvelope, annotateEnvelope, createPendingOutcomes,
+  classifySoftStopRestore, unknownEnvelope, annotateEnvelope, createPendingOutcomes,
 };

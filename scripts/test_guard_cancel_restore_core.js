@@ -113,4 +113,37 @@ assert.equal(pending.status().pending, 0);
 pending.open(null, { reason: "null run id still blocks" });
 assert.equal(pending.gate().ready, false);
 
-console.log("PASS guard cancel restore core: cancel outcomes, transport timeout, recursion fence, envelopes, pending gate");
+// P3: any soft Stop that did not restore the checkpoint is a continuity loss.
+// The live case — snapshotless /soft-stop, escalation, automatic force reset.
+const escalated = core.classifySoftStopRestore({
+  ok: false, restored: false, recoveryClass: "RECOVERY_FAILED", hardEscalated: true,
+  error: "snapshotless backend not quiescent",
+}, null);
+assert.equal(escalated.restored, false);
+assert.equal(escalated.escalated, true);
+assert.equal(escalated.continuityLost.reason, "soft-stop-did-not-restore-checkpoint");
+assert.equal(escalated.continuityLost.requiresExplicitReset, true);
+assert.equal(escalated.continuityLost.automaticForceResetIsNotAReset, true);
+assert.match(escalated.continuityLost.detail, /force reset replaced the backend, not the data/);
+
+// A thrown soft Stop.
+const threwStop = core.classifySoftStopRestore(null, "cancel_task never returned");
+assert.equal(threwStop.continuityLost.reason, "soft-stop-threw-without-restore");
+assert.match(threwStop.continuityLost.detail, /cancel_task never returned/);
+
+// No record at all.
+assert.equal(core.classifySoftStopRestore(null, null).continuityLost.reason,
+  "soft-stop-did-not-restore-checkpoint");
+
+// Degraded recovery restored the dataset but lost estimates/graphs: still lost.
+const degraded = core.classifySoftStopRestore({ ok: true, restored: true, recoveryClass: "RECOVERED_DEGRADED" }, null);
+assert.equal(degraded.restored, false);
+assert.match(degraded.continuityLost.detail, /RECOVERED_DEGRADED/);
+assert.equal(degraded.continuityLost.escalated, false);
+
+// A genuine full restore is not blocked.
+const fullStop = core.classifySoftStopRestore({ ok: true, restored: true, recoveryClass: "RECOVERED_FULL" }, null);
+assert.equal(fullStop.restored, true);
+assert.equal(fullStop.continuityLost, null);
+
+console.log("PASS guard cancel restore core: cancel outcomes, transport timeout, recursion fence, envelopes, pending gate, soft-stop restore rule");

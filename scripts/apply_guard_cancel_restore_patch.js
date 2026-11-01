@@ -49,11 +49,23 @@ const STATUS_AFTER = STATUS_BEFORE + 'pendingOutcomes:globalThis.__codexPendingO
 const SMOKE_BEFORE = 'globalThis.__codexRestoreReadinessRef.reset("recovery-smoke-verified")}catch{}';
 const SMOKE_AFTER = 'globalThis.__codexRestoreReadinessRef.reset("recovery-smoke-verified")}catch{}try{globalThis.__codexPendingOutcomesRef&&globalThis.__codexPendingOutcomesRef.clear("recovery-smoke-verified")}catch{}';
 
-const FORCE_BEFORE = 'globalThis.__codexRestoreReadinessRef.reset("force-reset-complete")}catch{}}catch{}let __state=__current();';
-const FORCE_AFTER = 'globalThis.__codexRestoreReadinessRef.reset("force-reset-complete")}catch{}try{if(!__needsSmoke&&__reconnect&&__reconnect.ok===true)globalThis.__codexPendingOutcomesRef&&globalThis.__codexPendingOutcomesRef.clear("force-reset-complete")}catch{}}catch{}let __state=__current();';
+const FORCE_BEFORE = 'if(!__needsSmoke&&__reconnect&&__reconnect.ok===true)try{globalThis.__codexRestoreReadinessRef&&globalThis.__codexRestoreReadinessRef.reset("force-reset-complete")}catch{}}catch{}let __state=__current();';
+// A force reset that happens *inside* a soft-Stop escalation is automatic, not
+// a user reset (P3): it must not release the pending list.  The soft-Stop
+// wrapper sets __codexSoftStopInFlight for exactly that window.
+const FORCE_AFTER = 'if(!__needsSmoke&&__reconnect&&__reconnect.ok===true&&!globalThis.__codexSoftStopInFlight){try{globalThis.__codexRestoreReadinessRef&&globalThis.__codexRestoreReadinessRef.reset("force-reset-complete")}catch{}try{globalThis.__codexPendingOutcomesRef&&globalThis.__codexPendingOutcomesRef.clear("force-reset-complete")}catch{}}' + MARKER + '}catch{}let __state=__current();';
+
+// P3: wrap the single soft-Stop global so the rule covers every caller — the
+// Terminal Stop button (yM), HTTP /soft-stop, and the guard fence — without
+// editing any of their handlers.  The wrapper runs after the escalation's own
+// automatic force reset has already finished (soft Stop awaits it before
+// returning), so the block it sets is the last word.
+const SOFTSTOP_ANCHOR = "/* codex patch rc.7.10: soft Stop preserves the pre-run dataset */";
+const SOFTSTOP_WRAP = SOFTSTOP_ANCHOR + 'globalThis.__codexSoftStopRestoreFence=(__stop,__stopError,__context)=>{let __core=globalThis.__codexGuardCancelRef;if(!__core)return null;let __verdict;try{__verdict=__core.classifySoftStopRestore(__stop,__stopError)}catch(__classifyError){__verdict={restored:false,continuityLost:{reason:"soft-stop-restore-classification-threw",detail:String(__classifyError&&__classifyError.message||__classifyError),requiresExplicitReset:true}}}globalThis.__codexLastSoftStopRestoreVerdict=Object.assign({at:new Date().toISOString(),source:String((__context&&__context.source)||"soft-stop")},__verdict);if(__verdict.restored)return __verdict;let __runId=(__context&&__context.runId)!=null?__context.runId:((__stop&&__stop.runId)||null);globalThis.__codexContinuityLost={at:new Date().toISOString(),runId:__runId==null?null:String(__runId),source:String((__context&&__context.source)||"soft-stop"),...__verdict.continuityLost};globalThis.__codexContinuityNote=null;try{globalThis.__codexRestoreReadinessRef&&globalThis.__codexRestoreReadinessRef.fail(__runId,__verdict.continuityLost.detail)}catch{}try{globalThis.__codexRecoveryState=__codexControl.requestRecovery(globalThis.__codexRecoveryState,"soft-stop-needs-smoke: "+String(__verdict.continuityLost.reason))}catch{}try{globalThis.__codexGraphMark&&__codexGraphMark({readinessState:"stale",readinessReason:__verdict.continuityLost.reason,readinessRunId:__runId==null?null:String(__runId),readinessUpdatedAt:new Date().toISOString(),lastClientError:__verdict.continuityLost.detail})}catch{}try{RI("[Codex bridge] soft Stop did not restore the checkpoint; READY stays closed until an explicit reset: "+__verdict.continuityLost.detail)}catch{}return __verdict};globalThis.__codexSoftStop=(__codexInnerSoftStop=>async __reason=>{let __stop=null,__stopError=null;globalThis.__codexSoftStopInFlight=String(__reason||"soft-stop");try{__stop=await __codexInnerSoftStop(__reason)}catch(__e){__stopError=__e&&__e.message||String(__e)}finally{globalThis.__codexSoftStopInFlight=null}try{globalThis.__codexSoftStopRestoreFence(__stop,__stopError,{source:String(__reason||"soft-stop"),runId:(__stop&&__stop.runId)||null})}catch{}if(__stopError!=null)throw new Error(__stopError);return __stop})(globalThis.__codexSoftStop);' + MARKER;
 
 const EDITS = [
   ["fence init", F0_MARKER, F0_MARKER + FENCE],
+  ["soft-stop restore fence", SOFTSTOP_ANCHOR, SOFTSTOP_WRAP],
   ["guard wrap fence", WRAP_BEFORE, WRAP_AFTER],
   ["guard wrap envelope", ENVELOPE_BEFORE, ENVELOPE_AFTER],
   ["terminal fence", TERM_BEFORE, TERM_AFTER],
