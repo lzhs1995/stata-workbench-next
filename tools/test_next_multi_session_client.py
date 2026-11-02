@@ -14,6 +14,7 @@ from unittest.mock import Mock, patch
 
 import shared_stata as client
 import verified_workbench as entry
+import stata_session as sessions_module
 
 
 def write(root, sid, port, name=None, pid=None, **extra):
@@ -92,6 +93,84 @@ class SelectTests(Isolated):
         self.assertIs(entry.pid_alive(child.pid), False)
         self.assertIsNone(entry.pid_alive(None))
         self.assertIsNone(entry.pid_alive(0))
+
+
+class FakeWindowsApi:
+    """按 pid 给出 OpenProcess 的失败码、退出码，以及进程列表（None 表示列表拿不到）。"""
+
+    def __init__(self, open_errors=None, exit_codes=None, live=None):
+        self.open_errors = open_errors or {}
+        self.exit_codes = exit_codes or {}
+        self.live = live
+        self.closed = []
+        self.listed = 0
+
+    def open_query(self, pid):
+        if pid in self.open_errors:
+            return None, self.open_errors[pid]
+        return ("h", pid), 0
+
+    def exit_code(self, handle):
+        return self.exit_codes.get(handle[1])
+
+    def close(self, handle):
+        self.closed.append(handle)
+
+    def live_pids(self):
+        self.listed += 1
+        return None if self.live is None else set(self.live)
+
+
+class WindowsPidAliveTests(unittest.TestCase):
+    """W-P6b：Windows 上已退出、内核对象仍被引用的 pid，OpenProcess 返回 5 而不是 87（job 1762 实测）。"""
+
+    def test_job_1762_measurements(self):
+        # 9764 已退出（OS 说 GONE）→ 5；999999 从未存在 → 87；4 是活着的 System → 5。
+        api = FakeWindowsApi(open_errors={9764: 5, 999999: 87, 4: 5}, live=[4, 1234])
+        self.assertIs(entry._windows_pid_alive(9764, api), False, "exited pid behind error 5 is dead once the process list lacks it")
+        self.assertIs(entry._windows_pid_alive(999999, api), False)
+        self.assertIsNone(entry._windows_pid_alive(4, api), "a listed pid we cannot query stays unknown, never dead")
+
+    def test_error_5_without_a_process_list_stays_unknown(self):
+        api = FakeWindowsApi(open_errors={9764: 5}, live=None)
+        self.assertIsNone(entry._windows_pid_alive(9764, api))
+
+    def test_other_open_errors_stay_unknown_without_listing(self):
+        api = FakeWindowsApi(open_errors={77: 6}, live=[])
+        self.assertIsNone(entry._windows_pid_alive(77, api))
+        self.assertEqual(api.listed, 0, "only error 5 consults the process list")
+
+    def test_open_handle_reads_the_exit_code_and_closes(self):
+        api = FakeWindowsApi(exit_codes={10: 259, 11: 0}, live=[])
+        self.assertIs(entry._windows_pid_alive(10, api), True)
+        self.assertIs(entry._windows_pid_alive(11, api), False)
+        self.assertIsNone(entry._windows_pid_alive(12, api), "GetExitCodeProcess failure is unknown")
+        self.assertEqual([h[1] for h in api.closed], [10, 11, 12])
+
+    def test_orphan_tmp_of_an_exited_pid_is_now_removed(self):
+        # 端到端：close 清 .tmp 的保守规则不变（只删确定已死的），pid 9764 现在能判死。
+        api = FakeWindowsApi(open_errors={9764: 5, 4: 5}, live=[4])
+        root = Path(tempfile.mkdtemp())
+        sessions = root / "sessions"
+        sessions.mkdir()
+        dead = sessions / ".s20261101T205107Z-bfc0c427.9764.71399b9c.tmp"
+        live = sessions / ".s20261101T205107Z-bfc0c427.4.71399b9c.tmp"
+        dead.write_text("", encoding="utf-8")
+        live.write_text("", encoding="utf-8")
+        manager = sessions_module.Sessions(root=root, alive=lambda pid: entry._windows_pid_alive(pid, api))
+        removed = manager._remove_orphan_tmp()
+        self.assertEqual(removed, [str(dead)])
+        self.assertFalse(dead.exists())
+        self.assertTrue(live.exists(), "an unknown pid's tmp file is kept")
+
+    @unittest.skipUnless(sys.platform == "win32", "real kernel32 calls")
+    def test_real_windows_api(self):
+        api = entry._WindowsProcessApi()
+        pids = api.live_pids()
+        self.assertIsNotNone(pids)
+        self.assertIn(os.getpid(), pids)
+        self.assertIsNot(entry._windows_pid_alive(4, api), False, "the System process is never reported dead")
+        self.assertIs(entry._windows_pid_alive(os.getpid(), api), True)
 
 
 class BindTests(Isolated):

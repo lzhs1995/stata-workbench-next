@@ -27,8 +27,8 @@
       "bytes": 17618
     },
     "scripts/patch_manager.js": {
-      "sha256": "a0827ec26a469063b83c2038634a19d94b77d1286c50352d33976d798c1ee940",
-      "bytes": 94735
+      "sha256": "f68d727b8b0350ef6ca69b29716d7ef2deea7b4ccd150bf545cb242524c454d5",
+      "bytes": 94897
     },
     "scripts/mcp_stata_runtime_patch.js": {
       "sha256": "64013014e8598af5c7f70a276cd80a2f5c21d218eaa6fba59f079096c8f75ac9",
@@ -111,8 +111,8 @@
       "bytes": 5178
     },
     "scripts/apply_rc7_shared_execution_patch.js": {
-      "sha256": "28feed93da9cdab6be81d0ab666c758d8caa34e6dcb84491eb7b5f04ee2f97b2",
-      "bytes": 339389
+      "sha256": "976c3355338b5a7352306e74486203613a01cb88f4e0dbcc47f50d87444d092b",
+      "bytes": 339586
     },
     "scripts/apply_rc64_routes_patch.js": {
       "sha256": "b01e1225f5844b632e24d616957fb9e565541345a10d6f4fbc640a4b034070b2",
@@ -139,8 +139,8 @@
       "bytes": 11107
     },
     "dist/extension.js": {
-      "sha256": "d2e8aedd92b80b92b3e8349dff5d2c41f9544cce0e1ceeb1f106ae568137507e",
-      "bytes": 5638990
+      "sha256": "c6c52adc44cbb08a5be9677b87cece9c394e480c19db365253f1a7bf94dc858c",
+      "bytes": 5640926
     },
     "scripts/mac/png_compat_transform.js": {
       "sha256": "cdea12886a1d5bb5b4c2b3e38829de1c7e68ed70e7777e8d6e2eb02bb0ce3514",
@@ -343,8 +343,8 @@
       "bytes": 4729
     },
     "tools/verified_workbench.py": {
-      "sha256": "5fd1af4b617325e7405d65d5e70aaf70483dad74676328d1557a07a4c3010471",
-      "bytes": 20125
+      "sha256": "da7d9caf20f132e8c3e3648a9ed34d2817a4f3f38ed9374b37d9ddd4092d0381",
+      "bytes": 21973
     },
     "tools/workbench_platform.py": {
       "sha256": "1e393f9070e53f475ba98a88e1ea3760e504f05919019f22da7c942d4af717f8",
@@ -431,8 +431,8 @@
       "bytes": 1546
     },
     "scripts/guard_cancel_restore_core.js": {
-      "sha256": "2af5f89b5fa30781a32932b3d8c0e50b9111fa0edbb30a773e2e676d66549a15",
-      "bytes": 13721
+      "sha256": "66750784b779c2282b3d7b8abd72c00c24b20e681767091883f1a55e8ca52e73",
+      "bytes": 14448
     }
   },
   "acceptanceStatus": "PENDING_LICENSED_MAC_FULL_ACCEPTANCE",

@@ -1476,6 +1476,11 @@ const REQUIRED_MARKERS = [
     label: "snapshotless soft-stop quiescence probe owns its rc",
     marker: "codex patch rc.7.76: soft-stop quiescence probe owns its rc",
   },
+  {
+    key: "stopFeedbackTruth",
+    label: "Stop and KILL feedback match what they did",
+    marker: "codex patch rc.7.77: stop feedback tells the truth",
+  },
 ];
 
 const AUXILIARY_MARKERS = [

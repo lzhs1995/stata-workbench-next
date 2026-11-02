@@ -3448,5 +3448,7 @@ text = require("./apply_download_uri_binding_patch").patchBundle(text, { finaliz
 // F fix3: the snapshotless soft-stop quiescence probe owns its rc instead of
 // inheriting Stata's residual _rc from the Break.
 text = require("./apply_softstop_quiescence_rc_patch").patchBundle(text, { finalize: false });
+// F fix4: Stop and KILL feedback tell the truth (F-1 marker line, P10 fenced toast, F-5 skipped smoke).
+text = require("./apply_stop_feedback_truth_patch").patchBundle(text, { finalize: false });
 fs.writeFileSync(target, text, "utf8");
 console.log(baseAlreadyApplied ? "RC7_SHARED_EXECUTION_UPDATED" : "RC7_SHARED_EXECUTION_APPLIED", target);
