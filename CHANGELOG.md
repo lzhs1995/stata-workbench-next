@@ -1,3 +1,49 @@
+## 0.2.0-next.5 — Stop, recovery and Windows fixes
+
+The version has been `0.2.0-next.5` since PR #9. Entries are in merge order.
+PR #6 (agent edit gate) and PR #7 (pre-run snapshot with no variables) merged
+before 0.2.0-next.4; they are described in their own sections below.
+
+- **Ready only after the checkpoint is back (PR #9).** Stop cleared the busy flags before the checkpoint restore had finished, so `/status` could briefly report `trueReady=true` and accept a submission on unrestored data. A run-bound restore state now keeps the bridge not-ready, and submissions get the existing 423, until the restore completes or fails.
+- **Session trust, locks, cleanup and bridge errors (PR #10).**
+  - `/propose-edit` used a VS Code binding without `Uri.file` and failed with HTTP 400 on real installs (P8). It now uses the bundle's real binding.
+  - `tools/stata_session.py open --disable-workspace-trust` is an opt-in for workspaces you created yourself. The Trust prompt stays the default (P1).
+  - Named sessions use only their private execution lock, so agents in two sessions can submit at the same time (P4).
+  - `close` removes only the target session's registry file, and only when it is dead (P6).
+  - When the bridge gives up on an explicit port, it shows the port and why agents cannot connect. It never switches ports (P7).
+- **Windows probes, update policy and tmp cleanup (PR #11).**
+  - Listener lookup uses `GetExtendedTcpTable` through ctypes, and the process query is filtered and shared. One pre-dispatch observation took 2.3–2.6 s on the test machine, well under the 20 s timeout that refused agents when several sessions were open (W-P4).
+  - New session settings `setdefault` `update.mode: none`, `extensions.autoUpdate: false` and `extensions.autoCheckUpdates: false` (W-P3).
+  - Leftover registry `.tmp` files are removed on every `close` path, and only when their writer pid is known dead.
+- **Terminal Stop button (PR #12).** The webview always posts `cancelRun`, so a webview whose script stopped early cannot swallow the first click. The host cancels only when `__codexBridgeState.busy` is true; idle or missing state cancels nothing. This rescues the symptom; the webview script failure itself was not located.
+- **Guard cancel restore and cold-start outcome (PR #13).**
+  - A watchdog cancel of a dispatched payload goes through the same restore rule as Stop. With a checkpoint, the session restores it and becomes ready only after the recovery smoke. Without one, or when the restore fails, the session is fenced (`continuityLost`, `trueReady=false`) (W-P2).
+  - A transport timeout after the payload may have reached mcp-stata is reported as `EXEC_OUTCOME_UNKNOWN` with `outcomeUnknown` and `payloadMayHaveRun` (W-P1).
+  - A Stop that did not restore an expected checkpoint now locks the session. The automatic force reset inside a Stop escalation no longer counts as the explicit reset that unlocks it (P3).
+  - Confirming **Stata: KILL** once runs the recovery smoke automatically. If the smoke fails or there is no bridge port, the session stays at 423.
+  - The upstream Download handler had the same `Uri.file` defect as P8 and is fixed.
+- **Terminal Stop no longer restarts a healthy Stata (PR #14, rc.7.76).** A person's run has no checkpoint, so Stop checks that Stata is idle with a one-line probe. mcp-stata replays the leftover `_rc` before single-line commands, so the probe read the break's rc 1 (rc 111 in a new session), and the session escalated to a force reset that lost all in-memory data. The probe is now `capture noisily display as text "<marker>"`.
+- **Truthful Stop, KILL and guard-cancel feedback; Windows pid liveness (PR #15, rc.7.77).**
+  - On Windows, OpenProcess error 5 is checked against `K32EnumProcesses`. A pid missing from the list is dead; a listed pid, or no list, stays unknown (W-P6b).
+  - The Terminal Stop notice checks `fenced` and `continuityLost` first: "did not restore the pre-run state; the session is locked. Click Stata: KILL to unlock it." (P10).
+  - The quiescence probe result is narrowed to whole marker lines before matching, so an echo of the command alone no longer counts (F-1).
+  - A skipped recovery smoke is no longer reported as passed in either KILL notice (F-5).
+  - A guard cancel confirmed before Stata wrote any log is reported as `EXEC_OUTCOME_UNKNOWN` with `payloadMayHaveRun`, and the session stays locked (W-P1b).
+  - After a guard cancel, the probe checks the last 64 KiB of its own `logPath` when no result field has the exact marker line (W-P9m).
+- **Load at window open, named stalls, events stay with their task (PR #17, rc.7.78).**
+  - `tools/stata_session.py` now writes `stataMcp.loadStataOnStartup: true` by default, still via `setdefault`. `open` returns a `backendLoad` note: Stata loads in the background, `trueReady` does not wait for it, and a command sent meanwhile waits inside its own pre-log budget (W-P1).
+  - A guard cancel attaches its `stallReason` and `elapsedMs`. Stop and recovery reasons read for example `EXEC_PRELOG_STALL (IDLE)`, and every cancel writes `/status.lastGuardFailure`. `reasonCode` is unchanged because clients match on it (W-P10).
+  - A background run that ends without its response is recorded as an orphan. While an orphan is outstanding, events with an unknown task id are not given to the active run: they are dropped when the run already has its task id, or held until it learns it. The strict mode is tied to the MCP transport and ends when the backend is replaced; it no longer expires by time. The holding buffer keeps at most 256 events (root cause of W-P1b and W-P9m).
+- Live results for this version are in the README's platform tables. PR #15 was retested on Windows on `e7e54848`; PR #17 passes CI and its Windows live retest is in progress.
+
+## Agent edit gate 2026-11-01 — accepted diff before agent Stata edits
+
+- Merged as PR #6 (`3d169984`) before 0.2.0-next.4; not described here until now.
+- `POST /propose-edit` takes a path, the new content, the expected SHA-256 of the current file and a reason. It refuses a wrong path, a stale SHA, oversized content and a missing file, opens a VS Code diff with **Accept** and **Reject**, and checks the SHA again after review.
+- Accepted edits first save a timestamped copy of the old file (mode 0600), then write. Accept, reject and timeout outcomes go to the session event stream.
+- `docs/next/AGENT-EDIT-PERMISSIONS.md` adds Claude Code deny rules for direct edits of Stata files and records that Codex 0.164.0 has no equivalent rule.
+- On real installs the endpoint failed with HTTP 400 until PR #10 fixed its `Uri.file` binding.
+
 ## 0.2.0-next.4 — multi-session
 
 - New `tools/stata_session.py open|list|close <name>`. One session is one private profile, one VS Code window, one port and one mcp-stata runtime.

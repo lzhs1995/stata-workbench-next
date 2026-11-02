@@ -24,6 +24,7 @@ const LATER = [
   "./apply_download_uri_binding_patch",
   "./apply_softstop_quiescence_rc_patch",
   "./apply_stop_feedback_truth_patch",
+  "./apply_guard_attribution_patch",
 ];
 
 function revertLaterPatches(source) {

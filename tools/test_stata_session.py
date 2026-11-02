@@ -81,7 +81,9 @@ class OpenTests(Base):
         self.assertEqual(settings["stataMcp.nextSessionName"], "p1")
         self.assertEqual(settings["stataMcp.nextProfilePath"], str(p))
         self.assertEqual(settings["stataMcp.nextMcpConfigPath"], str(p / "mcp.json"))
-        self.assertIs(settings["stataMcp.loadStataOnStartup"], False)
+        # W-P1：默认开窗即加载 Stata（懒加载在 Windows 上让第一条命令挂到 PRE_LOG 截断）
+        self.assertIs(settings["stataMcp.loadStataOnStartup"], True)
+        self.assertIn("loads in the background", r["backendLoad"])
         self.assertEqual(os.path.realpath(p / "extensions"), os.path.realpath(self.root / "extensions-shared"))
         if POSIX:
             self.assertEqual((p / "mcp.json").stat().st_mode & 0o777, 0o600)
@@ -110,10 +112,12 @@ class OpenTests(Base):
         s = self.sessions()
         u = self.root / "profiles/p1/user-data/User"
         u.mkdir(parents=True)
-        (u / "settings.json").write_text(json.dumps({"editor.fontSize": 15, "stataMcp.loadStataOnStartup": True}))
-        s.open("p1", runtime_source=self.source, launch=False)
+        (u / "settings.json").write_text(json.dumps({"editor.fontSize": 15, "stataMcp.loadStataOnStartup": False}))
+        r = s.open("p1", runtime_source=self.source, launch=False)
         merged = json.loads((u / "settings.json").read_text())
-        self.assertEqual((merged["editor.fontSize"], merged["stataMcp.loadStataOnStartup"]), (15, True))
+        # 用户显式写的 false 不被新默认值覆盖，回包也说明第一条命令会去加载 Stata
+        self.assertEqual((merged["editor.fontSize"], merged["stataMcp.loadStataOnStartup"]), (15, False))
+        self.assertIn("loadStataOnStartup is false", r["backendLoad"])
         (u / "settings.json").write_text('{\n  // comment\n  "a": 1\n}')
         with self.assertRaisesRegex(ss.SessionError, "SETTINGS_NOT_PLAIN_JSON"):
             s.open("p1", runtime_source=self.source, launch=False)
