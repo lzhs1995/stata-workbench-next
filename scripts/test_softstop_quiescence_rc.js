@@ -20,8 +20,11 @@ const vm = require("node:vm");
 const patch = require("./apply_softstop_quiescence_rc_patch");
 const fingerprint = require("./finalize_bundle_identity");
 
+const { revertAfter } = require("./later_bundle_patches");
+
 const bundlePath = path.join(__dirname, "..", "dist", "extension.js");
-const bundle = fs.readFileSync(bundlePath, "utf8");
+// The layer this patch sealed: later patches (F fix4 rewrites the marker matcher) are reverted first.
+const bundle = revertAfter(fs.readFileSync(bundlePath, "utf8"), "./apply_softstop_quiescence_rc_patch");
 
 // Live-recorded probe results. rc/success/markerSeen are measured values.
 const LIVE = [

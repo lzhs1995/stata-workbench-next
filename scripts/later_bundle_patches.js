@@ -23,6 +23,7 @@ const LATER = [
   "./apply_guard_cancel_restore_patch",
   "./apply_download_uri_binding_patch",
   "./apply_softstop_quiescence_rc_patch",
+  "./apply_stop_feedback_truth_patch",
 ];
 
 function revertLaterPatches(source) {

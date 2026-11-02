@@ -20,7 +20,9 @@ const vm = require("node:vm");
 const patch = require("./apply_guard_cancel_restore_patch");
 
 const root = path.join(__dirname, "..");
-const bundle = fs.readFileSync(path.join(root, "dist", "extension.js"), "utf8");
+// F fix4 rewrites the KILL toasts this patch wrote; test the layer as of PR #14.
+const bundle = require("./later_bundle_patches").revertAfter(
+  fs.readFileSync(path.join(root, "dist", "extension.js"), "utf8"), "./apply_softstop_quiescence_rc_patch");
 const reverted = patch.revertBundle(bundle);
 
 function cut(source, start, end, label) {

@@ -201,4 +201,55 @@ const fullStop = core.classifySoftStopRestore(
 assert.equal(fullStop.restored, true);
 assert.equal(fullStop.continuityLost, null);
 
-console.log("PASS guard cancel restore core: cancel outcomes, transport timeout, recursion fence, envelopes, pending gate, soft-stop restore rule");
+// PR #13 review F-4: the two fence rails that could be deleted with green suites.
+// Oracles are the reviewer's matrix rows A4 and A8.
+const escalatedAfterDispatch = core.classifySoftStopRestore({
+  ok: true, restored: false, recoveryClass: "RECOVERED_FULL", hardEscalated: true,
+  restore: { ok: true, skipped: "no pre-run dataset snapshot", escalated: true, quiescenceProbe: { ok: true, rc: 0 } },
+}, null, { snapshotExpected: false, payloadDispatched: true });
+assert.equal(escalatedAfterDispatch.fenced, true, "an escalation after dispatch is fenced");
+assert.equal(escalatedAfterDispatch.fenceReason, "escalated-after-dispatch");
+assert.equal(escalatedAfterDispatch.quiescenceProved, false, "an escalated stop never counts as proved quiescent");
+const escalatedNoPayload = core.classifySoftStopRestore({
+  ok: true, restored: false, recoveryClass: "RECOVERED_FULL", hardEscalated: true,
+  restore: { ok: true, skipped: "no pre-run dataset snapshot", escalated: true, quiescenceProbe: { ok: true, rc: 0 } },
+}, null, { snapshotExpected: false, payloadDispatched: false });
+assert.equal(escalatedNoPayload.fenced, false, "the escalation rail needs a dispatched payload");
+const pathOnly = core.classifySoftStopRestore({
+  ok: true, restored: false, recoveryClass: "RECOVERED_FULL", restore: { ok: true, path: "/x/pre.dta" },
+}, null, { snapshotExpected: false, payloadDispatched: true });
+assert.equal(pathOnly.snapshotExpected, true, "a restore path implies a snapshot was expected");
+assert.equal(pathOnly.fenced, true);
+assert.equal(pathOnly.fenceReason, "snapshot-expected-not-restored");
+
+// W-P1b: a cancel confirmed before Stata wrote any log does not establish the
+// payload's fate (F-win2 R2: cancel confirmed 21:59:11Z, the code ran 21:59:13Z).
+const beforeLog = core.classifyGuardFailure({
+  policy: "PROGRESS", outcome: "EXEC_PRELOG_STALL", settlement: "CANCELLED", dispatched: true, firstLogSeen: false,
+});
+assert.equal(beforeLog.restore, true);
+assert.equal(beforeLog.cancelBeforeLog, true);
+assert.equal(beforeLog.outcomeUnknown, true, "cancel before the first log -> outcome unknown");
+assert.equal(beforeLog.reasonCode, core.UNKNOWN_CODE);
+assert.match(beforeLog.reason, /before Stata wrote any log/);
+const beforeLogEnvelope = core.unknownEnvelope(beforeLog, { status: 504, policy: "PROGRESS", runId: "r1" });
+assert.equal(beforeLogEnvelope.payloadMayHaveRun, true);
+assert.equal(beforeLogEnvelope.error, core.UNKNOWN_CODE);
+const afterLog = core.classifyGuardFailure({
+  policy: "PROGRESS", outcome: "EXEC_PRELOG_STALL", settlement: "CANCELLED", dispatched: true, firstLogSeen: true,
+});
+assert.equal(afterLog.outcomeUnknown, false, "a cancel after the payload logged output is a known cancel");
+assert.equal(afterLog.reasonCode, "EXEC_PRELOG_STALL");
+const noEvidence = core.classifyGuardFailure({
+  policy: "PROGRESS", outcome: "EXEC_PRELOG_STALL", settlement: "CANCELLED", dispatched: true,
+});
+assert.equal(noEvidence.outcomeUnknown, false, "callers that do not pass firstLogSeen keep the old rule");
+const drainedBeforeLog = core.classifyGuardFailure({
+  policy: "PROGRESS", outcome: "EXEC_PRELOG_STALL", settlement: "DRAINED", dispatched: true, firstLogSeen: false,
+});
+assert.equal(drainedBeforeLog.outcomeUnknown, false, "a drained transport settled the payload even without a log");
+const pendingBeforeLog = core.createPendingOutcomes();
+pendingBeforeLog.open("r1", { reason: beforeLog.reason, outcome: beforeLog.outcome });
+assert.equal(pendingBeforeLog.gate().status, "outcome-unknown", "the session stays closed until a reset clears it");
+
+console.log("PASS guard cancel restore core: cancel outcomes, transport timeout, recursion fence, envelopes, pending gate, soft-stop restore rule, fence rails (F-4), cancel before log (W-P1b)");

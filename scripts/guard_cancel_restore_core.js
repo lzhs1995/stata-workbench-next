@@ -36,6 +36,7 @@ const TRANSPORT_TIMEOUT = /Request timed out|-32001|RequestTimeout|ETIMEDOUT/i;
 
 const UNKNOWN_CODE = "EXEC_OUTCOME_UNKNOWN";
 const UNKNOWN_MESSAGE = "transport timed out after the payload was dispatched; it may still run in Stata";
+const CANCEL_BEFORE_LOG_MESSAGE = "the cancel was confirmed before Stata wrote any log for this payload; it may still run in Stata";
 
 function text(value) {
   return String(value == null ? "" : value);
@@ -61,12 +62,19 @@ function classifyGuardFailure(input = {}) {
   const cancelled = CANCEL_OUTCOMES.has(outcome);
   if (!cancelled && !verdict.transportTimeout) return verdict;
   verdict.restore = true;
+  // W-P1b.  A confirmed cancel before Stata wrote any log only proves that
+  // mcp-stata accepted the cancel; the command may still be queued.  Windows
+  // cold start, F-win2 R2: cancelRun confirmed at 21:59:11Z, and the human's
+  // `global F1_HUMAN ...` reached the Stata log at 21:59:13Z.  Callers that do
+  // not say whether a log was seen keep the old rule.
+  const cancelBeforeLog = settlement === "CANCELLED" && input.firstLogSeen === false;
+  verdict.cancelBeforeLog = cancelBeforeLog;
   // The payload's fate is established only by a confirmed cancel or a settled
   // transport.  A transport timeout never establishes it.
-  verdict.outcomeUnknown = verdict.transportTimeout || !SETTLED.has(settlement);
+  verdict.outcomeUnknown = verdict.transportTimeout || !SETTLED.has(settlement) || cancelBeforeLog;
   verdict.reasonCode = verdict.outcomeUnknown ? UNKNOWN_CODE : (outcome || "EXEC_GUARD_CANCEL");
   verdict.reason = verdict.outcomeUnknown
-    ? UNKNOWN_MESSAGE
+    ? (cancelBeforeLog && !verdict.transportTimeout ? CANCEL_BEFORE_LOG_MESSAGE : UNKNOWN_MESSAGE)
     : "guard cancelled the dispatched payload (" + (outcome || "unknown") + ")";
   return verdict;
 }

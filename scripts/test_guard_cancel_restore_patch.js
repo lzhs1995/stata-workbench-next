@@ -12,7 +12,9 @@ const patch = require("./apply_guard_cancel_restore_patch");
 const fingerprint = require("./finalize_bundle_identity");
 
 const root = path.join(__dirname, "..");
-const bundle = fs.readFileSync(path.join(root, "dist", "extension.js"), "utf8");
+// F fix4 rewrites the KILL toasts this patch wrote; test the layer as of PR #14.
+const bundle = require("./later_bundle_patches").revertAfter(
+  fs.readFileSync(path.join(root, "dist", "extension.js"), "utf8"), "./apply_softstop_quiescence_rc_patch");
 
 assert.ok(bundle.includes(patch.MARKER), "F2 marker is in the shipped bundle");
 assert.equal(patch.patchBundle(bundle, { finalize: false }), bundle, "F2 patch is idempotent");
