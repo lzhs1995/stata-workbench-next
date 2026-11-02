@@ -1481,6 +1481,11 @@ const REQUIRED_MARKERS = [
     label: "Stop and KILL feedback match what they did",
     marker: "codex patch rc.7.77: stop feedback tells the truth",
   },
+  {
+    key: "guardAttribution",
+    label: "guard cancel names its own stall and events stay with their task",
+    marker: "codex patch rc.7.78: guard cancel names its own stall and events stay with their task",
+  },
 ];
 
 const AUXILIARY_MARKERS = [

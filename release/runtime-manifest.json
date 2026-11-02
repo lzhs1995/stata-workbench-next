@@ -27,8 +27,8 @@
       "bytes": 17618
     },
     "scripts/patch_manager.js": {
-      "sha256": "f68d727b8b0350ef6ca69b29716d7ef2deea7b4ccd150bf545cb242524c454d5",
-      "bytes": 94897
+      "sha256": "bf3e309ff4c37e183b10c12b0abd5bad0d469eab896462992247682d55b3ca74",
+      "bytes": 95115
     },
     "scripts/mcp_stata_runtime_patch.js": {
       "sha256": "64013014e8598af5c7f70a276cd80a2f5c21d218eaa6fba59f079096c8f75ac9",
@@ -111,8 +111,8 @@
       "bytes": 5178
     },
     "scripts/apply_rc7_shared_execution_patch.js": {
-      "sha256": "976c3355338b5a7352306e74486203613a01cb88f4e0dbcc47f50d87444d092b",
-      "bytes": 339586
+      "sha256": "8c6f7e13dcd5b8e489c4f4f776c6418675183166b7b922e310dc78a2766babf9",
+      "bytes": 339852
     },
     "scripts/apply_rc64_routes_patch.js": {
       "sha256": "b01e1225f5844b632e24d616957fb9e565541345a10d6f4fbc640a4b034070b2",
@@ -139,8 +139,8 @@
       "bytes": 11107
     },
     "dist/extension.js": {
-      "sha256": "c6c52adc44cbb08a5be9677b87cece9c394e480c19db365253f1a7bf94dc858c",
-      "bytes": 5640926
+      "sha256": "31b3de39d0c85b2a205677fe6be3d15f704a4a99d095fe7bb997a3e7ea6175cd",
+      "bytes": 5643614
     },
     "scripts/mac/png_compat_transform.js": {
       "sha256": "cdea12886a1d5bb5b4c2b3e38829de1c7e68ed70e7777e8d6e2eb02bb0ce3514",
@@ -343,7 +343,7 @@
       "bytes": 4729
     },
     "tools/verified_workbench.py": {
-      "sha256": "da7d9caf20f132e8c3e3648a9ed34d2817a4f3f38ed9374b37d9ddd4092d0381",
+      "sha256": "45414febe584e70c4a71c5740c45f0a1be02d00536ac583149eb226de42d1a86",
       "bytes": 21973
     },
     "tools/workbench_platform.py": {
@@ -431,8 +431,8 @@
       "bytes": 1546
     },
     "scripts/guard_cancel_restore_core.js": {
-      "sha256": "66750784b779c2282b3d7b8abd72c00c24b20e681767091883f1a55e8ca52e73",
-      "bytes": 14448
+      "sha256": "7efc929056497d016467231b82123e0ea902a8a018445fb409f4f24e58b3736a",
+      "bytes": 17013
     }
   },
   "acceptanceStatus": "PENDING_LICENSED_MAC_FULL_ACCEPTANCE",
