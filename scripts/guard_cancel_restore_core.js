@@ -73,10 +73,59 @@ function classifyGuardFailure(input = {}) {
   // transport.  A transport timeout never establishes it.
   verdict.outcomeUnknown = verdict.transportTimeout || !SETTLED.has(settlement) || cancelBeforeLog;
   verdict.reasonCode = verdict.outcomeUnknown ? UNKNOWN_CODE : (outcome || "EXEC_GUARD_CANCEL");
+  // W-P10 (W3 watchdog).  execution_guard maps every PROGRESS stall (PRE_LOG,
+  // IDLE, HARD_BUDGET) to the one code EXEC_PRELOG_STALL, so an IDLE cancel
+  // read as a pre-log stall.  The code stays (clients match on it); the stall
+  // reason this guard actually hit travels next to it and into every label.
+  verdict.stallReason = STALL_REASONS.has(text(input.stallReason)) ? text(input.stallReason) : null;
+  verdict.elapsedMs = Number.isFinite(input.elapsedMs) ? input.elapsedMs : null;
   verdict.reason = verdict.outcomeUnknown
     ? (cancelBeforeLog && !verdict.transportTimeout ? CANCEL_BEFORE_LOG_MESSAGE : UNKNOWN_MESSAGE)
-    : "guard cancelled the dispatched payload (" + (outcome || "unknown") + ")";
+    : "guard cancelled the dispatched payload (" + (outcome || "unknown")
+      + (verdict.stallReason ? ", " + verdict.stallReason : "") + ")";
   return verdict;
+}
+
+const STALL_REASONS = new Set(["PRE_LOG", "IDLE", "HARD_BUDGET", "OWNER_LOST"]);
+
+// The fence attaches the guard state's stall reason and elapsed time to a
+// verdict that was classified without them.
+function withStall(verdict, state) {
+  if (!verdict || !state) return verdict;
+  if (verdict.stallReason == null && STALL_REASONS.has(text(state.stallReason))) {
+    verdict.stallReason = text(state.stallReason);
+    if (verdict.restore && !verdict.outcomeUnknown) {
+      verdict.reason = "guard cancelled the dispatched payload (" + (verdict.outcome || "unknown") + ", " + verdict.stallReason + ")";
+    }
+  }
+  if (verdict.elapsedMs == null && Number.isFinite(state.elapsedMs)) verdict.elapsedMs = state.elapsedMs;
+  return verdict;
+}
+
+// "EXEC_PRELOG_STALL" for a pre-log stall keeps its old text; any other stall
+// reason is named, e.g. "EXEC_PRELOG_STALL (IDLE)".
+function reasonLabel(verdict) {
+  const code = text((verdict && verdict.reasonCode) || "EXEC_GUARD_CANCEL");
+  const stall = verdict && verdict.stallReason;
+  return stall && stall !== "PRE_LOG" ? code + " (" + stall + ")" : code;
+}
+
+// The record /status shows as lastGuardFailure: this cancel's own reason, run
+// and time, from whichever path (Terminal input or agent) it came.
+function failureRecord(verdict, context = {}) {
+  const now = context.now || (() => Date.now());
+  return {
+    at: new Date(now()).toISOString(),
+    runId: context.runId == null ? null : String(context.runId),
+    sourceMode: context.sourceMode == null ? null : String(context.sourceMode),
+    policy: (verdict && verdict.policy) || null,
+    reasonCode: (verdict && verdict.reasonCode) || null,
+    outcome: (verdict && verdict.outcome) || null,
+    stallReason: (verdict && verdict.stallReason) || null,
+    elapsedMs: verdict && Number.isFinite(verdict.elapsedMs) ? verdict.elapsedMs : null,
+    label: reasonLabel(verdict),
+    outcomeUnknown: !!(verdict && verdict.outcomeUnknown),
+  };
 }
 
 // Did soft Stop actually put the pre-run checkpoint back?
@@ -316,4 +365,5 @@ module.exports = {
   CANCEL_OUTCOMES, DISPATCH_POLICIES, UNKNOWN_CODE, UNKNOWN_MESSAGE,
   isTransportTimeout, classifyGuardFailure, restoreEstablished, continuityNote,
   classifySoftStopRestore, RESET_STEPS, unknownEnvelope, annotateEnvelope, createPendingOutcomes,
+  STALL_REASONS, reasonLabel, failureRecord, withStall,
 };

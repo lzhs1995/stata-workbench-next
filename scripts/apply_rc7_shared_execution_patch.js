@@ -3450,5 +3450,8 @@ text = require("./apply_download_uri_binding_patch").patchBundle(text, { finaliz
 text = require("./apply_softstop_quiescence_rc_patch").patchBundle(text, { finalize: false });
 // F fix4: Stop and KILL feedback tell the truth (F-1 marker line, P10 fenced toast, F-5 skipped smoke).
 text = require("./apply_stop_feedback_truth_patch").patchBundle(text, { finalize: false });
+// F fix5: a guard cancel names its own stall (W-P10) and mcp-stata events stay with
+// their task after a run was cut off before it learned its id (W-P1b / W-P9m root cause).
+text = require("./apply_guard_attribution_patch").patchBundle(text, { finalize: false });
 fs.writeFileSync(target, text, "utf8");
 console.log(baseAlreadyApplied ? "RC7_SHARED_EXECUTION_UPDATED" : "RC7_SHARED_EXECUTION_APPLIED", target);
