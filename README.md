@@ -18,6 +18,8 @@ results and graphs are shared.
 
 Each session's settings turn off VS Code and extension auto-update (`update.mode: none`) unless that profile already sets a value. Otherwise an update installed from one test window changes the user's VS Code install and blocks the next `open` with "Code is currently being updated".
 
+Each session also loads Stata when its window opens (`stataMcp.loadStataOnStartup: true`) unless that profile already sets a value. The load runs in the background and took about 58 s on Windows 11 (2026-11-02). `trueReady` does not wait for it; a command sent during the load waits inside its own 120 s pre-log budget. With the setting false, Stata loaded with the first command instead, and on Windows that first command stalled until the pre-log guard cancelled it and locked the session.
+
 Every session runs its own VS Code and Stata, so memory grows with the session count. On a 16.8 GB Windows 11 machine (2026-11-01), two sessions fit in memory. Three idle sessions used about 5.7 GB of private memory and pushed system commit past 28 GB. At that load a full `Win32_Process` query took 9.5 s and `Get-NetTCPConnection` took 18.3 s. With the client before this change, agents in two sessions were refused before dispatch because those queries hit the 20 s timeout. Check free memory before opening a third session on a machine of that size.
 
 ## What it is

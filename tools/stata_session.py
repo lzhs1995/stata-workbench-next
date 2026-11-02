@@ -117,6 +117,15 @@ def tree_bytes(root):
     return total
 
 
+def settings_value(path, key):
+    """settings.json 里 key 的值；文件读不到或不是 JSON 对象时返回 None。"""
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8") or "{}")
+    except (OSError, ValueError):
+        return None
+    return data.get(key) if isinstance(data, dict) else None
+
+
 def public(record):
     return {k: v for k, v in record.items() if k != "token"}
 
@@ -266,7 +275,10 @@ class Sessions:
                 raise SessionError(f"SETTINGS_NOT_PLAIN_JSON: {path} is not a JSON object; nothing was changed")
         updated = {**current, "stataMcp.visibleBridgePort": port, "stataMcp.nextSessionName": name,
                    "stataMcp.nextProfilePath": str(profile), "stataMcp.nextMcpConfigPath": str(config_path)}
-        updated.setdefault("stataMcp.loadStataOnStartup", False)
+        # W-P1（W3 实测）：false 时 Stata 推迟到第一条命令才加载，Windows 上懒加载后的第一个
+        # run_command_background 会挂到 break，PRE_LOG 120 s 一到就 504 并封会话；true 时开窗后台
+        # connect 约 58 s，第一条输入 6.1 s rc 0。setdefault：用户显式写的 false 照旧不动。
+        updated.setdefault("stataMcp.loadStataOnStartup", True)
         # 测试窗口不更新 VS Code 和扩展：Windows 上会话里自动装更新会改用户的安装，并让下一个 open 报
         # 「Code is currently being updated」。setdefault：这个 profile 里已有的显式值不动。
         updated.setdefault("update.mode", "none")
@@ -334,7 +346,13 @@ class Sessions:
                 "next": f"python3 -B tools/verified_workbench.py --status --session {name}",
                 "note": ("workspace trust was disabled for this session; use only with a workspace you created"
                           if disable_workspace_trust else "new workspaces require one Trust click before the bridge starts; "
-                          "launch is not execution; no bridge wait, no activation, no Stata command was sent")}
+                          "launch is not execution; no bridge wait, no activation, no Stata command was sent"),
+                "backendLoad": ("Stata loads in the background after the window opens (about 1 minute on Windows); "
+                                "trueReady does not wait for it, and a command sent meanwhile waits for the load "
+                                "inside its own pre-log budget"
+                                if settings_value(settings, "stataMcp.loadStataOnStartup") is not False else
+                                "loadStataOnStartup is false in this profile: Stata loads with the first command; "
+                                "on Windows that first command can stall until the pre-log guard cancels it")}
 
     def list(self):
         records = self.records()
