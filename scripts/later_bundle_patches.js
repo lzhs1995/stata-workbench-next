@@ -22,6 +22,7 @@ const LATER = [
   "./apply_f0b_stop_button_fallback_patch",
   "./apply_guard_cancel_restore_patch",
   "./apply_download_uri_binding_patch",
+  "./apply_softstop_quiescence_rc_patch",
 ];
 
 function revertLaterPatches(source) {

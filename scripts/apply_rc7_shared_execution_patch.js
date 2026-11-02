@@ -3445,5 +3445,8 @@ text = require("./apply_f0b_stop_button_fallback_patch").patchBundle(text, { fin
 text = require("./apply_guard_cancel_restore_patch").patchBundle(text, { finalize: false });
 // next F2b: Download builds its save-dialog Uri through the unwrapped binding.
 text = require("./apply_download_uri_binding_patch").patchBundle(text, { finalize: false });
+// F fix3: the snapshotless soft-stop quiescence probe owns its rc instead of
+// inheriting Stata's residual _rc from the Break.
+text = require("./apply_softstop_quiescence_rc_patch").patchBundle(text, { finalize: false });
 fs.writeFileSync(target, text, "utf8");
 console.log(baseAlreadyApplied ? "RC7_SHARED_EXECUTION_UPDATED" : "RC7_SHARED_EXECUTION_APPLIED", target);
