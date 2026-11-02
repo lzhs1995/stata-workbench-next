@@ -47,6 +47,15 @@ const NEW_MATCH = OLD_MATCH
   + "if(__field in __narrow)__narrow[__field]=__exactLines(__narrow[__field]);"
   + "if(__narrow.error&&typeof __narrow.error===\"object\")"
   + "__narrow.error={...__narrow.error,context:__exactLines(__narrow.error.context)};"
+  // W-P9m: after a guard cancel the cancelled command's late log_path event is
+  // attributed to the probe, so stdout holds the other command's log while
+  // logPath already points at the probe's own log. When no field has the exact
+  // line, the last 64 KiB of logPath are checked with the same rule.
+  + "if(__probeMarker&&typeof __narrow.logPath===\"string\"&&!__narrow.stdout){"
+  + "try{let __fs=require(\"fs\");let __size=__fs.statSync(__narrow.logPath).size;"
+  + "let __n=Math.min(__size,65536),__buf=Buffer.alloc(__n),__fd=__fs.openSync(__narrow.logPath,\"r\");"
+  + "try{__fs.readSync(__fd,__buf,0,__n,__size-__n)}finally{__fs.closeSync(__fd)}"
+  + "let __tail=__exactLines(__buf.toString(\"utf8\"));if(__tail)__narrow.stdout=__tail}catch{}}"
   + "__quiescenceResult=__narrow}}";
 
 // P10: the fence is checked before the old recoveryClass / ok ladder.

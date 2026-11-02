@@ -37,12 +37,12 @@ function classifySegment(source) {
   return cut(source, "let __quiescenceResult=__quiescenceAttempt.result;",
     "\"snapshotless soft-stop quiescence probe failed\")", "probe classification");
 }
-function classify(source, marker, result) {
+function classify(source, marker, result, detail) {
   const ctx = { __quiescenceCode: `capture noisily display as text "${marker}"\n`, __quiescenceAttempt: { result },
-    Number, String, outcome: "ACCEPTED" };
+    Number, String, Math, Buffer, require, outcome: "ACCEPTED", ran: null };
   vm.createContext(ctx);
-  vm.runInContext(`try{${classifySegment(source)}}catch(e){outcome="REJECTED"}`, ctx);
-  return ctx.outcome;
+  vm.runInContext(`try{${classifySegment(source)};ran=__quiescenceRan}catch(e){outcome="REJECTED"}`, ctx);
+  return detail ? { outcome: ctx.outcome, markerSeen: ctx.ran } : ctx.outcome;
 }
 const M = "___CODEX_SOFT_STOP_QUIESCENT_run_1___";
 const ECHO = `{com}. capture noisily display as text "${M}"\n`;
@@ -65,6 +65,34 @@ for (const [name, result, after, prior] of PROBE_CASES) {
   if (after !== prior) beforeWrong += 1;
 }
 assert.equal(beforeWrong, 3, "the previous matcher accepted exactly the three echo-only cases");
+// W-P9m (W3 job 2101 / WP9M-FIELDS.md): after a guard cancel the probe's stdout is
+// the cancelled command's log and logPath already points at the probe's own log.
+{
+  const os = require("node:os");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fix4-wp9m-"));
+  try {
+    const own = path.join(dir, "mcp_stata_0s7qnmwq.log");
+    fs.writeFileSync(own, `{com}. capture noisily display as text "${M}"\r\n{res}{txt}${M}\r\n`);
+    const echoOnly = path.join(dir, "echo_only.log");
+    fs.writeFileSync(echoOnly, `{com}. capture noisily display as text "${M}"\r\n`);
+    const otherLog = `. display "W3_COLD_FIRST"\nW3_COLD_FIRST\n___CODEX_RUN_DONE_debug_terminal_x___\n`;
+    const w3 = { success: true, rc: 0, stdout: otherLog, contentText: "", stderr: "", logPath: own };
+    assert.deepEqual(classify(bundle, M, w3, true), { outcome: "ACCEPTED", markerSeen: true },
+      "W3 shape: the probe's own log proves it ran");
+    assert.deepEqual(classify(before, M, w3, true), { outcome: "ACCEPTED", markerSeen: false },
+      "previous layer: accepted only on another command's rc");
+    const rc1 = { success: false, rc: 1, stdout: otherLog, logPath: own };
+    assert.equal(classify(bundle, M, rc1), "ACCEPTED", "rc 1 from another command, own log has the line");
+    assert.equal(classify(before, M, rc1), "REJECTED", "previous layer hard-reset this healthy backend");
+    assert.equal(classify(bundle, M, { ...rc1, logPath: echoOnly }), "REJECTED", "an echo-only log proves nothing");
+    assert.equal(classify(bundle, M, { ...rc1, logPath: path.join(dir, "missing.log") }), "REJECTED", "a missing log proves nothing");
+    const big = path.join(dir, "big.log");
+    fs.writeFileSync(big, M + "\n" + "x".repeat(70000) + "\n");
+    assert.equal(classify(bundle, M, { ...rc1, logPath: big }), "REJECTED", "only the last 64 KiB are read");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
 // rc.7.76's own bytes are untouched: its replay idempotence check depends on them.
 assert.ok(bundle.includes(require("./apply_softstop_quiescence_rc_patch").NEW_CLASSIFY), "rc.7.76 classification kept byte-identical");
 // The narrowed copy must not leak: the original result object is not mutated.
