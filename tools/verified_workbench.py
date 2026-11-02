@@ -66,23 +66,74 @@ class SessionIdentityError(RuntimeError):
 BOUND_SESSION_ID = None
 
 
+class _WindowsProcessApi:
+    """pid_alive 用到的三个 kernel32 调用。测试换成假的，就能在任何平台上走 Windows 分支。"""
+
+    def __init__(self):
+        import ctypes
+        self._ctypes = ctypes
+        self._kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+
+    def open_query(self, pid):
+        """(handle, 0) 或 (None, GetLastError())。"""
+        handle = self._kernel.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        return (handle, 0) if handle else (None, self._ctypes.get_last_error())
+
+    def exit_code(self, handle):
+        code = self._ctypes.c_ulong()
+        if not self._kernel.GetExitCodeProcess(handle, self._ctypes.byref(code)):
+            return None
+        return code.value
+
+    def close(self, handle):
+        self._kernel.CloseHandle(handle)
+
+    def live_pids(self):
+        """K32EnumProcesses 列出的 pid 集合；拿不到返回 None。不需要管理员权限。"""
+        ctypes = self._ctypes
+        size = 1024
+        while size <= 1 << 20:
+            buf = (ctypes.c_ulong * size)()
+            needed = ctypes.c_ulong()
+            if not self._kernel.K32EnumProcesses(buf, ctypes.sizeof(buf), ctypes.byref(needed)):
+                return None
+            count = needed.value // ctypes.sizeof(ctypes.c_ulong)
+            if count < size:
+                return set(buf[:count])
+            size *= 2
+        return None
+
+
+def _windows_pid_alive(pid, api):
+    if pid <= 0:
+        return None
+    handle, error = api.open_query(pid)
+    if not handle:
+        if error == 87:  # ERROR_INVALID_PARAMETER = no such pid
+            return False
+        if error == 5:
+            # ERROR_ACCESS_DENIED 有两种：活着但没权限查（如 System pid 4），或刚退出、内核对象
+            # 还被别的句柄引用着（实测 pid 9764）。已退出的进程不在系统的进程列表里，
+            # 所以只在列表拿得到且确实没有这个 pid 时才判死；在列表里或拿不到列表都算未知。
+            pids = api.live_pids()
+            if pids is not None and pid not in pids:
+                return False
+        return None
+    try:
+        code = api.exit_code(handle)
+        if code is None:
+            return None
+        return code == 259  # STILL_ACTIVE
+    finally:
+        api.close(handle)
+
+
 def pid_alive(pid):
     """True 活着，False 确定已死，None 不知道（无权限、没有 pid）。未知一律当活，不跳过。"""
     if type(pid) is not int or pid <= 0:
         return None
     if sys.platform == "win32":
-        import ctypes
-        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
-        handle = kernel.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
-        if not handle:
-            return False if ctypes.get_last_error() == 87 else None  # ERROR_INVALID_PARAMETER = no such pid
-        try:
-            code = ctypes.c_ulong()
-            if not kernel.GetExitCodeProcess(handle, ctypes.byref(code)):
-                return None
-            return code.value == 259  # STILL_ACTIVE
-        finally:
-            kernel.CloseHandle(handle)
+        return _windows_pid_alive(pid, _WindowsProcessApi())
     try:
         os.kill(pid, 0)
         return True
