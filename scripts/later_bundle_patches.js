@@ -25,6 +25,7 @@ const LATER = [
   "./apply_softstop_quiescence_rc_patch",
   "./apply_stop_feedback_truth_patch",
   "./apply_guard_attribution_patch",
+  "./apply_terminal_warmup_patch",
 ];
 
 function revertLaterPatches(source) {

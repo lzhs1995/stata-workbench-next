@@ -1486,6 +1486,11 @@ const REQUIRED_MARKERS = [
     label: "guard cancel names its own stall and events stay with their task",
     marker: "codex patch rc.7.78: guard cancel names its own stall and events stay with their task",
   },
+  {
+    key: "terminalWarmup",
+    label: "Terminal input waits for Stata start-up before its pre-log budget",
+    marker: "codex patch rc.7.79: Terminal input waits for Stata start-up before its pre-log budget",
+  },
 ];
 
 const AUXILIARY_MARKERS = [
