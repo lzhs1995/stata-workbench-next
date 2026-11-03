@@ -68,9 +68,9 @@ Next 启动器从不选用 `17485`、`17416`、`17497`、`17507` 这几个端口
 
 扩展、Stata 服务运行时和 agent 工具是三样东西，每台机器各装一次。
 
-1. **下载 VSIX 并核对，再取同一 tag 的工具。** 从
-   [GitHub Releases](https://github.com/lzhs1995/stata-workbench-next/releases) 的预发布版
-   （tag 暂定 `v0.2.0-next.5`）下载 `stata-workbench-next-0.2.0-next.5.vsix`，把它的 SHA-256
+1. **下载 VSIX 并核对，再取同一 tag 的工具。** 从预发布版
+   [`v0.2.0-next.5`](https://github.com/lzhs1995/stata-workbench-next/releases/tag/v0.2.0-next.5)
+   下载 `stata-workbench-next-0.2.0-next.5.vsix`，把它的 SHA-256
    和发布说明里的值对一下：macOS 用 `shasum -a 256 <文件>`，Windows 用
    `(Get-FileHash <文件> -Algorithm SHA256).Hash.ToLower()`。然后克隆本仓库，切到同一个 tag。
    工具钉了 bundle 的 SHA-256，遇到别的构建一律拒绝；`python3 -B tools/verify_release.py --vsix <文件>`
@@ -134,7 +134,7 @@ VS Code 窗口。它马上返回 `LAUNCHED`：不等 bridge、不激活窗口、
 `--workspace` 时，会话用自己那个空的 `profiles/s1/workspace`。
 
 之后 Stata 在开窗时后台加载（启动器会写 `stataMcp.loadStataOnStartup: true`，配置目录里已设过的值不动），
-Windows 11 上 connect 用了 54–66 s，`open` 之后 97–108 s Stata 后端就绪。`trueReady` 不等这次加载；加载期间交的命令会在它自己 120 s 的首日志时限内等加载完成。在 Windows 上，第一条命令请经 agent 工具发送，见[已知限制](#已知限制)。
+Windows 11 上 connect 用了 54–66 s，`open` 之后 97–108 s Stata 后端就绪。`trueReady` 不等这次加载。加载期间在 Terminal 交的命令会先等 Stata worker 进入 running；等过 2 s，Terminal 显示「Waiting for Stata to finish loading…」。见[已知限制](#已知限制)。
 
 新工作区会以 VS Code 的受限模式（Restricted Mode）打开，点一次 **Trust** 之后扩展才启动。
 只有对你专门为这个会话建的工作区，才用 `--disable-workspace-trust`。找不到 Stata 时，在窗口里设置
@@ -272,27 +272,29 @@ agent 客户端的其他选项：`--list-sessions` 打印注册表；`--events 0
 | 两个会话，8 轮同时提交 agent 命令、其中 2 轮按 Stop；Terminal Stop 3 次 | `3765d82a`，11-03 | 通过。没被停的 14/14 全部通过；被停的 2 次都恢复了，没有强制重置；日志没有串到另一个会话；每轮 21.4–24.8 s。Terminal Stop 3/3 第一次点击就停 |
 | `close` 清理残留的临时注册表文件 | `171138b6`，11-02；`e7e54848`，11-03 | `171138b6` 上部分通过（漏了一个文件）。`e7e54848` 上通过：写入进程已退出的文件被删，注册表为空。「进程已退出却报错误码 5」这种情况没出现（三个都报 87），那一支只有单元测试 |
 | 跳过恢复 smoke 时的 KILL 提示；迟到事件后探针读自己的日志 | `e7e54848`，11-03 | 部分通过。前者在 Windows 上走不到（那里 KILL 一定会跑 smoke）；后者需要的迟到事件在两次懒加载里都没复现。两支都只有单元测试 |
+| 新开窗、`connect` 刚完成就发的第一条 Terminal 命令 | `e5d2cda7`，11-04 | 通过，3/3。HTTP 200、rc 0，3.05–3.12 s 返回；第二条也通过。派发前扩展先查了 worker 状态（`list_sessions` 4–6 ms；worker 已在 running，所以没有出现等待提示）。同一检查在 `3765d82a` 上也 2/2 通过，所以这次复测不能说明之前那次卡住已经消除 |
+| 开窗后第一条 agent 命令；4 次 agent 运行、最后一次软 Stop；Terminal Stop | `e5d2cda7`，11-04 | 通过。第一条 agent 命令 11.5 s 返回 rc 0。第 1–3 次 14.4–15.7 s 通过；被停的那次恢复了检查点（`restored=true`，没有强制重置），Stop 之前的数据保留。Terminal Stop 第一次点击就停，Stata 进程不变 |
 
 macOS Intel 和 Windows Server 2022 在每个 PR 的 CI 上跑离线测试和打包（没有授权的 Stata）。
 Windows 10、Windows on ARM 和 Linux 未验证。
 
 PR #15（Stop/KILL 提示与实际结果一致、Windows 进程存活判定、静默探针修复）已在 Windows 上用 `e7e54848` 实机复测
 （表中 11-03 各行）。PR #17（`e9b22430`：开窗即加载 Stata、看门狗取消写明自己的停顿、迟到事件跟着自己的任务走）
-已在 Windows 上用它的 head `3765d82a`（bundle 与 `e9b22430` 相同；表中标 `3765d82a` 的各行）实机复测。三项修复都成立，但 Stata 刚加载完就发的 Terminal 命令仍可能卡住，见[已知限制](#已知限制)。macOS 自 `579b0fe9` 之后没有再做实机复测。
+已在 Windows 上用它的 head `3765d82a`（bundle 与 `e9b22430` 相同；表中标 `3765d82a` 的各行）实机复测。三项修复都成立，但 Stata 刚加载完就发的 Terminal 命令卡过一次。PR #18（`1bf02d02`：Terminal 命令派发前先等 Stata warm-up）
+已在 Windows 上用它的 head `e5d2cda7`（源码树相同；表中 11-04 各行）实机复测，见[已知限制](#已知限制)。macOS 自 `579b0fe9` 之后没有再做实机复测。
 
 ## 已知限制
 
 `main` 上已修复（`e9b22430`，PR #17），并已在 Windows 上用 `3765d82a`（11-03）实机确认，另有注明的除外：
 
-- **Windows：开窗后的第一条命令曾经会把会话锁住（只修好一部分，见下面第一个未解决问题）。** `stataMcp.loadStataOnStartup: false` 时，Stata 要等第一条命令来了才加载。在 Windows 上，这第一条命令 3 次卡了 2 次，约 120 s 后返回 HTTP 504，会话被锁。启动器现在默认写 `true`，Stata 在开窗时就加载（Windows 11 上 57.7 s）。配置目录里显式写了 `false` 的，问题照样会出现；启动器保留这个值，`open` 的回包会在 `backendLoad` 里说明。这样的会话被锁后点 **Stata: KILL** 解锁；要避免，就在 `open` 之前把 `profiles/<名字>/user-data/User/settings.json` 里的 `false` 删掉。到目前为止的测试里，macOS 没有这个问题。
+- **Windows：开窗后的第一条命令曾经会把会话锁住（只修好一部分，见下面第一个未解决问题）。** `stataMcp.loadStataOnStartup: false` 时，Stata 要等第一条命令来了才加载。在 Windows 上，这第一条命令 3 次卡了 2 次，约 120 s 后返回 HTTP 504，会话被锁。启动器现在默认写 `true`，Stata 在开窗时就加载（Windows 11 上 57.7 s）。配置目录里显式写了 `false` 的，问题照样会出现（最后一次在 `3765d82a` 上核过）；启动器保留这个值，`open` 的回包会在 `backendLoad` 里说明。这样的会话被锁后点 **Stata: KILL** 解锁；要避免，就在 `open` 之前把 `profiles/<名字>/user-data/User/settings.json` 里的 `false` 删掉。到目前为止的测试里，macOS 没有这个问题。
 - **被取消命令的迟到事件曾经记到别的运行上。** 在 Windows 上，一条取消已报「确认」的命令约 2 s 后照样执行了，它迟到的日志事件被交给了紧接着的那次运行（静默探针）。当时会话是锁住的，没人在错误状态上接着做；PR #15 之后，这种回包报 `EXEC_OUTCOME_UNKNOWN` 并带 `payloadMayHaveRun: true`（已在 Windows 上用 `e7e54848` 实机确认）。PR #17 让事件跟着自己的任务走：一次运行没等到回包就结束后，task id 不明的事件不再交给当前运行，而是暂存或丢弃。暂存区最多 256 条；如果 256 条全是 `log_path` 或 `task_done`，新来的 `task_done` 可能被丢。
 - **看门狗取消曾经显示上一次失败的原因。** 在 agent 路径上，看门狗取消之后的状态沿用了之前一次 Terminal 失败的原因和时长。现在每次取消都写自己的 `stallReason` 和 `elapsedMs`，锁定原因写成例如 `EXEC_PRELOG_STALL (IDLE)`。`reasonCode` 本身对各种停顿仍都是 `EXEC_PRELOG_STALL`，因为客户端按它匹配。
 
 当前 `main` 上还没解决的问题：
 
-- **Windows：Stata 刚加载完就发的 Terminal 命令仍可能把会话锁住。** 在 `3765d82a` 的复测中，开窗后第一条 agent 命令 3/3 通过；但 `connect` 刚完成就发的第一条 Terminal 命令在首条日志前卡住，163.9 s 后返回 HTTP 504，会话被锁（下一条得 423）。对 bundle 的离线分析表明：agent 路径会先等 Stata worker 进入 running 再派发，Terminal 路径不等；Windows 那一侧具体卡在哪里还没确认。让 Terminal 命令也等同一个 warm-up 的修复（FIX6）正在审查，尚未合并。在那之前，Windows 上 `open` 之后的第一条命令请经 agent 工具发送（就是 3/3 通过的那条路径）；会话被锁时点 **Stata: KILL**。
-
-- **Stata 还在加载时交的命令**，会在它自己 120 s 的首日志时限内等加载完成，因为 `trueReady` 不等后台加载。这种情况还没有实机测过。
+- **Windows：Stata 加载完后的第一条 Terminal 命令卡过一次，原因未确认。** 在 `3765d82a` 上，`connect` 刚完成就发的第一条 Terminal 命令在首条日志前卡住，163.9 s 后返回 HTTP 504，会话被锁（下一条得 423）。agent 路径会先等 Stata worker 进入 running 再派发，Terminal 路径当时不等。PR #18 让 Terminal 命令也等同一个 warm-up。在 `e5d2cda7` 上同一检查 3/3 通过，但同一天 `3765d82a` 也 2/2 通过，所以这次卡住是间歇的，复测不能证明它已经消除。Windows 那一侧具体卡在哪里仍不清楚。会话被锁时点 **Stata: KILL**，重交之前先看回执。
+- **Stata 还在加载时交的命令。** `trueReady` 不等后台加载。Terminal 命令会先等 Stata worker 进入 running；等过 2 s，Terminal 显示「Waiting for Stata to finish loading…」，按 Stop 可以取消等待。等满 300 s 或 warm-up 失败时，命令在发出之前就被拒绝（`PRE_RUN_BACKEND_WARMUP_TIMEOUT` 或 `PRE_RUN_BACKEND_WARMUP_FAILED`，`payloadDispatched=false`）。读不到 worker 状态时照常发送，Terminal 会写明无法确认加载已完成。所有实机复测里，第一条命令到达时 worker 都已在 running，所以等待提示、等待中按 Stop 和这两种拒绝都只有离线测试。
 - **Windows 上的 Stata: KILL 会结束本机所有 Stata 图形界面进程**，不只是本会话的。确认之前先保存其他 Stata 窗口里的工作。
 - **长时间不输出的命令。** 60 s 不写日志的命令（比如 `bootstrap … nodots`）会被当作卡死而取消。这条规则继承自稳定版。长命令请加进度输出。
 - **Windows 派发开销。** 在 Windows 上，每次 agent 提交比 Stata 本身的工作多花约 15 s（派发前检查和回执核验）；一条短命令从头到尾要 17.4 s。20 轮 8 s 命令里，每次提交的固定开销是 12–18 s。
@@ -319,7 +321,8 @@ PR #15（Stop/KILL 提示与实际结果一致、Windows 进程存活判定、�
 | `candidate identity mismatch` | 装好的 VSIX 不是你的克隆钉的那个构建。切到 VSIX 对应的提交 |
 | bridge 返回 HTTP 401 或 403 | 请求要带会话 token、`Host: 127.0.0.1:<端口>`，并且不能带 `Origin`。用 agent 工具，它会从注册表读 token |
 | 状态栏 **Stata: STALE**，运行返回 HTTP 423 | 点 **Stata: KILL** 并确认。它会强制重置本会话的后端，并自己跑恢复 smoke；Stata 内存里的数据会丢 |
-| Windows：开窗后第一条命令返回 HTTP 504（`EXEC_PRELOG_STALL` 或 `EXEC_OUTCOME_UNKNOWN`），会话被锁 没有完全修好：在 `3765d82a` 上，刚加载完就发的 Terminal 命令仍卡过一次（163.9 s 后 HTTP 504）；配置目录把 `loadStataOnStartup` 设成 `false` 时也会出现。第一条命令请经 agent 工具发送。点 **Stata: KILL** 解锁；在 Windows 上 KILL 还会结束本机所有其他 Stata 图形界面进程。命令可能已经执行过，重交之前先看回执。下次 `open` 之前把 `false` 删掉 |
+| Windows：开窗后第一条命令返回 HTTP 504（`EXEC_PRELOG_STALL` 或 `EXEC_OUTCOME_UNKNOWN`），会话被锁 | 点 **Stata: KILL** 解锁；在 Windows 上 KILL 还会结束本机所有其他 Stata 图形界面进程。命令可能已经执行过，重交之前先看回执。如果配置目录把 `loadStataOnStartup` 设成 `false`，下次 `open` 之前把这一项删掉。见[已知限制](#已知限制) |
+| Terminal 显示「Waiting for Stata to finish loading…」 | Stata 还在启动。等它，或者按 Stop 取消；这时什么都还没发出。等满 300 s 命令会以 `PRE_RUN_BACKEND_WARMUP_TIMEOUT` 被拒绝，没有发出 |
 | `close` 返回 `CLOSE_PENDING` | 那个窗口里 VS Code 在问要不要保存修改。先回答它，再跑一次 `close` |
 | `No module named 'mcp.server.fastmcp'` | 运行时装成了 MCP 2.x。用约束文件重装 |
 | agent 超时或结果不明 | 不要直接重交。先看回执和 `--events`；超时不能证明 Stata 没执行 |

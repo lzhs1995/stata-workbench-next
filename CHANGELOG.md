@@ -34,12 +34,17 @@ before 0.2.0-next.4; they are described in their own sections below.
   - `tools/stata_session.py` now writes `stataMcp.loadStataOnStartup: true` by default, still via `setdefault`. `open` returns a `backendLoad` note: Stata loads in the background, `trueReady` does not wait for it, and a command sent meanwhile waits inside its own pre-log budget (W-P1).
   - A guard cancel attaches its `stallReason` and `elapsedMs`. Stop and recovery reasons read for example `EXEC_PRELOG_STALL (IDLE)`, and every cancel writes `/status.lastGuardFailure`. `reasonCode` is unchanged because clients match on it (W-P10).
   - A background run that ends without its response is recorded as an orphan. While an orphan is outstanding, events with an unknown task id are not given to the active run: they are dropped when the run already has its task id, or held until it learns it. The strict mode is tied to the MCP transport and ends when the backend is replaced; it no longer expires by time. The holding buffer keeps at most 256 events (root cause of W-P1b and W-P9m).
-- Live results for this version are in the README's platform tables. PR #15 was retested on Windows on `e7e54848`; PR #17 was retested on Windows on its head `3765d82a` (same bundle as `e9b22430`).
+- **Terminal commands wait for the Stata warm-up (PR #18, rc.7.79).**
+  - A Terminal command now runs the same backend warm-up as the agent path before its progress guard starts and before it is dispatched, so a slow Stata start no longer uses up the command's pre-log budget (W-P1).
+  - After 2 s of waiting the Terminal shows "Waiting for Stata to finish loading…" and reports progress every second. Stop cancels the wait (`PRE_RUN_BACKEND_WARMUP_CANCELLED`); after 300 s, or when the worker reports an error, the command is refused with `PRE_RUN_BACKEND_WARMUP_TIMEOUT` or `PRE_RUN_BACKEND_WARMUP_FAILED`. All three are refused before dispatch (`payloadDispatched=false`).
+  - If `list_sessions` is not available, the command is sent anyway and the Terminal says the load could not be confirmed.
+  - The warm-up cache is bound to the transport and the reset generation, so a reset backend is checked again.
+- Live results for this version are in the README's platform tables. PR #15 was retested on Windows on `e7e54848`; PR #17 was retested on Windows on its head `3765d82a` (same bundle as `e9b22430`); PR #18 was retested on Windows on its head `e5d2cda7` (same source tree as `1bf02d02`).
 - Release: https://github.com/lzhs1995/stata-workbench-next/releases/tag/v0.2.0-next.5
 
 Known issues:
 
-- **Windows: a Terminal command sent right after Stata loads can still lock the session (W-P1).** On `3765d82a` the first agent command after opening passed 3/3, but the first Terminal command sent right after `connect` completed stalled before any log output, returned HTTP 504 after 163.9 s and locked the session. A fix that makes Terminal commands wait for the backend warm-up (FIX6) is in review and not in this version. Send the first command through the agent tools.
+- **Windows: the first Terminal command after Stata loads stalled once; the cause is not confirmed (W-P1).** On `3765d82a` the first Terminal command sent right after `connect` completed stalled before any log output, returned HTTP 504 after 163.9 s and locked the session. With PR #18 the same check passed 3/3 on `e5d2cda7`, but `3765d82a` also passed 2/2 on the same day, so the stall is intermittent and is not proven fixed. The wait message and the warm-up refusals have offline tests only. If a session locks, click **Stata: KILL** and read the receipt before resubmitting.
 - **Stata: KILL on Windows ends every Stata GUI process on the machine**, not only this session's.
 
 ## Agent edit gate 2026-11-01 — accepted diff before agent Stata edits
