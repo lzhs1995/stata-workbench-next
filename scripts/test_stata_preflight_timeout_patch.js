@@ -22,7 +22,19 @@ assert.throws(() => patch.patchClient(fixture + patch.ORIGINAL), /unsupported/);
 assert.throws(() => patch.patchClient(patched.replace("900.0)", "901.0)")), /unsupported/);
 assert.throws(() => patch.patchClient(patched + patch.ORIGINAL), /unsupported/);
 
-// 已部署的 1.26.1 源码（若本机有）：锚点恰好 1 处，补丁后能编译。
+// 部署件只有两种合法状态：未打补丁（锚点 1 处、无补丁块、无 marker），或已打补丁（完整补丁块
+// 1 处、marker 1 处、锚点 0 处）。其余（都没有、重复、改过、半截）都不认。
+const count = (s, x) => s.split(x).length - 1;
+function classifyDeployed(source) {
+  const o = count(source, patch.ORIGINAL), r = count(source, patch.REPLACEMENT), m = count(source, patch.MARKER);
+  if (o === 1 && r === 0 && m === 0) return "unpatched";
+  if (o === 0 && r === 1 && m === 1) return "patched";
+  return "unsupported";
+}
+assert.equal(classifyDeployed(fixture), "unpatched");
+assert.equal(classifyDeployed(patched), "patched");
+
+// 已部署的 1.26.1 源码（若本机有）：两种合法状态之一；补丁结果（已打补丁时即原文）恰 1 个完整补丁块且能编译。
 const candidates = [process.env.MCP_STATA_CLIENT_SOURCE,
   path.join(process.env.HOME || "", ".local/share/stata-workbench/mcp-stata-1.26.1/lib/python3.11/site-packages/mcp_stata/stata_client.py")]
   .filter(p => p && fs.existsSync(p));
@@ -31,12 +43,37 @@ const python = process.env.STATA_PATCH_TEST_PYTHON || (process.platform === "dar
 let deployed = "absent";
 if (candidates.length) {
   const real = fs.readFileSync(candidates[0], "utf8").replace(/\r\n/g, "\n");
-  assert.equal(real.split(patch.ORIGINAL).length - 1, 1, "deployed anchor");
+  const state = classifyDeployed(real);
+  assert.notEqual(state, "unsupported", "deployed source state");
   const out = patch.patchClient(real);
+  if (state === "patched") assert.equal(out, real, "deployed patched source is a fixed point");
+  assert.equal(patch.patchClient(out), out, "deployed idempotent");
+  assert.equal(classifyDeployed(out), "patched");
   const compiled = cp.spawnSync(python, ["-B", "-c", "import sys,ast; ast.parse(sys.stdin.read())"], { input: out, encoding: "utf8" });
   assert.equal(compiled.status, 0, compiled.stderr);
-  deployed = "patched-and-parsed";
+  checkMutants(out, "deployed");
+  deployed = state + "-and-parsed";
 }
+// 变异对照：从一份已打补丁的源（合成夹具总跑；本机有部署件时再跑一遍）在内存里构造，不碰原文件。
+function checkMutants(base, label) {
+  const half = patch.REPLACEMENT.split("\n").slice(0, 4).join("\n") + "\n";
+  const mutants = {
+    "marker duplicated": base + "# " + patch.MARKER + "\n",
+    "replacement duplicated": base + patch.REPLACEMENT,
+    "replacement altered": base.replace("900.0)", "901.0)"),
+    "anchor altered": base.replace(patch.REPLACEMENT, () => patch.ORIGINAL.replace("timeout=60", "timeout=61")),
+    "half patch": base.replace(patch.REPLACEMENT, () => half),
+    "anchor and patch both": base + patch.ORIGINAL,
+    "neither": base.replace(patch.REPLACEMENT, ""),
+  };
+  assert.equal(classifyDeployed(base), "patched", label + " base");
+  for (const [name, text] of Object.entries(mutants)) {
+    assert.notEqual(text, base, label + " mutant applied: " + name);
+    assert.equal(classifyDeployed(text), "unsupported", label + " mutant caught: " + name);
+  }
+  return Object.keys(mutants).length;
+}
+const mutantsCaught = checkMutants(patched, "fixture");
 
 // 行为：把替换块里的取值逻辑单独跑一遍。
 const lines = patch.REPLACEMENT.split("\n");
@@ -50,4 +87,4 @@ const r = cp.spawnSync(python, ["-B", "-c", probe], { encoding: "utf8" });
 assert.equal(r.status, 0, r.stderr);
 const values = JSON.parse(r.stdout);
 assert.deepEqual(values, { None: 180, 30: 60, 240: 240, abc: 180, nan: 180, "1e9": 900, "-5": 60 });
-console.log(JSON.stringify({ verdict: "PREFLIGHT_TIMEOUT_PASS", deployed, values }));
+console.log(JSON.stringify({ verdict: "PREFLIGHT_TIMEOUT_PASS", deployed, mutantsCaught, values }));
