@@ -1,399 +1,425 @@
-# Stata Workbench Shared Session
+# Stata Workbench Shared Session (Next)
 
 [English](README.md) | [中文](README.zh-CN.md)
 
-> **Development line, not for daily use.** This is `stata-workbench-next`, the isolated
-> development repository for multi-session, agent identity, bridge authentication and
-> diff-gated edits. It installs as a separate extension (`lzhs1995.stata-workbench-next`)
-> with bridge port 17601. For research work use the stable release
+> **Development line.** This repository (`stata-workbench-next`) is where multi-session
+> support, agent identity, bridge authentication and reviewed agent edits are built and
+> tested. It does not replace the stable release,
 > [stata-workbench-shared-session](https://github.com/lzhs1995/stata-workbench-shared-session).
+> Keep using the stable release for research work until a Next build is promoted.
 
-A VS Code extension that lets a person and AI agents use one visible Stata
-session in turn. Both send code to the same backend, so data, macros, scalars,
-results and graphs are shared.
+A VS Code extension that gives a person and AI agents one shared, visible Stata
+session. Code from either side runs in the same Stata backend. Its progress
+streams into the **Stata Terminal** panel while it runs, so the person can watch
+an agent's run, interject, press **Stop**, fix the code and run it again. Data,
+macros, scalars, estimates and graphs stay shared until someone clears them.
 
-## Next multi-session launcher
+The Next line adds:
 
-`python3 -B tools/stata_session.py open <name>` keeps VS Code's Workspace Trust prompt by default. A new workspace needs one Trust click before the bridge starts. Use `--disable-workspace-trust` only for a workspace you created for this session and fully trust. Each named session has an independent profile, port, runtime, and private lock, so named sessions can run concurrently.
-
-Each session's settings turn off VS Code and extension auto-update (`update.mode: none`) unless that profile already sets a value. Otherwise an update installed from one test window changes the user's VS Code install and blocks the next `open` with "Code is currently being updated".
-
-Each session also loads Stata when its window opens (`stataMcp.loadStataOnStartup: true`) unless that profile already sets a value. The load runs in the background and took about 58 s on Windows 11 (2026-11-02). `trueReady` does not wait for it; a command sent during the load waits inside its own 120 s pre-log budget. With the setting false, Stata loaded with the first command instead, and on Windows that first command stalled until the pre-log guard cancelled it and locked the session.
-
-Every session runs its own VS Code and Stata, so memory grows with the session count. On a 16.8 GB Windows 11 machine (2026-11-01), two sessions fit in memory. Three idle sessions used about 5.7 GB of private memory and pushed system commit past 28 GB. At that load a full `Win32_Process` query took 9.5 s and `Get-NetTCPConnection` took 18.3 s. With the client before this change, agents in two sessions were refused before dispatch because those queries hit the 20 s timeout. Check free memory before opening a third session on a machine of that size.
-
-## What it is
-
-- In the editor: **Run Current File**, **Run Selection/Current Line**, the
-  Stata Terminal, the Stata Graphs panel and the Data Browser.
-- For agents: `tools/shared_stata.py` sends one command or one saved `.do` file
-  to the running session over a local HTTP bridge and writes a private receipt.
-- Submissions to one backend run one at a time. The person and the agent take
-  turns; do not type in the editor while an automated run is in progress.
-- Shared memory is not durable storage. Save data and results to disk before a
-  reset, a restart or closing VS Code.
-- Not included: Stata, Stata licenses, credentials or data. The bridge listens
-  on loopback only; it is not a remote or multi-user service.
+- **Several sessions at once.** Up to five named sessions, each with its own VS Code window, Stata backend, port and profile.
+- **Authenticated bridge.** Every local bridge request needs the session's token. The agent client reads it from the session's private registry file, so nobody copies tokens by hand.
+- **Reviewed agent edits.** An agent proposes a change to a `.do`, `.ado` or `.mata` file; it is written only after the person clicks **Accept** in a diff.
+- **Truthful Stop and recovery.** Stop restores the pre-run checkpoint when one exists. When it cannot, the session locks instead of silently continuing on the wrong data.
 
 Derived from [tmonk/stata-workbench](https://github.com/tmonk/stata-workbench)
 (AGPL-3.0-or-later); see [License](#license).
 
-### Versions
+## Contents
 
-| Version | State | Platform evidence |
+- [Relationship to the stable release](#relationship-to-the-stable-release)
+- [Requirements](#requirements)
+- [Install](#install) ([macOS](#macos), [Windows](#windows))
+- [Quick start](#quick-start)
+- [Features](#features)
+- [Platform test results](#platform-test-results)
+- [Known limitations](#known-limitations)
+- [Troubleshooting](#troubleshooting)
+- [Configuration](#configuration)
+- [Development](#development) and [License](#license)
+
+## Relationship to the stable release
+
+Next installs and runs side by side with the stable release. Nothing is shared
+between the two, so a Next test window cannot disturb a research session.
+
+| | Stable | Next |
 | --- | --- | --- |
-| [`v0.1.3-rc.7.45`](https://github.com/lzhs1995/stata-workbench-shared-session/releases/tag/v0.1.3-rc.7.45) | Latest pre-release (2026-10-31) | macOS and Windows, see [Platform status](#platform-status) |
-| [`v0.1.3-rc.7.44`](https://github.com/lzhs1995/stata-workbench-shared-session/releases/tag/v0.1.3-rc.7.44) | Earlier pre-release (2026-10-30) | macOS and Windows |
-| [`v0.1.3-rc.7.39-public.2`](https://github.com/lzhs1995/stata-workbench-shared-session/releases/tag/v0.1.3-rc.7.39-public.2) | Earlier pre-release (2026-09-09) | macOS only |
+| Extension id | `lzhs1995.stata-workbench-shared-session` | `lzhs1995.stata-workbench-next` |
+| Bridge port | `17485` | `17601` by default; the launcher picks a free port in `17601`–`17620` |
+| State directory | `~/.stata-workbench-shared` (default profile) | `~/.stata-workbench-next` (`STATA_WORKBENCH_NEXT_HOME`) |
+| Stata service runtime | Shared machine runtime | A private copy per session (APFS clone on macOS, full copy on Windows) |
+| Sessions | One per profile and port | Up to 5 named sessions on one machine |
+| Agent tools | `tools/` of the stable repository | `tools/` of this repository; they refuse a different bundle |
 
-This README describes `v0.1.3-rc.7.45`. Each result names the version it was
-measured on; rc.7.45 results are on the published VSIX (`b371bc61…`) unless a
-line says otherwise.
+The Next launcher never picks ports `17485`, `17416`, `17497` or `17507`, so a
+Next session cannot take a port used by stable-release tooling.
 
-### Documentation
-
-- [Cross-platform development and configuration](docs/CROSS_PLATFORM.md)
-- [Windows physical-machine runbook](docs/WINDOWS_ACCEPTANCE.md) and [early Windows tooling](docs/LEGACY_WINDOWS.md)
-- [Capability and evidence ledger](SYNC.md) and [acceptance scope](docs/ACCEPTANCE.md)
-- [macOS permissions](docs/MAC_PERMISSIONS.md) and [troubleshooting](docs/TROUBLESHOOTING.md)
-- [Shared execution and concurrency](docs/shared-execution-and-concurrency.md)
-- [Shared-session delivery lessons](docs/shared-session-delivery-lessons.md) and
-  [research handoff and archive lessons](docs/empirical-review-and-archive.md)
-- [Release maintenance](docs/RELEASE.md) and [changelog](CHANGELOG.md)
-- [中文使用指南](docs/USAGE.zh-CN.md)
-
-## Platform status
-
-One VSIX serves macOS and Windows. The macOS and Windows CI builds of the
-candidate contain byte-identical runtime files; they differ only in the line
-endings of bundled documents.
-
-| Platform | Tested environment | Result |
-| --- | --- | --- |
-| macOS, Apple Silicon | macOS 26.5 arm64, StataNow, VS Code 1.139.1, isolated profile | This release file installed (identity check passed); cold first run 200 rc 0. FULL45 scenarios rerun on this file with physical keys: S2, S6, S10, S12, S16, S20, S26 and S40 passed every step, and S43 ran 9/9 agent selections with 200 rc 0 (its one failure is the harness reading outputs from the wrong folder). On the build before the last fix, S2, S6, S10, S16, S20, S26 and S43 had failed because successful agent runs were answered as HTTP 500. S9, S11 and S33 ran every step and failed only harness evidence checks (transport receipts; restoring the previous app after a reopen). S41 failed as on rc.7.44 (see Known limitations); S34 could not send its first key (harness) |
-| macOS, Intel | CI only (macOS 15 Intel) | Offline tests and packaging; no licensed Stata run |
-| Windows 11 x64 | Windows 11 Home 24H2 (build 26100), Stata 18 MP, VS Code 1.121.0, Windows PowerShell 5.1, isolated profile | rc.7.45 (published VSIX): install and identity check, cold-start first run (backend 31.3 s), agent `do "<file>"` with a red line and `exit 0` 3/3 returned 200 rc 0 (500 on the earlier build), the same right after a force reset 3/3, a failing body returned its own rc 603 and error text, agent named graph exports (task5: 22 PNG, 28 SVG), Stop during the pre-run checkpoint recovered fully. On the build before the last fix, a soft Stop after the code had started restored 160 estimates and 80 graphs in 118 s without escalation. Runbook step 10 on the published VSIX, checked after the fact: after the user locked and unlocked the screen and declined a UAC prompt, the same backend and extension host were running (reset generation unchanged), and an agent run (200 rc 0), graph Open and Data Browser worked. The lock shows in Winlogon notifications; the UAC decline rests on the user's report. rc.7.44: stress run 32/32 and three Reload Window cold starts |
-| Windows, default install route | Same machine, empty `uv` cache | With `mcp<2` the service installed and imported; without it `uv` resolved MCP 2.x and the server failed to import |
-| Windows Server 2022 x64 | CI only | Offline tests, real file locks, process matching, PowerShell 5.1/7 entry points; no licensed Stata |
-| Windows 10, Windows on ARM, Linux | — | Not verified |
-
-### Windows runbook steps
-
-From the [Windows runbook](docs/WINDOWS_ACCEPTANCE.md), synthetic data only.
-Steps 1–8 passed on dev.5. Step 9 failed on dev.5 (the backend cold start
-exceeded a 60 s pre-run budget) and passed on dev.6 after the fix. Step 10 was
-run on dev.6 and again on rc.7.45 (checked after the fact on the published VSIX: same backend and extension host after lock, unlock and a declined UAC prompt; agent run, graph Open and Data Browser passed; the UAC decline rests on the user's report). Steps 1–8 were not
-repeated on dev.6–dev.8; rc.7.45 covered the runs listed in Platform status.
-
-| Step | Check |
-| --- | --- |
-| 1 | Run Current File: rc 0, 6 rows / 4 variables, CSV/DTA/GPH and two 800×480 PNGs, GPH reload |
-| 2 | Terminal graph thumbnail → **Open**: Stata Graphs loads the image; no execution counter changes |
-| 3 | Data Browser: 6 rows / 4 variables, Unicode label preserved |
-| 4 | Agent client: one POST, zero retries, shared scalar 40 → 42 |
-| 5 | Run Selection reads 42 on the same backend |
-| 6 | Second client submitted while the first is busy: dispatched after release, one POST each |
-| 7 | Stop during a run: task and transport drain, no hard reset, same backend |
-| 8 | Cleanup client: each cleanup rc 0, the empty original `default` frame restored |
-| 9 | Reload Window, then the first run with a cold backend start |
-| 10 | Lock/unlock and a cancelled UAC prompt while idle: backend, extension host and counters unchanged |
+Current version: `0.2.0-next.5` (`package.json`). GitHub Releases is the only
+distribution channel, and Next builds are published there as pre-releases; Next
+is not published to Open VSX or the Visual Studio Marketplace.
 
 ## Requirements
 
 | Item | Requirement |
 | --- | --- |
-| VS Code | 1.75 or later (tested: 1.139.1 on macOS, 1.121.0 on Windows) |
+| OS | macOS (Apple Silicon tested) or Windows 11 x64 |
+| VS Code | 1.75 or later (tested: 1.139.1 on macOS, 1.144.0 on Windows) |
 | Stata | A locally licensed installation (tested: StataNow on macOS, Stata 18 MP on Windows) |
-| `uv` / `uvx` | Used to start the `mcp-stata` service (`mcp-stata` 1.26.1 with `mcp<2`) |
-| Python 3 | Only for the agent and diagnostic tools in `tools/`. On Windows use the installed `python.exe`, not the Microsoft Store alias |
-| macOS permissions | System Events Automation and Accessibility for the host that runs the agent tools; see [macOS permissions](docs/MAC_PERMISSIONS.md) |
+| `uv` | Used once to create the Stata service runtime (`mcp-stata` 1.26.1 on Python 3.11) |
+| Python 3 | For the launcher and agent tools in `tools/`. On Windows use the installed `python.exe`, not the Microsoft Store alias |
+| Memory | Each open session runs its own VS Code and Stata; see [Known limitations](#known-limitations) |
+| Disk | macOS: the launcher refuses to open a session below 20 GB free. Windows: 2 GB plus the size of the runtime copy |
 
 ## Install
 
-Download `stata-workbench-shared-session-0.1.3-rc.7.45.vsix` and `SHA256SUMS`
-from the [v0.1.3-rc.7.45 release](https://github.com/lzhs1995/stata-workbench-shared-session/releases/tag/v0.1.3-rc.7.45)
-into one folder. Check the VSIX against `SHA256SUMS` before installing (see
-[Verifying a download](#verifying-a-download)); the release notes list the same hash.
+The extension, the Stata service runtime and the agent tools are three separate
+pieces. Install all three once per machine.
 
-The commands below install into a separate, identifiable profile. The agent
-tools find the session by this profile and port. If you only use the editor,
-**Extensions: Install from VSIX...** in your normal VS Code is enough.
+1. **Download the VSIX and check it, then get the tools at the same tag.**
+   Download `stata-workbench-next-0.2.0-next.5.vsix` from the pre-release
+   [`v0.2.0-next.5`](https://github.com/lzhs1995/stata-workbench-next/releases/tag/v0.2.0-next.5)
+   and compare its SHA-256 with the value in the release notes: `shasum -a 256 <file>` on macOS,
+   `(Get-FileHash <file> -Algorithm SHA256).Hash.ToLower()` on Windows. Then
+   clone this repository and check out the same tag. The tools pin the bundle's
+   SHA-256 and refuse to talk to any other build;
+   `python3 -B tools/verify_release.py --vsix <file>` checks a VSIX against the
+   clone's runtime manifest. To build the VSIX yourself, see [Development](#development).
+2. **Install the VSIX into the shared Next extensions directory.** The launcher
+   links every session's `extensions` folder to `~/.stata-workbench-next/extensions-shared`,
+   so install there and not into your daily VS Code profile.
+3. **Create the Stata service runtime** at the location the extension and the
+   launcher look for first. If the stable release is already installed on the
+   same machine, this runtime usually exists already; the launcher only reads
+   it and gives each session its own copy.
 
 ### macOS
 
 ```sh
-export STATA_WORKBENCH_PROFILE="$HOME/.stata-workbench-shared"
-export STATA_WORKBENCH_PORT=17485
-"/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code" \
-  --user-data-dir "$STATA_WORKBENCH_PROFILE/user-data" \
-  --extensions-dir "$STATA_WORKBENCH_PROFILE/extensions" \
-  --install-extension ./stata-workbench-shared-session-0.1.3-rc.7.45.vsix
-```
+git clone https://github.com/lzhs1995/stata-workbench-next.git
+cd stata-workbench-next
+git checkout v0.2.0-next.5   # the tag of your VSIX
 
-In that profile set `stataMcp.stataPath` to your licensed Stata executable.
+CODE="/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"
+"$CODE" --user-data-dir ~/.stata-workbench-next/install-user-data \
+  --extensions-dir ~/.stata-workbench-next/extensions-shared \
+  --install-extension ./stata-workbench-next-0.2.0-next.5.vsix
+
+RT=~/.local/share/stata-workbench/mcp-stata-1.26.1
+uv venv --python 3.11 "$RT"
+uv pip install --python "$RT/bin/python3" \
+  -c examples/platform-acceptance/service-constraints.txt mcp-stata==1.26.1
+```
 
 ### Windows
 
-In PowerShell:
+In PowerShell, from a clone of this repository:
 
 ```powershell
-$env:STATA_WORKBENCH_PROFILE = Join-Path $HOME '.stata-workbench-shared'
-$env:STATA_WORKBENCH_PORT = '17485'
-code --user-data-dir "$env:STATA_WORKBENCH_PROFILE\user-data" `
-  --extensions-dir "$env:STATA_WORKBENCH_PROFILE\extensions" `
-  --install-extension .\stata-workbench-shared-session-0.1.3-rc.7.45.vsix
+code --user-data-dir "$HOME\.stata-workbench-next\install-user-data" `
+  --extensions-dir "$HOME\.stata-workbench-next\extensions-shared" `
+  --install-extension .\stata-workbench-next-0.2.0-next.5.vsix
+
+$rt = Join-Path $env:LOCALAPPDATA 'stata-workbench\mcp-stata-1.26.1'
+uv venv --python 3.11 $rt
+uv pip install --python "$rt\Scripts\python.exe" `
+  -c examples\platform-acceptance\service-constraints.txt mcp-stata==1.26.1
 ```
 
-`code` is VS Code's `bin\code.cmd`. If it is not on `PATH`, see
-[Troubleshooting](#troubleshooting). Set `stataMcp.stataPath` to the licensed
-executable, for example `C:\Program Files\Stata18\StataMP-64.exe`. Variables set
-with `$env:` apply to the current PowerShell window only.
+`code` is VS Code's `bin\code.cmd`. If it is not on `PATH`, run
+`Get-Command code` and fix `PATH`, or call `Code.exe` through its full path.
+Use `python` instead of `python3` in all commands below.
 
-The tested Windows runs used the private profile and port 17497 created by the
-[operator kit](docs/WINDOWS_ACCEPTANCE.md), not the default profile above.
-
-### Agent tools
-
-The agent and diagnostic tools are in this repository, not in the VSIX. Clone it
-at the release tag, so the tools pin the same version as the installed VSIX:
-
-```sh
-git clone https://github.com/lzhs1995/stata-workbench-shared-session.git
-cd stata-workbench-shared-session
-git checkout v0.1.3-rc.7.45
-python3 -B tools/verified_workbench.py --doctor
-```
-
-On Windows use `python` instead of `python3`. `--doctor` prints JSON (OS and
-architecture, Python, VS Code, profile and port, Stata candidates, installed
-and running identity) and never starts VS Code or Stata.
+The constraints file pins `mcp<2` (`mcp==1.28.1`). Without it, `uv` resolves
+MCP 2.x and the service fails to import. A runtime elsewhere can be passed with
+`--runtime-source` or `STATA_WORKBENCH_RUNTIME_SOURCE`.
 
 ## Quick start
 
-With the same `STATA_WORKBENCH_PROFILE` and `STATA_WORKBENCH_PORT` set:
+All commands run from the repository root. Every tool prints one JSON object.
 
-1. macOS only, once: `python3 -B tools/verified_workbench.py --request-permissions`
-   in the host that will run the agent, and approve the system prompt.
-2. Open the profile with the example workspace:
-   `python3 tools/verified_workbench.py --open --workspace "$PWD/examples/minimal-workspace"`.
-   `--open` reuses the exact profile or launches it once.
-3. Set `stataMcp.stataPath` if you have not already.
-4. Run **Stata: Open Interactive Terminal**, open `smoke.do` and run
-   **Stata: Run Current File**. The Terminal prints `STATA_WORKBENCH_SMOKE_OK`.
-
-The first run after opening or reloading also starts the Stata service. On the
-dev.8 test machines this took 14.1 s (macOS) and 25.2 s (Windows). Wait for it;
-do not submit the run again. The one exception is `PRE_RUN_SNAPSHOT_TIMEOUT`
-(see [Troubleshooting](#troubleshooting)): that run was refused before your code
-was sent, so running it again is safe.
-
-### Share the session
-
-In the Stata Terminal run `scalar public_shared_demo = 40` and wait until it is
-ready. From a shell with the same profile and port:
+**1. Open a session.**
 
 ```sh
-python3 tools/shared_stata.py --code 'scalar public_shared_demo = public_shared_demo + 2' --cwd "$PWD"
+python3 -B tools/stata_session.py open s1 --workspace /absolute/path/to/project
 ```
 
-Back in the Terminal, `display public_shared_demo` shows 42. Finish with
-`scalar drop public_shared_demo`. Pick another name if that one is already in use.
+This creates `~/.stata-workbench-next/profiles/s1/`, picks a free port, writes
+the session's settings and starts one VS Code window. It returns `LAUNCHED`
+right away; it does not wait for the bridge, activate the window or send any
+Stata command. Without `--workspace` the session uses its own empty
+`profiles/s1/workspace`.
 
-## Using it
+Stata then loads in the background as the window opens
+(`stataMcp.loadStataOnStartup: true`, written unless the profile already sets
+it). On Windows 11 the connect took 54–66 s, and the Stata backend was up
+97–108 s after `open`. `trueReady` does not wait for the load. A Terminal
+command sent meanwhile first waits until the Stata worker is running; after
+2 s the Terminal shows "Waiting for Stata to finish loading…". See
+[Known limitations](#known-limitations).
 
-| Task | How |
-| --- | --- |
-| Run a whole `.do` file | **Stata: Run Current File** (`Ctrl+Shift+D`, macOS `Cmd+Shift+D`) |
-| Run the selection or current line | **Stata: Run Selection/Current Line** (`Ctrl+Shift+Enter`, macOS `Cmd+Shift+Enter`) |
-| Open the Terminal | **Stata: Open Interactive Terminal** (`Ctrl+Shift+C`, macOS `Cmd+Shift+C`) |
-| Preview a saved graph | Click its thumbnail in the Terminal, then **Open**. Stata Graphs shows the file without running Stata again |
-| Browse data | **Data Browser** button in the Terminal, or **Stata: View Data** |
-| Stop a run | **Stop** in the Terminal |
-| Run code from an agent | `tools/shared_stata.py`, described below |
+A new workspace opens in VS Code's Restricted Mode, and the extension starts
+only after you click **Trust** once. Pass `--disable-workspace-trust` only for
+a workspace you created yourself for this session. Set `stataMcp.stataPath` in
+the window if Stata is not found.
 
-The run shortcuts apply when a `.do`, `.ado` or `.mata` file (or a file in the
-Stata language) has focus.
-
-- **Graphs.** A clicked preview replaces the displayed batch with that one
-  image. Other exported files stay available from their Terminal links and on
-  disk. Automatic graph batches leave the Terminal visible when no Graphs panel
-  is open.
-- **Data Browser.** Shows rows, variables and the active frame (for example
-  `wb_platform`). The frame name is read when the browser opens.
-- **Stop.** A soft Stop cancels the current run, drains the task and keeps the
-  same backend. The Terminal shows, for example,
-  `human-file cancelled by soft Stop (generation 1)`, and `/status` reports
-  `resetGenerationKind: "soft-stop"`. A Stop that lands while the run is still
-  saving its pre-run checkpoint stops it before your code starts: the payload is
-  not sent (`payloadDispatched: false`; HTTP 409 `PRE_RUN_CANCELLED_BY_STOP`, or
-  500 `EXEC_REJECTED` if the checkpoint was still incomplete). Check that the
-  session is ready again before the next run.
-
-### Agent client
+**2. Check the session.**
 
 ```sh
-python3 tools/shared_stata.py --code 'display 1+1' --cwd /absolute/workspace
-python3 tools/shared_stata.py --file analysis.do --cwd /absolute/workspace --busy-policy wait --max-wait 60
+python3 -B tools/verified_workbench.py --status --session s1
+python3 -B tools/stata_session.py list
 ```
 
-- One POST per call and no automatic retry. A timeout or unclear result is not
-  proof that Stata did not run; inspect the receipt and the session before
-  submitting again.
-- It refuses a wrong bundle or listener owner, a duplicate launcher, a busy or
-  recovering session, or a changed backend. `--busy-policy wait` only waits
-  before submitting, up to `--max-wait` seconds.
-- It never launches, activates, resets or retries Stata. It needs a running
-  backend: after opening or reloading VS Code, start the service once from the
-  editor or Terminal (any Run File, Run Selection or Terminal command).
-- A read-only probe that times out on a heavily loaded machine (`ps`/`lsof`,
-  and on macOS the passive permission check or the window query) is repeated, at
-  most three times in all. A timed-out permission check is reported as
-  `PERMISSION_CHECK_TIMEOUT`, not as a permission failure. The POST itself is
-  never repeated.
-- Exit code 0 means verdict `PASS_VISIBLE_SHARED_RUN`: the execution and
-  identity checks passed. It does not prove that anyone watched the source and
-  Terminal. Any other result exits 2.
-- Each call writes a receipt with the request, response, the exact submitted
-  `.do` bytes and the run log to `.stata-receipts/` (or `--receipt-dir`). It
-  contains your code and output; do not commit it.
-- `.do` paths may contain Chinese characters, spaces and apostrophes. Stata
-  macro delimiters, double quotes and control characters in paths are rejected.
-- On Windows, `scripts/invoke_stata_visible_safe.ps1` wraps the same client. Its
-  former `AllowHttp500Retry`, `BusyPolicy reset` and `SmokeAfterReset` modes now
-  fail before dispatch.
+`--status` checks the installed bundle against the tools' pin and reads
+`/status` through the authenticated bridge. `list` shows every profile, its
+port, its VS Code processes and its live registry records (without tokens).
 
-## Configuration
+**3. Run code as the person.** In the window, run **Stata: Open Interactive
+Terminal**, then type a command or use **Stata: Run Current File** on a `.do`
+file. Each run's card is headed `You · <runId>`.
 
-VS Code settings:
+**4. Run code as an agent.**
 
-| Setting | Default | Meaning |
+```sh
+python3 tools/shared_stata.py --session s1 --agent-name claude \
+  --code 'display c(N)' --cwd /absolute/path/to/project
+python3 tools/shared_stata.py --session s1 --agent-name claude \
+  --file analysis.do --cwd /absolute/path/to/project --busy-policy wait --max-wait 60
+```
+
+The run appears live in the same Terminal, headed `claude · <runId>`. The person
+can press **Stop** at any time. Exit code 0 means verdict
+`PASS_VISIBLE_SHARED_RUN`; anything else exits 2. The client sends exactly one
+request and never retries: a timeout or an unclear answer does not prove that
+Stata did not run, so read the receipt in `.stata-receipts/` before submitting
+again. The receipt contains your code and output; do not commit it.
+
+`--session` takes a session name or id (or `STATA_WORKBENCH_SESSION`). With one
+live session it may be omitted; with several it is required.
+
+**5. Close the session.**
+
+```sh
+python3 -B tools/stata_session.py close s1
+```
+
+`close` asks only that session's VS Code window to quit (SIGTERM on macOS,
+`taskkill` without `/F` on Windows) and never force-kills. If VS Code is waiting
+on an unsaved-changes prompt, it returns `CLOSE_PENDING` (exit 2) and leaves the
+window and files as they are. Other sessions keep running.
+
+Other agent-client options: `--list-sessions` prints the registry; `--events 0`
+prints the session's event stream (who ran what, Stop, refusals, edit
+proposals) without running code.
+
+## Features
+
+### One visible session for a person and agents
+
+- The editor commands are unchanged: **Run Current File** (`Ctrl+Shift+D`, macOS `Cmd+Shift+D`), **Run Selection/Current Line** (`Ctrl+Shift+Enter` / `Cmd+Shift+Enter`), **Open Interactive Terminal** (`Ctrl+Shift+C` / `Cmd+Shift+C`), **View Data**, the Stata Graphs panel and the Data Browser.
+- Every run's card in the Terminal names its origin: `You · <runId>` for the person, `<agent name> · <runId>` for an agent. The runId matches the agent's receipt.
+- One backend runs one request at a time. If the person presses Run while an agent is running, VS Code shows `<agent> is running Stata (<runId>). Wait for it to finish, or press Stop in the Stata Terminal.` and the refusal is logged in the event stream.
+- Each session keeps an append-only event log (`~/.stata-workbench-next/runs/<sessionId>/events.jsonl`), readable with `shared_stata.py --events 0`.
+- Shared memory is not durable storage. Save data and results to disk before a reset, a restart or closing VS Code.
+
+### Several sessions
+
+- `tools/stata_session.py` manages up to **5** live sessions. A sixth `open` returns `SESSION_LIMIT` and creates nothing.
+- Each session has its own profile, port (`17601`–`17620`), Stata service runtime, temporary folders, pre-run snapshots and execution lock. Sessions run in parallel: two agents can submit to two sessions at the same moment and neither waits for the other.
+- When several sessions are live, the agent client refuses a submission without `--session` (`MULTIPLE_SESSIONS`, exit 2) and runs nothing.
+- Reopening a session name reuses its port. Settings that a profile already sets explicitly are kept.
+
+### Bridge authentication
+
+- Each session creates a random 32-byte token when its bridge starts and writes it only to its own registry file, `~/.stata-workbench-next/sessions/<sessionId>.json`. On macOS the file is mode `0600`; on Windows its access list is rebuilt to grant only the current user.
+- Every bridge endpoint requires `Authorization: Bearer <token>` (missing or wrong: HTTP 401), `Host: 127.0.0.1:<port>` exactly, and no `Origin` header (otherwise HTTP 403). The token never appears in `/status` or the event stream.
+- Before submitting, the agent client checks that the registry record, `/status` and the installed bundle agree on session id, port, reset generation and bundle SHA-256. Any mismatch is `SESSION_IDENTITY_MISMATCH` with nothing sent.
+- The registry file is written only after the bridge has bound its port and is removed when that window closes. `close` also removes leftover temporary registry files whose writer has exited.
+
+### Reviewed agent edits to Stata files
+
+- An agent changes a `.do`, `.ado` or `.mata` file through `POST /propose-edit` with the file path, the new content (at most 2 MiB), the SHA-256 of the current file and a reason.
+- VS Code opens a diff with **Accept** and **Reject**. The file is written only after **Accept**, and only if it is still unchanged; a timestamped copy of the old version goes to `~/.stata-workbench-next/edit-snapshots/`.
+- A wrong SHA-256 (`SHA_MISMATCH`), a change by the person during review (`SHA_CHANGED_DURING_REVIEW`), a rejection or a timeout (default 120 s) never writes the file. Every outcome is recorded in the event stream.
+- This gate is enforced by the extension. Agent hosts should also block direct writes: [docs/next/AGENT-EDIT-PERMISSIONS.md](docs/next/AGENT-EDIT-PERMISSIONS.md) gives the Claude Code deny rules. Codex has no equivalent per-file rule, so it must use the proposal flow.
+
+### Stop, recovery and locking
+
+- **Stop** in the Terminal (or `POST /soft-stop`) cancels the current run, drains its task and keeps the same Stata backend.
+- Before an agent run, the session saves a pre-run checkpoint of the data. Stop puts it back, so the person sees their data as it was before the agent started. A person's own runs have no checkpoint; Stop then verifies that Stata is idle and keeps the data as it is.
+- Every Stop adds 1 to `resetGeneration`. This is how agents detect that the session they used was interrupted.
+- If a checkpoint was expected but could not be restored, the session **locks**: `/status` reports `trueReady: false`, further runs get HTTP 423, the status bar shows **Stata: STALE**, and the Terminal says the session did not restore the pre-run state and is locked.
+- **Stata: KILL** in the status bar unlocks it: after one confirmation it force-resets the session's own backend and runs the verified recovery smoke (a fixed marker command that must return rc 0 with the marker in its log). Confirming accepts the loss of in-memory Stata data. On Windows, KILL also ends every Stata GUI process on the machine (`StataMP-64`, `StataSE-64`, `Stata-64`), not only this session's.
+- The execution watchdog cancels an ordinary run that writes no log for 120 s before its first log line, or for 60 s after it (runs recognised as long tasks get 300 s and 30 min). The pre-run checkpoint is restored, but a watchdog cancel always locks the session until **Stata: KILL**. The lock reason names the stall, for example `EXEC_PRELOG_STALL (IDLE)`, and `/status.lastGuardFailure` records each cancel.
+- A timeout after the code was sent is reported as `EXEC_OUTCOME_UNKNOWN` with `payloadMayHaveRun: true`, because the code may still run in Stata.
+
+## Platform test results
+
+All live tests used isolated Next profiles, synthetic `.do` files and ports
+`17601`–`17620`; no research data was involved. Interface actions (Stop, Trust,
+KILL) were driven through the VS Code DevTools protocol, not by a person at the
+keyboard. Dates are 2026, Taipei time. Builds are `main` commits; `e7e54848`,
+`579b0fe9` and `171138b6` are all version `0.2.0-next.5`, `8d63cb45` is
+`0.2.0-next.4`.
+
+### macOS (Apple Silicon, macOS 26.5, StataNow, VS Code 1.139.1)
+
+| Check | Build, date | Result |
 | --- | --- | --- |
-| `stataMcp.stataPath` | empty | Path to the local Stata executable |
-| `stataMcp.visibleBridgePort` | `17485` | Port of the local bridge (`/status`, `/run-command`, `/soft-stop`); must match `STATA_WORKBENCH_PORT` |
-| `stataMcp.runFileWorkingDirectory` | empty | Working directory for Run File; accepts absolute paths, `~`, `${workspaceFolder}` and `${fileDir}` |
-| `stataMcp.loadStataOnStartup` | `false` | Start Stata when VS Code starts |
-| `stataMcp.requestTimeoutMs` | `100000` | Timeout for metadata and UI requests |
-| `stataMcp.enableExecuteTimeout` | `false` | Time-limit execution commands; off for long research scripts |
-| `stataMcp.maxOutputLines` | `2000` | Lines kept in the Terminal |
-| `stataMcp.autoRevealOutput` | `false` | Show the output channel after runs |
-| `stataMcp.showAllLogsInOutput` | `false` | Stream raw `mcp-stata` logs to the output channel |
-| `stataMcp.logStataCode` | `false` | Log the Stata code sent to the backend |
-| `stataMcp.autoConfigureMcp` | `false` | Add or update `mcp-stata` in the host MCP configuration |
-| `stataMcp.restoreFinalSnapshotAfterGraphRouting` | `false` | Restore the final in-do dataset snapshot after Run File graph routing |
+| Person and agent share one session (globals, variables, estimates, graphs; Terminal card shows the agent name and receipt runId) | `8d63cb45`, 11-01 | Pass |
+| Two, three and five sessions running at the same time | `8d63cb45`, 11-01 | Pass. Five sessions overlapped 28.57 s and each read back its own owner, N and coefficient; a sixth `open` returned `SESSION_LIMIT` |
+| Registry and identity refusals (stale record, reused PID, wrong token, wrong generation, several live sessions without `--session`) | `8d63cb45`, 11-01 | Pass, 7/7 refused with nothing executed |
+| Two agents submit to two sessions at the same moment (30 s commands, started 0.008 s apart) | `579b0fe9`, 11-02 | Pass. Both returned HTTP 200 in 34.41 s and 34.26 s |
+| One session busy for 60 s while the other takes a short command | `579b0fe9`, 11-02 | Pass. The short command returned in 4.50 s while the long one was still running |
+| Stop one of two busy sessions | `579b0fe9`, 11-02 | Pass. The stopped session returned to ready; the other finished normally with its reset generation unchanged |
+| No `--session` with two live sessions | `579b0fe9`, 11-02 | Pass. `MULTIPLE_SESSIONS`, nothing executed |
+| Close one of two sessions | `579b0fe9`, 11-02 | Pass. Its registry record was gone; the other session still ran code |
+| Terminal Stop on the person's long command, twice | `579b0fe9`, 11-02 | Pass. Stopped on the first click each time, same Stata process, data kept |
+| Stop on an agent run | `579b0fe9`, 11-02 | Pass. No force reset, pre-run state recovered (`RECOVERED_FULL`) |
+| Stop after the pre-run checkpoint was removed | `579b0fe9`, 11-02 | Pass. Session locked (`trueReady: false`, next run 423, status bar STALE) |
+| **Stata: KILL** unlock | `579b0fe9`, 11-02 | Pass. One confirmation, recovery smoke rc 0, next run succeeded |
 
-Environment variables for the tools:
+### Windows (Windows 11 x64, Stata 18 MP, VS Code 1.144.0)
 
-| Variable | Default | Meaning |
+| Check | Build, date | Result |
 | --- | --- | --- |
-| `STATA_WORKBENCH_PROFILE` | `~/.stata-workbench-shared` | Isolated profile root |
-| `STATA_WORKBENCH_PORT` | `17485` | Must match `stataMcp.visibleBridgePort` |
-| `STATA_WORKBENCH_CODE` | VS Code in its standard location | macOS app CLI; on Windows `Code.exe`, or a `code.cmd`/`code.bat` shim that is resolved to `Code.exe` |
-| `STATA_WORKBENCH_PYTHON` | — | Python used by the Windows PowerShell wrapper |
+| New profiles turn off VS Code and extension auto-update | `171138b6`, 11-02 | Pass |
+| Reviewed agent edits: accept, reject, change during review | `171138b6`, 11-02 | Pass |
+| Refusals: reused PID, wrong token, port in use, stale record | `171138b6`, 11-02 | Pass, nothing sent |
+| Two sessions: simultaneous agent submissions, one busy while the other submits, Stop one, no cross-talk, `MULTIPLE_SESSIONS` | `579b0fe9`, 11-02 | Pass. The two runs overlapped 40.5 s; read-backs `owner=w3a N=111` and `owner=w3b N=222` |
+| Terminal Stop on the person's long command, twice | `579b0fe9`, 11-02 | Pass, 2/2: first click stopped it, same Stata process, data kept |
+| Agent run stopped from the Terminal | `579b0fe9`, 11-02 | Pass. Pre-run checkpoint restored (`restored=true`); read-back N=77 |
+| Stop after the pre-run checkpoint was moved away | `579b0fe9`, 11-02 | Pass. Session locked (`snapshot-expected-not-restored`) |
+| Two sessions, 20 rounds of simultaneous agent submissions (40 runs, a Stop in 5 of them) | `e7e54848`, 11-03 | Pass, 20/20. The 35 runs that were not stopped all passed and no log line crossed sessions; the 5 stopped runs were restored without a force reset, and the other session's reset generation stayed unchanged (5/5). Stata PIDs unchanged for all 20 rounds |
+| Terminal Stop on the person's long command, five times | `e7e54848`, 11-03 | Pass, 5/5. First click stopped it, same Stata process, data before Stop kept |
+| Stop after the pre-run checkpoint was renamed | `e7e54848`, 11-03 | Pass. The notice says the session did not restore the pre-run state, is locked, and needs **Stata: KILL**; status fenced, next run 423. On `579b0fe9` the notice wrongly said the checkpoint was restored |
+| Watchdog cancel of a silent agent command | `579b0fe9`, 11-02 | Partial. Pre-run checkpoint restored, but the cancel escalated to a force reset and the status reported the reason of an earlier failure |
+| Watchdog cancel of a silent Terminal command | `e7e54848`, 11-03 | Pass. Quiescence probe saw its marker, no force reset; the lock reason was this cancel's own (`elapsedMs 63187`, `stallReason IDLE`) |
+| First command after opening, `loadStataOnStartup=false` | `579b0fe9`, 11-02; `e7e54848`, 11-03 | Fails intermittently: stalled in 2 of 3 attempts (HTTP 504 after about 120 s, session locked); the third returned rc 0 in 42.2 s. On `e7e54848` the 504 reports `EXEC_OUTCOME_UNKNOWN` with `payloadMayHaveRun: true` |
+| First command after opening, `loadStataOnStartup=true` | `579b0fe9`, 11-02 | Pass. Stata loaded in the background in 57.7 s while the window opened; the first command then took 6.1 s, rc 0 |
+| Default `loadStataOnStartup` (key absent), first agent command after opening | `3765d82a`, 11-03 | Pass, 3/3. The launcher wrote `true`; Stata was up 106.6–107.7 s after `open`; the first agent command returned rc 0 in 23.1–25.2 s. A `false` set before `open` was kept |
+| Watchdog cancel on the agent path and on the Terminal path | `3765d82a`, 11-03 | Pass. Each cancel recorded its own `runId` and `elapsedMs` (63 615 and 63 159 ms) in `/status.lastGuardFailure`; lock reason `EXEC_PRELOG_STALL (IDLE)`. Only the `IDLE` stall kind occurred |
+| Late events of a cancelled cold-start command (`loadStataOnStartup=false`) | `3765d82a`, 11-03 | Pass. The command returned HTTP 504 after 167.1 s; its late `log_path` events were dropped as `not this client's run` instead of being given to the next run |
+| Normal commands after such a cancel; first Terminal command after reopening | `3765d82a`, 11-03 | Partial. Same backend after unlock: 5/5 rc 0, about 3.1 s each, no foreign log lines. Reopened window with the default `true`: 0/2. The first Terminal command, sent right after `connect` completed (54.2 s), stalled before any log output and returned HTTP 504 after 163.9 s; the session locked and the second command got 423 |
+| Two sessions, 8 rounds of simultaneous agent submissions with a Stop in 2; Terminal Stop 3 times | `3765d82a`, 11-03 | Pass. 14/14 runs that were not stopped passed; both stopped runs were restored without a force reset; no log line crossed sessions; 21.4–24.8 s per round. Terminal Stop 3/3 on the first click |
+| `close` removes leftover temporary registry files | `171138b6`, 11-02; `e7e54848`, 11-03 | Partial on `171138b6` (one file left behind). Pass on `e7e54848`: a file whose writer had exited was removed and the registry was empty. The case of an exited process reporting error 5 did not occur (all three reported 87), so that branch has unit tests only |
+| KILL notice when the recovery smoke is skipped; probe reading its own log after a late event | `e7e54848`, 11-03 | Partial. The first branch cannot be reached on Windows (KILL always runs the smoke there); the late-event shape did not reproduce in two lazy-load attempts. Both have unit tests only |
+| First Terminal command right after `connect` completed, fresh window | `e5d2cda7`, 11-04 | Pass, 3/3. HTTP 200, rc 0 in 3.05–3.12 s; the second command also passed. Before dispatch the extension checked the worker state (`list_sessions` 4–6 ms; the worker was already running, so the wait message did not appear). The same check on `3765d82a` also passed 2/2, so this retest does not show that the earlier stall is gone |
+| First agent command after opening; 4 agent runs with a soft Stop in the last; Terminal Stop | `e5d2cda7`, 11-04 | Pass. First agent command rc 0 in 11.5 s. Runs 1–3 passed in 14.4–15.7 s; the stopped run was restored (`restored=true`, no force reset) and the data from before the Stop was kept. Terminal Stop stopped the run on the first click, same Stata process |
 
-A port in use is a refusal, not a reason to stop another editor. Choose a free
-`stataMcp.visibleBridgePort` and set the same `STATA_WORKBENCH_PORT`.
+macOS Intel and Windows Server 2022 run the offline test suite and packaging in
+CI on every pull request (no licensed Stata). Windows 10, Windows on ARM and
+Linux are not verified.
 
-## Verifying a download
+PR #15 (Stop/KILL messages that match the actual outcome, Windows process
+liveness, quiescence-probe fixes) was retested live on Windows on `e7e54848`
+(rows dated 11-03). PR #17 (`e9b22430`: Stata loads at window open, a
+watchdog cancel names its own stall, late events stay with their task) was
+retested live on Windows on its head `3765d82a` (same bundle as `e9b22430`;
+rows marked `3765d82a`). Its three fixes held, but a Terminal command sent right
+after the load stalled once. PR #18 (`1bf02d02`: Terminal commands wait for
+the Stata warm-up before dispatch) was retested live on Windows on its head
+`e5d2cda7` (same source tree; rows dated 11-04); see
+[Known limitations](#known-limitations). macOS has not been retested live since
+`579b0fe9`.
 
-Check the file hash against `SHA256SUMS` from the same release.
+## Known limitations
 
-macOS:
+Fixed on `main` (`e9b22430`, PR #17) and confirmed live on Windows on `3765d82a`, 11-03, except where noted:
 
-```sh
-shasum -a 256 -c SHA256SUMS --ignore-missing
-```
+- **Windows: the first command after opening a window could lock the session (only partly fixed, see the first open problem below).** With `stataMcp.loadStataOnStartup: false`, Stata loads only when the first command arrives. On Windows that first command stalled in 2 of 3 attempts, returned HTTP 504 after about 120 s and locked the session. The launcher now writes `true` by default, so Stata loads while the window opens (57.7 s on Windows 11). The problem still occurs if a profile sets `false` explicitly (last checked on `3765d82a`); the launcher keeps that value and `open` says so in its `backendLoad` field. To unlock such a session, click **Stata: KILL**; to avoid it, remove the `false` entry from `profiles/<name>/user-data/User/settings.json` before `open`. macOS was not affected in the tests so far.
+- **Late events from a cancelled command went to the wrong run.** On Windows a command whose cancel was reported as confirmed still ran about 2 s later, and its late log event was given to the run that came next (the quiescence probe). The session was locked, so nothing built on the wrong state, and since PR #15 such a response reports `EXEC_OUTCOME_UNKNOWN` with `payloadMayHaveRun: true` (confirmed live on Windows, `e7e54848`). PR #17 now keeps events with their task: after a run ends without its response, events with an unknown task id are no longer given to the active run but are held or dropped. The holding buffer keeps at most 256 events; if all of them are `log_path` or `task_done` events, a new `task_done` can be dropped.
+- **A watchdog cancel could show an earlier failure's reason.** On the agent path the status after a watchdog cancel repeated the reason and timing of an earlier Terminal failure. Each cancel now writes its own `stallReason` and `elapsedMs`, and the lock reason reads for example `EXEC_PRELOG_STALL (IDLE)`. The `reasonCode` itself is still `EXEC_PRELOG_STALL` for every stall kind, because clients match on it.
 
-Windows PowerShell:
+Open problems on the current `main`:
 
-```powershell
-$f = 'stata-workbench-shared-session-0.1.3-rc.7.45.vsix'
-$expected = (Select-String -Path SHA256SUMS -SimpleMatch $f).Line.Split(' ')[0]
-(Get-FileHash $f -Algorithm SHA256).Hash.ToLower() -eq $expected
-```
-
-The last line must print `True`. Then check the VSIX contents against the
-release identity manifest, from a clone at the release tag:
-
-```sh
-python3 tools/verify_release.py --vsix /path/to/stata-workbench-shared-session-0.1.3-rc.7.45.vsix
-```
-
-It prints JSON with `"verdict": "PASS"` when the package version and every
-pinned runtime file match. This checks runtime identity only, not live acceptance.
+- **Windows: the first Terminal command after Stata loads stalled once; the cause is not confirmed.** On `3765d82a` the first Terminal command, sent right after `connect` completed, stalled before any log output, returned HTTP 504 after 163.9 s and locked the session (the next command got 423). The agent path waited until the Stata worker was running before it dispatched; the Terminal path did not. PR #18 makes Terminal commands wait for the same warm-up. On `e5d2cda7` the same check passed 3/3, but `3765d82a` also passed 2/2 on the same day, so the stall is intermittent and the retest does not prove it is gone. Where Windows blocks is still unknown. If a session locks, click **Stata: KILL** and read the receipt before resubmitting.
+- **A command sent while Stata is still loading.** `trueReady` does not wait for the background load. A Terminal command waits until the Stata worker is running. After 2 s the Terminal shows "Waiting for Stata to finish loading…"; Stop cancels the wait. After 300 s, or if the warm-up fails, the command is refused before it is sent (`PRE_RUN_BACKEND_WARMUP_TIMEOUT` or `PRE_RUN_BACKEND_WARMUP_FAILED`, `payloadDispatched=false`). If the worker state cannot be read, the command is sent anyway and the Terminal says the load could not be confirmed. In every live retest the worker was already running when the first command arrived, so the wait message, Stop during the wait and the refusals have offline tests only.
+- **Stata: KILL on Windows ends every Stata GUI process on the machine**, not only this session's. Save work in other Stata windows before confirming it.
+- **Silent long commands.** A command that writes no log output for 60 s (for example a `bootstrap … nodots`) is treated as stalled and cancelled. This rule is inherited from the stable release. Add progress output to long commands.
+- **Windows dispatch overhead.** Each agent submission on Windows took about 15 s longer than the Stata work itself (pre-dispatch checks and receipt verification); a short command took 17.4 s end to end. In 20 rounds of an 8 s command the fixed cost was 12–18 s per submission.
+- **Service start can wait for PyPI.** Before starting the Stata service, the extension checks PyPI for the `mcp-stata` version. On a machine where that request times out, the timeout adds to the first start.
+- **Memory.** Each session is a full VS Code plus Stata. On macOS five sessions used 3852–4000 MB RSS in total (718–850 MB each). On a 16.8 GB Windows machine, two idle sessions had working sets of 1.93 and 2.16 GB, and 2.00–2.39 GB each under load. Check free memory before opening a third session on a machine of that size.
+- **Workspace Trust.** A new workspace needs one **Trust** click before the extension starts.
+- **Agent hosts.** Codex has no per-file deny rule for `.do` files; see [Reviewed agent edits](#reviewed-agent-edits-to-stata-files).
+- **Inherited from the stable release:** a top-level `exit` inside a multi-line selection ends the whole selection and is reported as a failure; the Data Browser frame name updates only when the browser opens; `graph use` alone does not create a Terminal graph card; equality of the displayed source and the executed bytes is not certified.
+- `dist/extension.js` is the maintained bundle. A reference source build exists, but feature parity with the bundle is not established.
 
 ## Troubleshooting
 
 | Symptom | What to do |
 | --- | --- |
-| The first run seems slow | The first run after opening or reloading also starts the Stata service. Wait; do not resubmit |
-| The first run after opening or reloading fails with `PRE_RUN_SNAPSHOT_TIMEOUT` (HTTP 504) | Stata took longer than 60 s to start on a busy machine. The run was refused before dispatch (`payloadDispatched:false`), so your code did not run. Run it again |
-| The Terminal looks busy for a long time | Check bridge status (`python3 tools/verified_workbench.py --status`) before running more code; do not queue another long run |
-| A long script stalls or times out | Reconcile the original request, raw log and outputs first. A timeout is not proof that Stata did not run. See [storage and log recovery](docs/storage-and-log-recovery.md) |
-| Port already in use | Another editor owns it. Choose a free `stataMcp.visibleBridgePort` and the same `STATA_WORKBENCH_PORT` |
-| Status bar shows **Stata: STALE**; runs return HTTP 423 `recovery-required` | Click the **Stata: KILL** status-bar item and confirm. It force-resets the owned backend and then runs the verified recovery smoke itself, which is what unlocks runs. Confirming accepts the loss of in-memory Stata state. Do not delete the session |
-| Status shows `continuityLost` (for example `soft-stop-did-not-restore-checkpoint`) | A Stop could not put the pre-run checkpoint back, so the data in Stata is not what your code expects. **Both steps are needed, in this order:** a force reset (the **Stata: KILL** status-bar item, or `curl -X POST http://127.0.0.1:17485/force-reset`) and then the verified recovery smoke (`curl -X POST http://127.0.0.1:17485/recovery-smoke`; Windows: `Invoke-WebRequest -UseBasicParsing -Method Post -Uri http://127.0.0.1:17485/recovery-smoke`; use your port). The smoke **alone is a no-op** while `continuityLost` is set. The KILL item does both for you. The smoke runs a fixed marker command and unlocks only after rc 0 and the marker in the log |
-| Graphs do not appear | Name graphs; several unnamed graphs can overwrite the single `Graph` window |
-| Windows: `code` cannot install the VSIX | Run `Get-Command code` and `code --version`; fix `PATH` to VS Code's `bin\code.cmd`, or use **Extensions: Install from VSIX...** |
-| macOS: error `-1743` or no windows found | Run `--doctor`, then `--request-permissions` once, in the same host as the agent. See [macOS permissions](docs/MAC_PERMISSIONS.md) |
-| `No module named 'mcp.server.fastmcp'` | The service was installed with MCP 2.x. The default route adds `mcp<2`; a custom service command needs the same constraint |
-| `Failed to connect to mcp-stata` with `No solution found when resolving tool dependencies` and "the network was disabled" | uv is in offline mode (for example `offline = true` in `~/.config/uv/uv.toml`, or `UV_OFFLINE`), so the default `uvx` route can only use packages already in its cache. Turn offline mode off for the first start so `uvx` can download the service once, then reload the window |
+| `open` returned `LAUNCHED` but `--status` cannot connect | The window is in Restricted Mode. Click **Trust** in that window once |
+| `SESSION_LIMIT` | Five sessions are live. `close` one first |
+| `NO_FREE_PORT` | Every port in `17601`–`17620` is in use by another Next profile or another program |
+| `DISK_RESERVE` | Free disk space is below the launcher's limit; nothing was created |
+| `RUNTIME_SOURCE_MISSING` | Create the Stata service runtime ([Install](#install)) or pass `--runtime-source` |
+| `EXTENSIONS_LINK_MISMATCH` | The profile's `extensions` link points to another directory. Pass the same `--extensions-dir` you used before |
+| `SETTINGS_NOT_PLAIN_JSON` | The profile's `settings.json` has comments or is not a JSON object; the launcher changed nothing |
+| `MULTIPLE_SESSIONS` | Several sessions are live. Pass `--session <name>` or set `STATA_WORKBENCH_SESSION` |
+| `SESSION_IDENTITY_MISMATCH` | The registry and `/status` disagree (for example after a reload). Run `--status --session <name>` again; nothing was executed |
+| `candidate identity mismatch` | The installed VSIX is not the build your clone pins. Check out the commit of the VSIX |
+| HTTP 401 or 403 from the bridge | Requests need the session token, `Host: 127.0.0.1:<port>` and no `Origin`. Use the agent tools, which read the token from the registry |
+| Status bar **Stata: STALE**; runs return HTTP 423 | Click **Stata: KILL** and confirm. It force-resets the session's backend and runs the recovery smoke itself; in-memory data is lost |
+| Windows: first command after opening returns HTTP 504 (`EXEC_PRELOG_STALL` or `EXEC_OUTCOME_UNKNOWN`) and the session locks | Click **Stata: KILL** to unlock; on Windows KILL also ends every other Stata GUI process on the machine. Check the receipt before resubmitting, because the command may still have run. If the profile sets `loadStataOnStartup` to `false`, remove that entry before the next `open`. See [Known limitations](#known-limitations) |
+| Terminal shows "Waiting for Stata to finish loading…" | Stata is still starting. Wait, or click Stop to cancel; nothing has been sent yet. After 300 s the command is refused with `PRE_RUN_BACKEND_WARMUP_TIMEOUT`; it was not sent |
+| `close` returned `CLOSE_PENDING` | VS Code is asking about unsaved changes in that window. Answer it, then run `close` again |
+| `No module named 'mcp.server.fastmcp'` | The runtime was installed with MCP 2.x. Reinstall it with the constraints file |
+| A timeout or unclear agent result | Do not resubmit blindly. Read the receipt and `--events` first; a timeout is not proof that Stata did not run |
 
-More cases: [Troubleshooting](docs/TROUBLESHOOTING.md) and the
-[desktop recovery record](docs/desktop-auth-terminal-recovery.md).
+## Configuration
 
-## Known limitations
+The launcher writes these VS Code settings into each session's profile:
 
-- Windows 10, Windows on ARM and Linux are not verified. macOS Intel has CI only.
-- The licensed full suite (FULL45) was run on rc.7.45 before the last fix.
-  26 of 45 scenarios passed there. On the published file 14 scenarios were rerun: 8
-  passed every step, S9, S11, S33 and S43 failed only harness checks, S34 could not
-  start (harness) and S41 failed (below). S4, S8, S13, S23, S29 and S44 have no complete
-  run on rc.7.45.
-- UI checks in the test runs used automated DevTools clicks, not human keypresses.
-- The Windows lock/unlock and UAC step is supported by Winlogon events and
-  unchanged session state. There was no live screen recording, and the UAC
-  cancellation rests on the operator's report.
-- On macOS, when the VS Code window is hidden, Terminal text can appear only
-  after the run ends.
-- Stata's own start-up still counts against the 60 s pre-run snapshot budget;
-  only the service connection has its own budget. On a busy Windows machine the
-  first run after opening or reloading was refused once in 6 cold starts
-  (`PRE_RUN_SNAPSHOT_TIMEOUT`, code not sent); the next run passed.
-- A top-level `exit` inside a multi-line selection (Run Selection, or an agent
-  selection) ends the whole selection. The code before it has run, but the
-  request is answered as a failure (HTTP 500), and the error text is the last
-  red line. `exit` inside a do-file or a program is not affected. This already
-  happened in rc.7.44.
-- In FULL45 S41, a manual Run Selection that stopped at a Stata error (r(603), a path
-  built from a global defined above the selection) was reported as failed, but without
-  its return code ("execution released without verified completion evidence"). rc.7.44
-  behaves the same. Not investigated further in this release.
-- One backend runs one request at a time. Several instances need separate
-  profiles and ports; there is no general multi-instance scheduler.
-- The Data Browser frame name updates when the browser opens, not after a later
-  `frame change`. At narrow panel widths its FILTER row text overlaps.
-- `graph use` alone does not create a graph card in the Terminal.
-- Exact equality of the displayed source and the executed bytes is not certified.
-- `dist/extension.js` is the maintained bundle. A separate reference source
-  build exists, but feature parity with the bundle is not established.
-- Remote desktops, every Stata edition and long paths beyond the tested ones are
-  not certified.
+| Setting | Value | Meaning |
+| --- | --- | --- |
+| `stataMcp.visibleBridgePort` | Chosen port | Bridge port (package default `17601`) |
+| `stataMcp.nextSessionName`, `stataMcp.nextProfilePath`, `stataMcp.nextMcpConfigPath` | Set by the launcher | Session identity; do not edit |
+| `stataMcp.loadStataOnStartup` | `true` unless already set | Load Stata in the background when the window opens (on Windows 11 the connect took 54–66 s; the backend was up 97–108 s after `open`). `trueReady` does not wait for it |
+| `update.mode`, `extensions.autoUpdate`, `extensions.autoCheckUpdates` | `none`, `false`, `false` unless already set | Keep test windows from updating VS Code or extensions |
 
-## Release history
+All other `stataMcp.*` settings (`stataPath`, `runFileWorkingDirectory`,
+`requestTimeoutMs`, `enableExecuteTimeout`, `maxOutputLines` and so on) work as
+in the stable release.
 
-Dates are UTC. Full details are in the [changelog](CHANGELOG.md).
+Environment variables:
 
-| Tag | Date | Type | Scope |
-| --- | --- | --- | --- |
-| `v0.1.3-rc.7.45` | 2026-10-31 | Pre-release | macOS and Windows: the first run after a cold start waits until Stata itself is running; Stop during that wait stays a soft Stop; Windows force reset waits for a cold reconnect; named graph exports on the agent path (`set more off` prefix); Stop during the pre-run checkpoint never sends a refused restore; Windows soft-Stop restore of large sessions; successful do-file runs no longer reported as failures |
-| `v0.1.3-rc.7.44` | 2026-10-30 | Pre-release | macOS and Windows: Windows adapters and operator kit, Stop in the pre-run window no longer runs the payload, read-only probe timeouts observed again, backend cold start outside pre-run budgets, default service kept on MCP 1.x, cancellation recheck after connect, Stop wording, Data Browser frame, saved-graph preview, recursive DO-reference scanner |
-| `v0.1.3-rc.7.39-public.2` | 2026-09-09 | Pre-release | macOS permission diagnostics (Mac tools 1.1.0); runtime unchanged |
-| `v0.1.3-rc.7.39-public.1` | 2026-09-07 | Pre-release | Public packaging of the Mac-accepted `0.1.3-rc.7.39`; local maintenance token removed |
-| `docs-2026.09.26` | 2026-09-26 | Documentation | Documentation only; runtime unchanged |
-| `v0.1.1` | 2026-05-19 | Release | Taught-task examples and install documentation |
-| `v0.1.0` | 2026-05-19 | Release | Initial public staging release |
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `STATA_WORKBENCH_NEXT_HOME` | `~/.stata-workbench-next` | State directory: profiles, registry, runs, extensions |
+| `STATA_WORKBENCH_SESSION` | — | Session name or id for the agent tools |
+| `STATA_WORKBENCH_AGENT_NAME` | `agent` | Name shown on the agent's Terminal cards and in the event stream |
+| `STATA_WORKBENCH_RUNTIME_SOURCE` | Machine runtime (see [Install](#install)) | Runtime that `open` copies into a new session |
+| `STATA_WORKBENCH_CODE` | VS Code in its standard location | VS Code to launch |
 
-GitHub labels `v0.1.1` "Latest" because every later build is a pre-release.
+## Development
+
+```sh
+npm ci --ignore-scripts
+npm run check -- --keep-going
+python3 -B -m unittest discover -s tools -p 'test_*.py'
+npm run package
+python3 -B tools/verify_release.py --packaged
+```
+
+`npm run package` produces `stata-workbench-next-<version>.vsix`. CI runs these
+steps on macOS 15 (Apple Silicon and Intel) and Windows Server 2022 without
+Stata, a GUI or credentials, plus a separate reference source build. Locally,
+`scripts/mac/test_png_compat_unit.js` (a private image corpus) and
+`scripts/test_stata_preflight_timeout_patch.js` (an installed runtime) depend
+on machine-specific files and are known to fail on the maintainer's Mac; they
+pass in CI.
+
+Bundle changes are readable patch scripts in `scripts/` applied to the
+maintained `dist/extension.js`. Each later patch can be reverted and is
+registered in `scripts/later_bundle_patches.js` and `scripts/patch_manager.js`.
+After a bundle change, refresh `release/runtime-manifest.json` and the
+`BUNDLE_SHA256` pin in `tools/verified_workbench.py`; replaying the patches
+twice must give the same bytes.
+
+More: [checks that need a licensed machine](docs/next/LIVE-CHECKS.md),
+[cross-platform notes](docs/CROSS_PLATFORM.md),
+[shared execution and concurrency](docs/shared-execution-and-concurrency.md),
+[release maintenance](docs/RELEASE.md) and the [changelog](CHANGELOG.md).
 
 ## License
 
@@ -403,23 +429,5 @@ comparisons with [hanlulong/stata-mcp](https://github.com/hanlulong/stata-mcp)
 are acknowledged in [NOTICE](NOTICE); they are not a claim that the runtimes are
 interchangeable. See [LICENSE](LICENSE) and [SECURITY.md](SECURITY.md).
 
-GitHub Releases is the distribution channel. The older Open VSX listing is not
-this runtime, and the extension is not on the Visual Studio Marketplace.
-
-### Development
-
-```sh
-npm ci --ignore-scripts
-npm run check
-python3 -B -m unittest discover -s tools -p 'test_*.py'
-npm run package
-python3 -B tools/verify_release.py --packaged
-```
-
-`npm run check` is read-only and guarded by a runtime digest. `check:legacy` is
-the old mutating pipeline; never run it against a sealed candidate. Packaging
-uses the versioned maintained bundle, readable patches and UI sources; it is not
-a clean rebuild of upstream TypeScript. CI runs on macOS ARM, macOS Intel and
-Windows Server 2022 without Stata, a GUI or private credentials. Runtime edits
-need a new version and new licensed acceptance; see
-[release maintenance](docs/RELEASE.md).
+Stata, Stata licenses, credentials and data are not included. The bridge
+listens on `127.0.0.1` only; it is not a remote or multi-user service.
