@@ -151,13 +151,11 @@ check("sips helper convert smoke produces putdocx-safe RGB PNG", () => {
   assert.strictEqual(fs.readFileSync(out)[25], 2, "PNG must use RGB color type 2");
 });
 
-check("realbatch raster corpus: no unsupported poison", () => {
-  const dir = path.join(__dirname, "..", "..", "..", "开题报告", "7_temp", "realbatch", "tmpdo");
-  if (!fs.existsSync(dir)) {
-    console.log("SKIP corpus (dir missing)");
-    return;
-  }
-  const files = fs.readdirSync(dir).filter((f) => f.endsWith(".do"));
+// 按 raster 预筛逐个 .do 分类；目录缺失、没有 .do、没有 raster 导出时返回 skip 原因。
+function scanRasterCorpus(dir) {
+  if (!fs.existsSync(dir)) return { skip: "dir missing" };
+  const files = fs.readdirSync(dir).filter((f) => f.endsWith(".do")).sort();
+  if (!files.length) return { skip: "no .do files" };
   let raster = 0,
     transformed = 0,
     unsupported = 0,
@@ -175,9 +173,33 @@ check("realbatch raster corpus: no unsupported poison", () => {
     } else if (r.transformed) transformed++;
     else noop++;
   }
-  console.log("  corpus", JSON.stringify({ raster, transformed, unsupported, noop, reasons }));
-  assert.strictEqual(unsupported, 0, "unsupported should be 0: " + JSON.stringify(reasons));
-  assert.ok(transformed >= 1, "expected some transformed");
+  if (!raster) return { skip: "no raster graph export in " + files.length + " .do files" };
+  return { files: files.length, raster, transformed, unsupported, noop, reasons };
+}
+
+check("synthetic realbatch corpus: exact classification", () => {
+  const c = scanRasterCorpus(path.join(fixtures, "realbatch-synthetic"));
+  console.log("  synthetic corpus", JSON.stringify(c));
+  assert.deepStrictEqual(c, {
+    files: 5,
+    raster: 4,
+    transformed: 2,
+    unsupported: 1,
+    noop: 1,
+    reasons: { delimit_semicolon_with_darwin_compat_command: 1 },
+  });
+});
+
+check("realbatch raster corpus: no unsupported poison", () => {
+  // 本机真实语料，只在作者的 Mac 上有，也可能是空目录；CI 上靠上面的合成语料真跑。
+  const c = scanRasterCorpus(path.join(__dirname, "..", "..", "..", "开题报告", "7_temp", "realbatch", "tmpdo"));
+  if (c.skip) {
+    console.log("SKIP corpus (" + c.skip + ")");
+    return;
+  }
+  console.log("  corpus", JSON.stringify(c));
+  assert.strictEqual(c.unsupported, 0, "unsupported should be 0: " + JSON.stringify(c.reasons));
+  assert.ok(c.transformed >= 1, "expected some transformed");
 });
 
 check("hasRasterGraphExport helper", () => {
