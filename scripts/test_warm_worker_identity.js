@@ -1,0 +1,320 @@
+#!/usr/bin/env node
+"use strict";
+
+// PLAN-V3 stage 6: the rc.7.79 warm cache must follow the default worker
+// (list_sessions pid / created_at / status), and Terminal input restarts a
+// worker that died while starting once, without kM's force reset (which on
+// Windows ends every Stata window while a run holds the lifecycle). The real
+// bundle's Terminal handler (kM / __codexOnce), rc.7.67 start, rc.7.72 warm-up,
+// rc.7.79 and rc.7.81 helpers run in node:vm on a virtual clock against a fake
+// mcp-stata whose workers start, fail and are replaced on a script.
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const vm = require("node:vm");
+const patch = require("./apply_warm_worker_identity_patch");
+const fingerprint = require("./finalize_bundle_identity");
+const { revertAfter } = require("./later_bundle_patches");
+
+const NAME = "./apply_warm_worker_identity_patch";
+const ROOT = path.join(__dirname, "..");
+const bundle = revertAfter(fs.readFileSync(path.join(ROOT, "dist", "extension.js"), "utf8"), NAME);
+const before = patch.revertBundle(bundle);
+
+assert.equal(fingerprint.verify(bundle).ok, true, "bundle identity verifies");
+assert.equal(patch.patchBundle(before), bundle, "replay reproduces the sealed layer");
+assert.equal(patch.patchBundle(bundle, { finalize: false }), bundle, "patch is byte-idempotent");
+assert.ok(bundle.includes(patch.MARKER) && !before.includes(patch.MARKER), "marker only in the patched layer");
+assert.throws(() => patch.patchBundle(before.replace(patch.HELPER_ANCHOR, () => patch.HELPER_ANCHOR + "var __codexWarmWorker=null;\n")), /partial/);
+
+const M72 = "// codex patch rc.7.72: backend warm-up waits for Stata, not just the MCP handshake";
+const TAIL81 = "globalThis.__codexEnsureBackendWarm = __codexEnsureBackendWarmRestartOnce;\n";
+function segments(source) {
+  const one = (needle, label) => {
+    const at = source.indexOf(needle);
+    assert.ok(at >= 0 && source.indexOf(needle, at + 1) < 0, "segment not unique: " + label);
+    return at;
+  };
+  const sa = one("async function __codexEnsureBackendStarted(runId, source) {", "backend start");
+  const started = source.slice(sa, source.indexOf("\n}\n", sa) + 3);
+  const tail = source.includes(patch.MARKER) ? TAIL81 : patch.HELPER_ANCHOR;
+  const warm = source.slice(one(M72, "warm-up helper"), one(tail, "helper tail") + tail.length);
+  const ka = one("var kM=async(g,A)=>{", "terminal handler");
+  const terminal = source.slice(ka, source.indexOf(",XRA=async()=>{", ka)) + ";";
+  return { started, warm, terminal };
+}
+// ---- virtual clock + fake mcp-stata (session map like sessions.py) ---------
+function harness(source, script = {}) {
+  let now = 1_800_000_000_000, seq = 0, nextPid = 4100;
+  const timers = new Map();
+  const schedule = (fn, ms, every) => { const id = ++seq; timers.set(id, { at: now + Math.max(0, Number(ms) || 0), fn, every }); return id; };
+  class FakeDate extends Date {
+    constructor(...a) { if (a.length) super(...a); else super(now); }
+    static now() { return now; }
+  }
+  const iso = () => new Date(now).toISOString();
+  const running = (script.status || "starting") === "running";
+  const sess = { present: true, status: script.status || "starting", readyAt: script.readyAt ?? 0, failStarts: script.failStarts || 0,
+    pid: running ? nextPid++ : null, createdAt: iso(), created: 0, stops: 0 };
+  const statusNow = () => {
+    if (!sess.present) return "missing";
+    if (sess.status === "starting" && now >= sess.readyAt) {
+      if (sess.failStarts > 0) { sess.failStarts--; sess.status = "error"; } else { sess.status = "running"; sess.pid = nextPid++; }
+    }
+    return sess.status;
+  };
+  const replace = (opts = {}) => {
+    sess.present = true; sess.createdAt = new Date(now + 1).toISOString();
+    if (opts.running) { sess.status = "running"; sess.pid = opts.pid ?? nextPid++; } else { sess.status = "starting"; sess.pid = null; sess.readyAt = now + (opts.readyIn ?? 30_000); }
+    if (opts.keepPid != null) sess.pid = opts.keepPid;
+  };
+  const counts = { probes: 0, forceResets: 0 };
+  const zg = {
+    _transport: { id: 1 }, connects: 0,
+    _availableTools: new Set(["list_sessions", "create_session", "stop_session"]),
+    async _ensureClient() { if (!this._transport) { this.connects++; this._transport = { id: 100 + this.connects }; } return { client: true }; },
+    _parseToolJson(x) { return x; },
+    async _callTool(_c, name) {
+      if (name === "list_sessions") {
+        counts.probes++;
+        if (script.probeThrows) throw new Error("list_sessions transport hiccup");
+        const st = statusNow();
+        if (st === "missing") return { sessions: [] };
+        return { sessions: [script.noIdentity ? { id: "default", status: st } : { id: "default", status: st, created_at: sess.createdAt, pid: sess.pid }] };
+      }
+      if (name === "stop_session") { sess.stops++; sess.present = false; sess.status = "stopped"; if (script.stopOnStop) g.__codexResetGeneration++; return {}; }
+      if (name === "create_session") { sess.created++; replace({ readyIn: script.restartMs ?? 20_000 }); return {}; }
+      return {};
+    },
+    async runSelection(code, opts) {
+      dispatches.push({ at: now, status: statusNow(), pid: sess.pid, code: String(code) });
+      try { opts && opts.onStarted && opts.onStarted(); } catch {}
+      return { success: true, rc: 0, stdout: "ok", contentText: "ok" };
+    },
+  };
+  const dispatches = [], logs = [], panel = [], released = [], guards = [];
+  const g = {};
+  const ctx = {
+    globalThis: g, Date: FakeDate, Number, String, Math, JSON, Error, Promise, Object, Array, Set, Map, WeakSet, RegExp, Boolean,
+    setTimeout: (fn, ms) => schedule(fn, ms, 0), clearTimeout: (id) => timers.delete(id),
+    setInterval: (fn, ms) => schedule(fn, ms, Math.max(1, Number(ms) || 1)), clearInterval: (id) => timers.delete(id),
+    process: { env: {}, cwd: () => ROOT, platform: "win32" }, require, console,
+    zg, RI: (m) => logs.push(String(m)), ng: () => {},
+    Gg: { appendStreamingLog: (id, t) => panel.push({ id, t: String(t) }), updateStreamingStatus: () => {}, currentPanel: {} },
+    yC: { extensionUri: { fsPath: ROOT } }, rg: path, JA: fs, fF: () => () => {},
+    iA: { commands: { executeCommand: async () => {} } }, dM: { show() {} }, Qn: null, __codexHandleArtifact: () => {},
+  };
+  Object.assign(g, {
+    __codexResetGeneration: 0, __codexBridgeState: { busy: false },
+    __codexControlPlane: { ensureRecoveryState: (x) => x || { required: false } }, __codexRecoveryState: { required: false },
+    __codexVisibleAcquire: () => true, __codexVisibleRelease: (r) => released.push(r),
+    __codexExecutionAdapter: { ensureLifecycle: () => ({}), recordStarted() {}, recordProgress() {}, recordLogPath() {} },
+    __codexExecGuardRef: { POLICY: { PROGRESS: "PROGRESS" }, createState: (o) => ({ ...o, createdAt: now }),
+      guardProgress: async (fn) => { guards.push({ at: now }); return { ok: true, value: await fn() }; }, publicSummary: (s) => s },
+    __codexShouldIncludeGraphs: () => false, __codexPrepareGraphRunCode: (code) => ({ code, captureBaseline: false }),
+    __codexBeginGraphRun: async (runId, src) => { await g.__codexEnsureBackendWarm(runId, src); },
+    __codexRouteGraphManifestOrExport: async () => ({}), __codexFinishGraphRunNoExport: () => {}, __codexGraphMark: () => {},
+    // kM's stopped-session retry; on Windows this would panic-kill every Stata window while busy.
+    __codexForceReset: async () => { counts.forceResets++; g.__codexResetGeneration++; zg._transport = null; },
+  });
+  vm.createContext(ctx);
+  const seg = segments(source);
+  vm.runInContext("var __codexBackendStart=null,__codexLastColdBackendStart=null;\n" + seg.started + "\n" + seg.warm
+    + "\n" + seg.terminal + "\nglobalThis.__kM=kM;", ctx);
+  async function drive(promise) {
+    let done = false, value, error;
+    promise.then((v) => { done = true; value = v; }, (e) => { done = true; error = e; });
+    for (let i = 0; i < 400000 && !done; i++) {
+      for (let k = 0; k < 8; k++) await new Promise((r) => setImmediate(r));
+      if (done) break;
+      let next = null;
+      for (const [id, t] of timers) if (!next || t.at < next[1].at) next = [id, t];
+      if (!next) break;
+      now = Math.max(now, next[1].at);
+      if (next[1].every) next[1].at = now + next[1].every; else timers.delete(next[0]);
+      try { next[1].fn(); } catch {}
+    }
+    if (error) return { done, error };
+    return { done, value };
+  }
+  return {
+    g, zg, sess, dispatches, guards, logs, panel, released, counts, script, replace, t0: now,
+    get now() { return now; },
+    run: (code, runId) => drive(g.__kM(code, { runId: runId || "debug_terminal_t", onProgress: () => {} })),
+    warm: (runId, src) => drive(g.__codexEnsureBackendWarm(runId, src)),
+    soonStop: (atMs) => schedule(() => { g.__codexResetGeneration++; }, atMs, 0),
+    summary: () => (typeof g.__codexWarmWorkerSummary === "function" ? g.__codexWarmWorkerSummary() : null),
+  };
+}
+// ---- cases: each throws when the layer gets it wrong ------------------------
+const S = 1000;
+const ok = (r) => r.value && r.value.success !== false && !r.value.error;
+const refusal = (r) => (r.value && r.value.guardFailure) || {};
+const CASES = {
+  // Same transport, worker replaced and still starting: the next run waits for the new one.
+  async rebuiltWorkerWaits(src) {
+    const h = harness(src, { status: "running" });
+    assert.ok(ok(await h.run("display 1", "debug_terminal_1")));
+    h.replace({ readyIn: 40 * S });
+    assert.ok(ok(await h.run("display 2", "debug_terminal_2")), "second run completes");
+    assert.equal(h.dispatches.length, 2);
+    assert.equal(h.dispatches[1].status, "running", "dispatched only after the new worker reports running");
+    assert.ok(h.dispatches[1].at >= h.t0 + 40 * S);
+  },
+  // The cached worker itself died (same pid, status error): never dispatch into it.
+  async cachedWorkerCrashed(src) {
+    const h = harness(src, { status: "running" });
+    await h.run("display 1", "debug_terminal_1");
+    h.sess.status = "error";
+    await h.run("display 2", "debug_terminal_2");
+    assert.ok(h.dispatches.every((d) => d.status === "running"), "never dispatched into a dead worker");
+  },
+  // Worker replaced but already running: cache dropped once on the pid, new identity recorded.
+  async replacedRunningRecorded(src) {
+    const h = harness(src, { status: "running" });
+    await h.run("display 1", "debug_terminal_1");
+    assert.ok(h.summary()?.worker?.pid != null, "identity recorded when the cache was filled");
+    h.replace({ running: true });
+    assert.ok(ok(await h.run("display 2", "debug_terminal_2")));
+    assert.equal(h.summary().drops, 1, "pid change drops the cache once");
+    assert.match(String(h.summary().lastDrop.reason), /^pid /);
+    assert.equal(h.summary().worker.pid, h.sess.pid, "new worker recorded");
+    assert.ok(ok(await h.run("display 3", "debug_terminal_3")));
+    assert.equal(h.summary().drops, 1, "same worker: no further drop");
+    assert.equal(h.dispatches.length, 3);
+  },
+  async createdAtChangeDetected(src) {
+    const h = harness(src, { status: "running" });
+    await h.run("display 1", "debug_terminal_1");
+    h.replace({ running: true, keepPid: h.sess.pid });
+    await h.run("display 2", "debug_terminal_2");
+    assert.equal(h.summary().drops, 1, "created_at change alone drops the cache");
+    assert.equal(h.summary().lastDrop.reason, "created_at changed");
+  },
+  // Cache hit on the same worker: one read-only probe, no notice, no delay.
+  async sameWorkerQuiet(src) {
+    const h = harness(src, { status: "running" });
+    await h.run("display 1", "debug_terminal_1");
+    const p = h.counts.probes, t = h.now;
+    assert.ok(ok(await h.run("display 2", "debug_terminal_2")));
+    assert.equal(h.counts.probes - p, 1, "one identity probe per cached run");
+    assert.ok(h.now - t < 2 * S);
+    assert.ok(!h.panel.some((x) => /Waiting for Stata/.test(x.t)));
+    assert.equal(h.summary().drops, 0);
+  },
+  // A failed identity probe keeps the cache (rc.7.79 behaviour); the run proceeds.
+  async probeFailureKeepsCache(src) {
+    const h = harness(src, { status: "running" });
+    await h.run("display 1", "debug_terminal_1");
+    h.script.probeThrows = true;
+    assert.ok(ok(await h.run("display 2", "debug_terminal_2")), "a failed identity probe does not refuse the run");
+    assert.equal(h.dispatches.length, 2);
+    assert.equal(h.summary().drops, 0);
+  },
+  // list_sessions without pid/created_at: status alone decides.
+  async noIdentityFields(src) {
+    const h = harness(src, { status: "running", noIdentity: true });
+    await h.run("display 1", "debug_terminal_1");
+    h.replace({ running: true });
+    assert.ok(ok(await h.run("display 2", "debug_terminal_2")));
+    assert.equal(h.summary().drops, 0, "nothing to compare: a running worker keeps the cache");
+    h.replace({ readyIn: 30 * S });
+    assert.ok(ok(await h.run("display 3", "debug_terminal_3")));
+    assert.equal(h.dispatches[2].status, "running", "status still decides");
+  },
+  // Default worker dies while starting: Terminal restarts it once and runs; no force reset.
+  async deadWorkerRestartedOnce(src) {
+    const h = harness(src, { status: "starting", readyAt: 1_800_000_010_000, failStarts: 1 });
+    assert.ok(ok(await h.run('display "after restart"')), "runs after one restart");
+    assert.equal(h.sess.stops, 1, "dead worker stopped (rc.7.72)");
+    assert.equal(h.sess.created, 1, "one new worker");
+    assert.equal(h.dispatches.length, 1);
+    assert.equal(h.dispatches[0].status, "running");
+    assert.equal(h.counts.forceResets, 0, "no force reset (Windows panic-kill path)");
+    assert.equal(h.released.length, 1);
+    assert.ok(h.panel.some((x) => /starting it once more/.test(x.t)), "the person is told");
+    assert.equal(h.summary().restarts, 1);
+  },
+  // Dies twice: one refusal with the warm-up code, nothing dispatched, no force reset.
+  async deadTwiceRefused(src) {
+    const h = harness(src, { status: "starting", readyAt: 1_800_000_010_000, failStarts: 2 });
+    const r = await h.run('display "never"');
+    const f = refusal(r);
+    assert.equal(r.value.success, false);
+    assert.equal(f.reasonCode, "PRE_RUN_BACKEND_WARMUP_FAILED");
+    assert.equal(f.payloadDispatched, false);
+    assert.equal(f.restartedOnce, true, "the refusal says it already restarted once");
+    assert.equal(h.sess.created, 1, "restarted once only");
+    assert.equal(h.sess.stops, 2);
+    assert.equal(h.dispatches.length, 0);
+    assert.equal(h.counts.forceResets, 0);
+    assert.equal(h.released.length, 1);
+    assert.ok(h.panel.some((x) => /The command was not sent/.test(x.t)));
+  },
+  // Stop lands while the dead worker is being stopped: Stop wins, no restart.
+  async stopBeforeRestart(src) {
+    const h = harness(src, { status: "starting", readyAt: 1_800_000_010_000, failStarts: 1, stopOnStop: true });
+    const r = await h.run('display "stopped"');
+    assert.equal(r.value.success, false, "refused");
+    assert.equal(h.sess.created, 0, "no restart after Stop");
+    assert.equal(h.dispatches.length, 0);
+    assert.equal(h.released.length, 1);
+  },
+  // Agent /run-command keeps rc.7.72's contract: refused, not restarted.
+  async agentNotRestarted(src) {
+    const h = harness(src, { status: "starting", readyAt: 1_800_000_010_000, failStarts: 1 });
+    const r = await h.warm("agent_run_1", "run-command");
+    assert.equal(r.error?.__codexPreRunTimeout?.reasonCode, "PRE_RUN_BACKEND_WARMUP_FAILED");
+    assert.equal(h.sess.created, 0, "agent path not restarted");
+  },
+  // A worker that never leaves "starting" is a timeout, refused once with its own bound.
+  async timeoutNotRestarted(src) {
+    const h = harness(src, { status: "starting", readyAt: Infinity });
+    const r = await h.run('display "slow"');
+    assert.equal(refusal(r).reasonCode, "PRE_RUN_BACKEND_WARMUP_TIMEOUT");
+    assert.equal(refusal(r).payloadDispatched, false);
+    assert.equal(h.sess.created, 0);
+    assert.equal(h.dispatches.length, 0);
+    assert.ok(h.now - h.t0 < 400 * S, "one 300 s bound, not two");
+  },
+};
+// ---- mutants of the patched layer: each must make at least one case fail ----
+const MUTANTS = [
+  ["cache-hit status ignored", 'seen.status !== "running" ? "status "', 'false ? "status "'],
+  ["pid not compared", "known.pid !== seen.pid", "false"],
+  ["created_at not compared", "known.createdAt !== seen.createdAt", "false"],
+  ["probe failure drops cache", "    if (seen) {\n      const known", "    if (!seen) __codexWarmTransport = null;\n    if (seen) {\n      const known"],
+  ["identity not recorded", '__codexWarmWorker = seen && seen.status === "running" ? { transport: __codexWarmTransport, pid: seen.pid, createdAt: seen.createdAt } : null;', "__codexWarmWorker = null;"],
+  ["no restart", "    __codexWarmWorkerStats.restarts++;\n", "    throw error;\n"],
+  ["restart any source", 'source !== "terminal-input" || ', ""],
+  ["restart any refusal", '!refusal || refusal.reasonCode !== "PRE_RUN_BACKEND_WARMUP_FAILED"\n      || refusal.lastStatus !== "error" || refusal.recovery !== "STOPPED_FAILED_SESSION"\n      || ', "!refusal || "],
+  ["restart ignores Stop", '"STOPPED_FAILED_SESSION"\n      || Number(globalThis.__codexResetGeneration || 0) !== generation) throw error;', '"STOPPED_FAILED_SESSION") throw error;'],
+  ["restart not announced", 'Gg.appendStreamingLog(runId, "\\n[Stata Workbench] Stata stopped', 'void(runId, "\\n[Stata Workbench] Stata stopped'],
+  ["second failure not tagged", "restartedOnce: true, ", ""],
+];
+
+async function runAll(src) {
+  const failed = [];
+  for (const [name, fn] of Object.entries(CASES)) {
+    try { await fn(src); } catch (e) { failed.push(name + ": " + String(e && e.message || e).split("\n")[0]); }
+  }
+  return failed;
+}
+
+(async () => {
+  const fixed = await runAll(bundle);
+  assert.deepEqual(fixed, [], "patched layer passes every case:\n" + fixed.join("\n"));
+  const old = await runAll(before);
+  for (const must of ["rebuiltWorkerWaits", "cachedWorkerCrashed", "deadWorkerRestartedOnce"]) {
+    assert.ok(old.some((f) => f.startsWith(must + ":")), "the layer before rc.7.81 fails " + must);
+  }
+  const caught = [];
+  for (const [name, from, to] of MUTANTS) {
+    assert.equal(bundle.split(from).length, 2, "mutant anchor unique: " + name);
+    const failed = await runAll(bundle.replace(from, () => to));
+    assert.ok(failed.length > 0, "mutant survived: " + name);
+    caught.push(name + " -> " + failed.map((f) => f.split(":")[0]).join(","));
+  }
+  console.log(JSON.stringify({ verdict: "WARM_WORKER_IDENTITY_PASS", cases: Object.keys(CASES).length,
+    beforeFails: old.map((f) => f.split(":")[0]), mutants: `${caught.length}/${MUTANTS.length}`, caught }));
+})().catch((e) => { console.error(e && e.stack || e); process.exit(1); });

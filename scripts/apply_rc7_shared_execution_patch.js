@@ -3456,5 +3456,8 @@ text = require("./apply_guard_attribution_patch").patchBundle(text, { finalize: 
 // F fix6: Terminal input waits for Stata start-up (rc.7.72 warm-up) before its
 // pre-log budget, as agent runs already did (W-P1 entry gap).
 text = require("./apply_terminal_warmup_patch").patchBundle(text, { finalize: false });
+// PLAN-V3 stage 6: the warm cache follows the default worker (pid/created_at);
+// Terminal input restarts a worker that died while starting, once, without force reset.
+text = require("./apply_warm_worker_identity_patch").patchBundle(text, { finalize: false });
 fs.writeFileSync(target, text, "utf8");
 console.log(baseAlreadyApplied ? "RC7_SHARED_EXECUTION_UPDATED" : "RC7_SHARED_EXECUTION_APPLIED", target);

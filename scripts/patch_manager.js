@@ -1491,6 +1491,11 @@ const REQUIRED_MARKERS = [
     label: "Terminal input waits for Stata start-up before its pre-log budget",
     marker: "codex patch rc.7.79: Terminal input waits for Stata start-up before its pre-log budget",
   },
+  {
+    key: "warmWorkerIdentity",
+    label: "warm cache follows the default worker; Terminal restarts a worker that died while starting",
+    marker: "codex patch rc.7.81: warm cache follows the default worker; Terminal restarts a worker that died while starting",
+  },
 ];
 
 const AUXILIARY_MARKERS = [
