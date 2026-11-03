@@ -3456,5 +3456,8 @@ text = require("./apply_guard_attribution_patch").patchBundle(text, { finalize: 
 // F fix6: Terminal input waits for Stata start-up (rc.7.72 warm-up) before its
 // pre-log budget, as agent runs already did (W-P1 entry gap).
 text = require("./apply_terminal_warmup_patch").patchBundle(text, { finalize: false });
+// F v3: Windows KILL, /panic-kill and a busy force reset end only this window's
+// backend process tree instead of every mcp-stata process and Stata GUI.
+text = require("./apply_windows_kill_scope_patch").patchBundle(text, { finalize: false });
 fs.writeFileSync(target, text, "utf8");
 console.log(baseAlreadyApplied ? "RC7_SHARED_EXECUTION_UPDATED" : "RC7_SHARED_EXECUTION_APPLIED", target);

@@ -26,6 +26,7 @@ const LATER = [
   "./apply_stop_feedback_truth_patch",
   "./apply_guard_attribution_patch",
   "./apply_terminal_warmup_patch",
+  "./apply_windows_kill_scope_patch",
 ];
 
 function revertLaterPatches(source) {

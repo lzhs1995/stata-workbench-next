@@ -1372,9 +1372,9 @@ const REQUIRED_MARKERS = [
     marker: 'registerCommand("stata-workbench.panicKill"',
   },
   {
-    key: "panicKillAllStataDefault",
-    label: "panic kill defaults to the full Stata execution chain",
-    marker: "Kill all Stata processes",
+    key: "panicKillThisWindowConfirm",
+    label: "panic kill confirms ending only this window's backend",
+    marker: "Kill this window's Stata",
   },
   {
     key: "panicKillTransportReset",
@@ -1491,6 +1491,11 @@ const REQUIRED_MARKERS = [
     label: "Terminal input waits for Stata start-up before its pre-log budget",
     marker: "codex patch rc.7.79: Terminal input waits for Stata start-up before its pre-log budget",
   },
+  {
+    key: "windowsKillScope",
+    label: "Windows KILL ends only this session's backend process tree",
+    marker: "codex patch rc.7.82: Windows KILL ends only this session's backend process tree",
+  },
 ];
 
 const AUXILIARY_MARKERS = [
@@ -1535,6 +1540,18 @@ const AUXILIARY_MARKERS = [
     label: "Windows force cleanup requires explicit owned PIDs",
     relativePath: path.join("scripts", "cleanup_mcp_stata_processes.ps1"),
     marker: "-Force requires -OwnedPidCsv",
+  },
+  {
+    key: "windowsKillScopeCore",
+    label: "packaged Windows KILL scope module picks only this host's backend tree",
+    relativePath: path.join("scripts", "windows_kill_scope_core.js"),
+    marker: "function selectSessionTree",
+  },
+  {
+    key: "windowsPanicScopedTargets",
+    label: "Windows panic script ends exact pid+creation-time targets",
+    relativePath: path.join("scripts", "panic_kill_stata_chain.ps1"),
+    marker: "-ScopedTargetCsv",
   },
   {
     key: "autocompleteEmptyVarsNoRefreshLoop",
@@ -1932,6 +1949,7 @@ const FORBIDDEN_MARKERS = [
   { key: "noLabelRecoveryBypass", label: "no label/code-regex recovery bypass", marker: "let __codexAllowRecoverySmoke=" },
   { key: "noGraphClearBusyRelease", label: "graph-clear cannot release postRunBusy", marker: '__codexSetPostRunBusy&&globalThis.__codexSetPostRunBusy(false,"graph-clear-complete"' },
   { key: "noGraphClearReadyWrite", label: "graph-clear cannot mark readiness ready", marker: 'readinessReason:"graph-clear-complete"' },
+  { key: "noProductPanicStataGui", label: "the extension never asks the panic script for every Stata GUI", marker: '"-IncludeStataGui"' },
 ];
 
 function findExtension() {

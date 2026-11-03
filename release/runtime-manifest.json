@@ -27,8 +27,8 @@
       "bytes": 17618
     },
     "scripts/patch_manager.js": {
-      "sha256": "d0c8b3ed0663a2d09dca597bbe8c7c6c54bae2772ae36efbcf65c32b25b81d4d",
-      "bytes": 95333
+      "sha256": "168cf07926607d9450f69fe5e4f119073f2870c0fd9cb1f2cbf2fe8e8e1ec236",
+      "bytes": 96140
     },
     "scripts/mcp_stata_runtime_patch.js": {
       "sha256": "64013014e8598af5c7f70a276cd80a2f5c21d218eaa6fba59f079096c8f75ac9",
@@ -111,8 +111,8 @@
       "bytes": 5178
     },
     "scripts/apply_rc7_shared_execution_patch.js": {
-      "sha256": "743d1b4729e9498d944cc446c6ea1300b0da987f0f0084773b8c0029cd52024d",
-      "bytes": 340083
+      "sha256": "e2e9d9f4215702548b9c91fbd9bc76498e394bb9665efc6ef9c50a222e22bed0",
+      "bytes": 340329
     },
     "scripts/apply_rc64_routes_patch.js": {
       "sha256": "b01e1225f5844b632e24d616957fb9e565541345a10d6f4fbc640a4b034070b2",
@@ -139,8 +139,8 @@
       "bytes": 11107
     },
     "dist/extension.js": {
-      "sha256": "0b8d733710c2e784669e995b94b58091672fea8c42ff717e0daaa1bbb0282e47",
-      "bytes": 5648468
+      "sha256": "4bdcd9badaac26974a65aa0a414183e3b7caec73281c7359476b279092068ccc",
+      "bytes": 5650316
     },
     "scripts/mac/png_compat_transform.js": {
       "sha256": "cdea12886a1d5bb5b4c2b3e38829de1c7e68ed70e7777e8d6e2eb02bb0ce3514",
@@ -343,7 +343,7 @@
       "bytes": 4729
     },
     "tools/verified_workbench.py": {
-      "sha256": "a4107f3f8c37e937d45abe67dfa423f19cf2c50b2eb487359fd31150e98f2f50",
+      "sha256": "b71e4b0b8e5c62fe4c323d36350f23e5c26ba77f1f790a68389e261e479093d9",
       "bytes": 21973
     },
     "tools/workbench_platform.py": {
@@ -433,6 +433,10 @@
     "scripts/guard_cancel_restore_core.js": {
       "sha256": "7efc929056497d016467231b82123e0ea902a8a018445fb409f4f24e58b3736a",
       "bytes": 17013
+    },
+    "scripts/windows_kill_scope_core.js": {
+      "sha256": "0cd04dce2db1d4ed76ec9d00c278b851d738cbe9ba8650f0b3761877e8aa1f69",
+      "bytes": 9549
     }
   },
   "acceptanceStatus": "PENDING_LICENSED_MAC_FULL_ACCEPTANCE",
