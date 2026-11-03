@@ -1491,6 +1491,11 @@ const REQUIRED_MARKERS = [
     label: "Terminal input waits for Stata start-up before its pre-log budget",
     marker: "codex patch rc.7.79: Terminal input waits for Stata start-up before its pre-log budget",
   },
+  {
+    key: "wp1Timing",
+    label: "W-P1 timing lines for the first Terminal command (log-only)",
+    marker: "codex patch rc.7.80: W-P1 timing lines for the first Terminal command (log-only)",
+  },
 ];
 
 const AUXILIARY_MARKERS = [
@@ -1614,6 +1619,12 @@ const AUXILIARY_MARKERS = [
     label: "packaged mcp-stata patch reads the pre-flight timeout from MCP_STATA_PREFLIGHT_TIMEOUT",
     relativePath: path.join("scripts", "stata_preflight_timeout_patch.js"),
     marker: "Workbench pre-flight timeout follows MCP_STATA_PREFLIGHT_TIMEOUT",
+  },
+  {
+    key: "runtimePatchWp1Timing",
+    label: "packaged mcp-stata patch writes W-P1 timing lines only when STATA_WORKBENCH_TIMING_FILE is set",
+    relativePath: path.join("scripts", "stata_timing_patch.js"),
+    marker: "Workbench W-P1 timing (log-only; active only when STATA_WORKBENCH_TIMING_FILE is set)",
   },
   {
     key: "forceResetReconnectFollowsSetupBudget",

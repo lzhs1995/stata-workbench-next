@@ -28,6 +28,7 @@ const sessionHealthPatch = require("./stata_session_health_patch");
 const logQueryPatch = require("./stata_log_query_patch");
 const graphNameBoundaryPatch = require("./stata_graph_name_boundary_patch");
 const preflightTimeoutPatch = require("./stata_preflight_timeout_patch");
+const timingPatch = require("./stata_timing_patch");
 
 const PATCH_MARKER = "UI/DataBrowser HTTP threads must not create a second asyncio loop";
 const TASK_DONE_PATCH_MARKER = "Workbench task_done notification must not retain the MCP transport";
@@ -1670,6 +1671,22 @@ function patchRuntime(options = {}) {
   graphDetectorStatus = patchedGraphDetector === graphDetectorSource ? "already-applied"
     : (options.dryRun ? "would-apply" : "applied");
 
+  // W-P1 diagnostics (rc.7.80): log-only milestones, only when the extension host
+  // was started with STATA_WORKBENCH_TIMING_FILE. A missing anchor is skipped.
+  let timing = null;
+  if (timingPatch.timingEnabled(options.env || process.env)) {
+    timing = {};
+    const timed = (component, source, status) => {
+      const result = timingPatch.patchComponent(component, source);
+      timing[component] = result.status;
+      return { source: result.source,
+        status: result.source === source ? status : (options.dryRun ? "would-apply" : "applied") };
+    };
+    ({ source: patchedServer, status: serverStatus } = timed("server", patchedServer, serverStatus));
+    ({ source: patchedSession, status: sessionStatus } = timed("session", patchedSession, sessionStatus));
+    ({ source: patchedClient, status: clientStatus } = timed("client", patchedClient, clientStatus));
+  }
+
   const changed = serverStatus !== "already-applied" ||
     clientStatus !== "already-applied" ||
     graphDetectorStatus !== "already-applied" ||
@@ -1812,6 +1829,7 @@ function patchRuntime(options = {}) {
     clientStatus,
     graphDetectorStatus,
     sessionStatus,
+    ...(timing ? { timing } : {}),
     ...located,
   };
 }

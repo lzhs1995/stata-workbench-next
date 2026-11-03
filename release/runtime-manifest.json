@@ -27,12 +27,12 @@
       "bytes": 17618
     },
     "scripts/patch_manager.js": {
-      "sha256": "d0c8b3ed0663a2d09dca597bbe8c7c6c54bae2772ae36efbcf65c32b25b81d4d",
-      "bytes": 95333
+      "sha256": "a867b110ad991f6b5e378d0733495eee9c0e93fbf8acacf6069ae34627abc4f0",
+      "bytes": 95858
     },
     "scripts/mcp_stata_runtime_patch.js": {
-      "sha256": "64013014e8598af5c7f70a276cd80a2f5c21d218eaa6fba59f079096c8f75ac9",
-      "bytes": 76393
+      "sha256": "5c21c4290443821abaf0a33838222bd5768f898082e9d866b50cf3a3993e8a08",
+      "bytes": 77366
     },
     "scripts/manual_run_policy.js": {
       "sha256": "feaf9b71dca260f3fc2b671cf936db7cb9e7bcb1649a822b66f427fe3675a6ff",
@@ -111,8 +111,8 @@
       "bytes": 5178
     },
     "scripts/apply_rc7_shared_execution_patch.js": {
-      "sha256": "743d1b4729e9498d944cc446c6ea1300b0da987f0f0084773b8c0029cd52024d",
-      "bytes": 340083
+      "sha256": "ba365894ac1693fb1c49374d534e8f43084792a509dd57ceafbd2f1c08a68c75",
+      "bytes": 340243
     },
     "scripts/apply_rc64_routes_patch.js": {
       "sha256": "b01e1225f5844b632e24d616957fb9e565541345a10d6f4fbc640a4b034070b2",
@@ -139,8 +139,8 @@
       "bytes": 11107
     },
     "dist/extension.js": {
-      "sha256": "0b8d733710c2e784669e995b94b58091672fea8c42ff717e0daaa1bbb0282e47",
-      "bytes": 5648468
+      "sha256": "4c770ab15534a17a2e2624de0911a91dea8ae08ed26acea3cdcfca3018c1046d",
+      "bytes": 5652138
     },
     "scripts/mac/png_compat_transform.js": {
       "sha256": "cdea12886a1d5bb5b4c2b3e38829de1c7e68ed70e7777e8d6e2eb02bb0ce3514",
@@ -343,7 +343,7 @@
       "bytes": 4729
     },
     "tools/verified_workbench.py": {
-      "sha256": "a4107f3f8c37e937d45abe67dfa423f19cf2c50b2eb487359fd31150e98f2f50",
+      "sha256": "41d4c1be8e21d18412bc0aa6340d90acf719ee3f89057032e882104cde9a030b",
       "bytes": 21973
     },
     "tools/workbench_platform.py": {
@@ -433,6 +433,10 @@
     "scripts/guard_cancel_restore_core.js": {
       "sha256": "7efc929056497d016467231b82123e0ea902a8a018445fb409f4f24e58b3736a",
       "bytes": 17013
+    },
+    "scripts/stata_timing_patch.js": {
+      "sha256": "9df274f407fb76968db162e2a56a54812dff89c050f79729c12cb50dd5dd48e5",
+      "bytes": 8287
     }
   },
   "acceptanceStatus": "PENDING_LICENSED_MAC_FULL_ACCEPTANCE",

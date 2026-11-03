@@ -1,0 +1,149 @@
+"use strict";
+// W-P1 diagnostics (rc.7.80): one JSON line per milestone between "worker spawned"
+// and "log_path published", so a Windows run that stalls before its first log line
+// shows which stage it stopped in. Log-only: nothing here changes control flow,
+// return values or timing budgets. mcp_stata_runtime_patch applies it only when
+// STATA_WORKBENCH_TIMING_FILE is set in the extension host's environment, and the
+// inserted helper writes only while that variable is set in the Python process.
+// A point whose anchor is missing is skipped (reported), never fatal: diagnostics
+// must not stop the runtime from starting.
+const MARKER = "Workbench W-P1 timing (log-only; active only when STATA_WORKBENCH_TIMING_FILE is set)";
+const ENV = "STATA_WORKBENCH_TIMING_FILE";
+
+const HELPER = `
+# ${MARKER}
+_WB_FIRST_LOG = set()
+
+
+def _wb_timing(event, **fields):
+    target = os.environ.get("${ENV}")
+    if not target:
+        return
+    try:
+        import json as _wb_json
+        import time as _wb_time
+        record = {"event": event, "wall": _wb_time.time(), "mono": _wb_time.monotonic(), "pid": os.getpid(), "src": "py"}
+        record.update(fields)
+        with open(target, "a", encoding="utf-8") as handle:
+            handle.write(_wb_json.dumps(record, default=str) + "\\n")
+    except Exception:
+        pass
+`;
+
+const WAIT_ORIGINAL = `async def _wait_for_log_path(task_info: BackgroundTask) -> None:
+    while task_info.log_path is None and not task_info.done:
+        await anyio.sleep(0.01)
+`;
+const WAIT_TIMED = `async def _wait_for_log_path(task_info: BackgroundTask) -> None:
+    _wb_timing("server_wait_log_path_start", task_id=task_info.task_id, kind=task_info.kind)
+    while task_info.log_path is None and not task_info.done:
+        await anyio.sleep(0.01)
+    _wb_timing("server_wait_log_path_end", task_id=task_info.task_id, has_log_path=task_info.log_path is not None, done=bool(task_info.done))
+`;
+
+// where: "after" inserts below the anchor, "before" above it; the inserted lines
+// take the indentation of the anchor's first (before) or last (after) line.
+// all: the anchor may occur more than once (run_command and run_do_file share it).
+const POINTS = {
+  server: {
+    helperAnchor: '\nlogger = logging.getLogger("mcp_stata")\n',
+    points: [
+      { event: "server_tool_call", where: "after", lines: ['_wb_timing("server_tool_call", tool=tool_name, request_id=str(request_id))'],
+        anchor: '    logger.info("MCP tool call: %s request_id=%s", tool_name, request_id)\n' },
+      { event: "server_wait_log_path_start", replace: [WAIT_ORIGINAL, WAIT_TIMED] },
+    ],
+  },
+  session: {
+    helperAnchor: '\nlogger = logging.getLogger("mcp_stata.sessions")\n',
+    points: [
+      { event: "session_spawned", where: "after",
+        lines: ['_wb_timing("session_spawned", session=self.id, worker_pid=getattr(self._process, "pid", None))'],
+        anchor: "        self._listener_task = asyncio.create_task(self._listen_to_worker())\n" },
+      { event: "session_ready", where: "after", lines: ['_wb_timing("session_ready", session=self.id, worker_pid=self.pid)'],
+        anchor: '            logger.info(f"Session {self.id} ready (PID: {self.pid})")\n' },
+      { event: "session_call_send", where: "before", lines: ['_wb_timing("session_call_send", session=self.id, method=method, msg_id=msg_id)'],
+        anchor: '            await self._send({"type": method, "id": msg_id, "args": args})\n' },
+      { event: "session_first_log", where: "after", indent: "            ",
+        lines: ["if msg_id not in _WB_FIRST_LOG and len(_WB_FIRST_LOG) < 4096:",
+          "    _WB_FIRST_LOG.add(msg_id)",
+          '    _wb_timing("session_first_log", session=self.id, msg_id=msg_id)'],
+        anchor: '        elif event == "log":\n' },
+      { event: "session_result", where: "after", indent: "            ",
+        lines: ['_wb_timing("session_result", session=self.id, msg_id=msg_id)'],
+        anchor: '        elif event == "result":\n' },
+    ],
+  },
+  client: {
+    helperAnchor: '\nlogger = logging.getLogger("mcp_stata")\n',
+    points: [
+      { event: "client_init_start", where: "before", lines: ['_wb_timing("client_init_start", candidates=len(discovery_candidates))'],
+        anchor: '            logger.info("Initializing Stata engine (attempting up to %d candidate binaries)...", len(discovery_candidates))\n' },
+      { event: "client_preflight_start", where: "before", lines: ['_wb_timing("client_preflight_start")'],
+        anchor: '                                res = subprocess.run(\n                                    [py_exe, "-c", preflight_code],\n' },
+      { event: "client_preflight_end", where: "before", lines: ['_wb_timing("client_preflight_end", rc=res.returncode)'],
+        anchor: '                                if res.returncode != 0:\n                                    sys.stderr.write(f"[mcp_stata] Pre-flight failed (rc={res.returncode})' },
+      { event: "client_config_ok", where: "after", lines: ['_wb_timing("client_config_ok")'],
+        anchor: '                        logger.info("stata_setup.config succeeded with path: %s", path)\n' },
+      { event: "client_init_end", where: "after", lines: ['_wb_timing("client_init_end", edition=str(edition))'],
+        anchor: '            logger.info("StataClient initialized successfully with %s (%s)", stata_exec_path, edition)\n' },
+      { event: "client_startup_do", where: "before", lines: ['_wb_timing("client_startup_do")'],
+        anchor: "                logger.info('Loading startup do file from %s', path)\n" },
+      { event: "client_stream_enter", where: "after", all: true, lines: ['_wb_timing("client_stream_enter")'],
+        anchor: "        self._break_requested = False\n\n        code = self._maybe_rewrite_graph_name_in_command(code)\n" },
+      { event: "client_log_path_notify", where: "before", all: true, lines: ['_wb_timing("client_log_path_notify")'],
+        anchor: "            # Inform the MCP client immediately where to read/tail the output.\n" },
+    ],
+  },
+};
+
+function count(source, needle) { return source.split(needle).length - 1; }
+function indentOf(line) { return /^[ ]*/.exec(line)[0]; }
+
+function insertPoint(source, point) {
+  if (point.replace) {
+    const [original, timed] = point.replace;
+    const n = count(source, original);
+    if (n !== 1) return { source, status: n === 0 ? "missing" : "ambiguous" };
+    return { source: source.replace(original, () => timed), status: "applied" };
+  }
+  const n = count(source, point.anchor);
+  if (n === 0) return { source, status: "missing" };
+  if (n > 1 && !point.all) return { source, status: "ambiguous" };
+  const anchorLines = point.anchor.split("\n");
+  const ref = point.where === "before" ? anchorLines[0]
+    : (point.anchor.endsWith("\n") ? anchorLines[anchorLines.length - 2] : anchorLines[anchorLines.length - 1]);
+  const indent = point.indent != null ? point.indent : indentOf(ref);
+  const block = point.lines.map((line) => indent + line + "\n").join("");
+  const next = point.where === "before"
+    ? source.split(point.anchor).join(block + point.anchor)
+    : source.split(point.anchor).join(point.anchor + block);
+  return { source: next, status: "applied" };
+}
+
+// Returns { source, status: { helper, <event>: applied|already|missing|ambiguous } }.
+function patchComponent(component, source) {
+  const spec = POINTS[component];
+  if (!spec) throw new Error("unknown timing component " + component);
+  const status = {};
+  if (source.includes(MARKER)) status.helper = "already";
+  else if (count(source, spec.helperAnchor) === 1) {
+    source = source.replace(spec.helperAnchor, () => spec.helperAnchor + HELPER);
+    status.helper = "applied";
+  } else {
+    status.helper = "missing";
+    return { source, status };
+  }
+  for (const point of spec.points) {
+    if (source.includes(`_wb_timing("${point.event}"`)) { status[point.event] = "already"; continue; }
+    const result = insertPoint(source, point);
+    source = result.source;
+    status[point.event] = result.status;
+  }
+  return { source, status };
+}
+
+function timingEnabled(env = process.env) {
+  return typeof env[ENV] === "string" && env[ENV].trim() !== "";
+}
+
+module.exports = { MARKER, ENV, HELPER, POINTS, WAIT_ORIGINAL, WAIT_TIMED, patchComponent, timingEnabled };
