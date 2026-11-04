@@ -161,6 +161,8 @@ try {
       backgroundNotifyFixture,
       backgroundSignaturesFixture,
       backgroundGraphReadyFixture,
+      require("./stata_task_done_rc_patch").RUN_ORIGINAL,
+      require("./stata_task_done_rc_patch").RUN_ORIGINAL,
       "# end",
     ].join("\n"),
     "utf8"
@@ -594,6 +596,8 @@ try {
       backgroundNotifyFixture,
       backgroundSignaturesFixture,
       backgroundGraphReadyFixture,
+      require("./stata_task_done_rc_patch").RUN_ORIGINAL,
+      require("./stata_task_done_rc_patch").RUN_ORIGINAL,
       "# end",
     ].join("\n"),
     "utf8"
@@ -625,6 +629,8 @@ try {
       legacyBackgroundNotifyFixture,
       backgroundSignaturesFixture,
       checkpointGraphReadyFixture,
+      require("./stata_task_done_rc_patch").RUN_ORIGINAL,
+      require("./stata_task_done_rc_patch").RUN_ORIGINAL,
       "# end",
     ].join("\n"),
     "utf8"

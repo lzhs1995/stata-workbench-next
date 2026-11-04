@@ -1642,6 +1642,12 @@ const AUXILIARY_MARKERS = [
     marker: "Workbench pre-flight timeout follows MCP_STATA_PREFLIGHT_TIMEOUT",
   },
   {
+    key: "runtimePatchTaskDoneRc",
+    label: "packaged mcp-stata patch sends this run's Stata rc in task_done",
+    relativePath: path.join("scripts", "stata_task_done_rc_patch.js"),
+    marker: "Workbench task_done carries this run's Stata rc",
+  },
+  {
     key: "forceResetReconnectFollowsSetupBudget",
     label: "Windows force-reset reconnect bound follows the Stata setup budget",
     relativePath: path.join("scripts", "stop_checkpoint_core.js"),
