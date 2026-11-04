@@ -15,7 +15,9 @@ const path = require("node:path");
 const fingerprint = require("./finalize_bundle_identity");
 const MARKER = "// codex patch rc.7.85: confirmed Stata errors report their return code";
 
-const HELPER_ANCHOR = "globalThis.__codexTerminalWarmup = __codexTerminalWarmup;\n";
+// The end of the last earlier helper (rc.7.86). rc.7.79/7.81/7.86 each check
+// "their anchor + their helper" on replay, so this helper must not sit between them.
+const HELPER_ANCHOR = "globalThis.__codexEnsureBackendWarm = __codexEnsureBackendWarmLabelled;\n";
 const HELPER = String.raw`
 ${MARKER}
 // Returns the classify() outcome for this run, or null if it could not run.

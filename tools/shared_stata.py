@@ -30,7 +30,7 @@ def _valid_backend_pids(value):
             and len(set(value)) == len(value))
 
 
-def ready(instance):
+def _idle_session(instance):
     s = instance.get("status") or {}
     try:
         entry.permissions.require_window_observation(instance)
@@ -39,8 +39,44 @@ def ready(instance):
     return (instance.get("identityOk") is True and type(instance.get("axWindowCount")) is int
             and instance["axWindowCount"] == 1 and s.get("busy") is False
             and s.get("postRunBusy") is False and s.get("trueReady") is True
-            and isinstance(s.get("recovery"), dict) and s["recovery"].get("required") is False
-            and _valid_backend_pids(s.get("ownedBackendPids")))
+            and isinstance(s.get("recovery"), dict) and s["recovery"].get("required") is False)
+
+
+def ready(instance):
+    s = instance.get("status") or {}
+    return _idle_session(instance) and _valid_backend_pids(s.get("ownedBackendPids"))
+
+
+def cold_backend(instance):
+    """M2：窗口刚开、Stata 后端还没起（懒启动）。其余全绿时可以提交一次：
+    扩展的 /run-command 会先起后端并在 rc.7.72 的上限内等 Stata 就绪，未就绪就拒绝且不派发。"""
+    s = instance.get("status") or {}
+    start = s.get("backendStart")
+    return (_idle_session(instance) and s.get("ownedBackendPids") == []
+            and isinstance(start, dict) and start.get("connected") is False)
+
+
+WARMUP_REFUSALS = ("PRE_RUN_BACKEND_WARMUP_TIMEOUT", "PRE_RUN_BACKEND_WARMUP_FAILED", "PRE_RUN_BACKEND_WARMUP_CANCELLED")
+
+
+def prerun_refusal(http, body):
+    """扩展在派发前明确拒绝（warm-up 超时/失败/Stop）：payloadDispatched 为 false，返回原因和能否重试。
+    不是这种明确拒绝就返回 None（照旧按「执行未确认」处理，不重试）。"""
+    if not isinstance(body, dict) or type(http) is not int or http == 200:
+        return None
+    envelope = body
+    if "reasonCode" not in body and isinstance(body.get("_httperror"), str):
+        try:
+            envelope = json.loads(body["_httperror"])
+        except (ValueError, RecursionError):
+            return None
+    if not isinstance(envelope, dict) or envelope.get("reasonCode") not in WARMUP_REFUSALS:
+        return None
+    if envelope.get("payloadDispatched") is not False or envelope.get("preRunStage") != "backend-warmup":
+        return None
+    return {"reasonCode": envelope["reasonCode"], "payloadDispatched": False,
+            "retryable": envelope.get("retryable") is True, "retryAfterMs": envelope.get("retryAfterMs"),
+            "lastStatus": envelope.get("lastStatus"), "message": envelope.get("message")}
 
 
 OBSERVE_ATTEMPTS = 3
@@ -120,6 +156,14 @@ def response_diagnostics(body):
     return result
 
 
+def _cold_start_bound(after, rid):
+    """冷启动：提交前没有后端，所以没法比「前后同一个」；改为要求这次 run 自己起了后端并已登记。"""
+    s = after.get("status") or {}
+    cold = (s.get("backendStart") or {}).get("lastCold") or {}
+    return (_valid_backend_pids(s.get("ownedBackendPids")) and isinstance(rid, str) and bool(rid)
+            and cold.get("runId") == rid and cold.get("outcome") == "CONNECTED")
+
+
 def completion_checks(request, http, body, before, after):
     body = body if isinstance(body, dict) else {}
     s = after.get("status") or {}
@@ -143,8 +187,9 @@ def completion_checks(request, http, body, before, after):
         "responseRcZero": type(body.get("rc")) is int and body["rc"] == 0,
         "sameLauncher": before.get("launcherPid") == after.get("launcherPid") and before.get("launcher") == after.get("launcher"),
         "sameBridgeOwner": before.get("owner") == after.get("owner"),
-        "sameStataBackend": _valid_backend_pids(before["status"].get("ownedBackendPids"))
-            and before["status"]["ownedBackendPids"] == s.get("ownedBackendPids"),
+        "sameStataBackend": _cold_start_bound(after, rid) if request.get("coldBackend") else (
+            _valid_backend_pids(before["status"].get("ownedBackendPids"))
+            and before["status"]["ownedBackendPids"] == s.get("ownedBackendPids")),
         "readyAfter": ready(after),
         "completedRunBound": isinstance(rid, str) and completed.get("runId") == rid,
         "currentLifecycle": s.get("lifecycleVersion") == "rc7.27",
@@ -207,8 +252,10 @@ def execute_once(d, request, receipt, timeout=3600, observe=entry.observe, sleep
         before = look()
         result["before"] = before
         entry.permissions.require_window_observation(before)
-        if not ready(before):
+        cold = not ready(before) and cold_backend(before)
+        if not ready(before) and not cold:
             raise RuntimeError("existing session is not ready; no launch, reset or dispatch")
+        result["coldBackend"] = cold
         # 阶段 D：注册表里绑定的会话必须就是 /status 报的这个（sessionId、port、generation、bundle SHA）
         result["sessionIdentity"] = entry.verify_session_identity(before.get("status"))
         write_once(receipt / "request.json", request)
@@ -239,6 +286,11 @@ def execute_once(d, request, receipt, timeout=3600, observe=entry.observe, sleep
         write_once(receipt / "response.json", {"http": http, "body": body})
         result["responseDiagnostics"] = response_diagnostics(body)
         write_once(receipt / "response-diagnostics.json", result["responseDiagnostics"])
+        refusal = prerun_refusal(http, body)
+        if refusal is not None:
+            # 扩展明确说没派发：记成拒绝，原因和能否重试交给调用方；本客户端不重发
+            result["refusal"] = refusal
+            result["verdict"] = "REFUSED_NOT_DISPATCHED"
         after = look()
         # Only observe completion settlement. Never repeat the POST.
         stata_error = isinstance(body, dict) and body.get("outcome") == "STATA_ERROR"
@@ -251,7 +303,7 @@ def execute_once(d, request, receipt, timeout=3600, observe=entry.observe, sleep
                 break
         result["after"] = after
         entry.permissions.require_window_observation(after)
-        checks = completion_checks({"clientToken": token}, http, body, before, after)
+        checks = completion_checks({"clientToken": token, "coldBackend": cold}, http, body, before, after)
         result["checks"] = checks
         result["failedChecks"] = [k for k, v in checks.items() if v is not True]
         if all(checks.values()):
@@ -294,7 +346,7 @@ def wait_ready(d, deadline, observe=entry.observe, clock=time.monotonic, sleep=t
         entry.permissions.require_window_observation(state)
         if not state.get("identityOk") or state.get("axWindowCount") != 1:
             raise RuntimeError("instance identity/window is not verified; no dispatch")
-        if ready(state):
+        if ready(state) or cold_backend(state):
             return state
         s = state.get("status") or {}
         if s.get("recovery", {}).get("required") is not False:
@@ -379,6 +431,7 @@ def main():
                       "requestId": diagnostics["fields"].get("requestId"),
                       "responseDiagnostics": diagnostics, "receipt": str(receipt),
                       "error": result["error"], "failedChecks": result.get("failedChecks"),
+                      "coldBackend": result.get("coldBackend"), "refusal": result.get("refusal"),
                       "stataRc": result.get("stataRc"), "stataErrorChecks": result.get("stataErrorChecks"),
                       "windowObservation": result.get("windowObservation")}, ensure_ascii=False))
     return 0 if result["verdict"] == "PASS_VISIBLE_SHARED_RUN" else 2

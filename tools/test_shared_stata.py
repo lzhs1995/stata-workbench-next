@@ -367,6 +367,64 @@ class SharedClientTests(unittest.TestCase):
             self.assertEqual(timed["verdict"], "EXECUTION_UNCONFIRMED_NO_RETRY")
             self.assertEqual(json.loads((root / "timeout/result.json").read_bytes())["retryCount"], 0)
 
+    # M2：刚开窗、后端懒启动还没起（pids 空、backendStart 未连接），其余全绿时提交一次，扩展负责等
+    def cold(self):
+        s = state()
+        s["status"]["ownedBackendPids"] = []
+        s["status"]["backendStart"] = {"connected": False, "current": None, "lastCold": None}
+        return s
+
+    def test_cold_backend_submits_once_and_binds_the_cold_start(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            post = Mock(side_effect=TimeoutError("unknown execution outcome"))
+            d = SimpleNamespace(w=SimpleNamespace(http_post=post))
+            result = client.execute_once(d, {"code": "display 1"}, root / "cold", observe=lambda _: self.cold())
+            self.assertEqual(result["postCount"], 1)
+            self.assertTrue(result["coldBackend"])
+            self.assertEqual(result["verdict"], "EXECUTION_UNCONFIRMED_NO_RETRY")
+            for name, change in (("connected", {"connected": True}), ("busy", None)):
+                blocked_state = self.cold()
+                if change:
+                    blocked_state["status"]["backendStart"].update(change)
+                else:
+                    blocked_state["status"]["busy"] = True
+                blocked = client.execute_once(d, {"code": "display 1"}, root / name, observe=lambda _, s=blocked_state: s)
+                self.assertEqual(blocked["postCount"], 0, name)
+            self.assertEqual(post.call_count, 1)
+        after = state("new")
+        after["status"]["backendStart"] = {"connected": True, "lastCold": {"runId": "new", "outcome": "CONNECTED"}}
+        body = {"ok": True, "runId": "new", "rc": 0}
+        self.assertTrue(client.completion_checks({"coldBackend": True}, 200, body, self.cold(), after)["sameStataBackend"])
+        self.assertFalse(client.completion_checks({}, 200, body, self.cold(), after)["sameStataBackend"])
+        after["status"]["backendStart"]["lastCold"]["runId"] = "someone-else"
+        self.assertFalse(client.completion_checks({"coldBackend": True}, 200, body, self.cold(), after)["sameStataBackend"])
+
+    def test_warmup_refusal_is_reported_not_retried(self):
+        envelope = {"ok": False, "status": 504, "reasonCode": "PRE_RUN_BACKEND_WARMUP_TIMEOUT", "preRunStage": "backend-warmup",
+                    "payloadDispatched": False, "retryable": True, "retryAfterMs": 5000, "lastStatus": "starting"}
+        for body in (envelope, {"_httperror": json.dumps(envelope)}):
+            with tempfile.TemporaryDirectory() as directory:
+                post = Mock(return_value=(504, body))
+                result = client.execute_once(SimpleNamespace(w=SimpleNamespace(http_post=post)), {"code": "display 1"},
+                    Path(directory) / "receipt", observe=Mock(side_effect=[self.cold(), self.cold()]))
+                self.assertEqual(result["verdict"], "REFUSED_NOT_DISPATCHED")
+                self.assertEqual(result["refusal"]["reasonCode"], "PRE_RUN_BACKEND_WARMUP_TIMEOUT")
+                self.assertTrue(result["refusal"]["retryable"])
+                self.assertEqual(post.call_count, 1)
+        stop = dict(envelope, status=409, reasonCode="PRE_RUN_BACKEND_WARMUP_CANCELLED", retryable=False, retryAfterMs=None)
+        self.assertFalse(client.prerun_refusal(409, stop)["retryable"])
+        for unsure in (dict(envelope, payloadDispatched=None), dict(envelope, reasonCode="EXEC_GUARD_FAILED"),
+                       dict(envelope, preRunStage="snapshot")):
+            self.assertIsNone(client.prerun_refusal(504, unsure), "not an explicit pre-dispatch refusal")
+        self.assertIsNone(client.prerun_refusal(200, envelope))
+
+    def test_wait_ready_accepts_cold_backend(self):
+        sleep = Mock()
+        got = client.wait_ready(SimpleNamespace(), 10, observe=lambda _: self.cold(), clock=lambda: 0, sleep=sleep)
+        self.assertEqual(got["status"]["ownedBackendPids"], [])
+        sleep.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
