@@ -451,6 +451,43 @@ t("R4 gate text never suggests ending a pid whose start time is unknown, and sta
   assert.match(known, new RegExp("started " + new Date(T0).toISOString().replace(/[.]/g, "[.]")));
 });
 
+// Review 5: gate evidence is kept per identity, not per pid.
+const child4500 = { processes: [{ pid: 111, ppid: 110, name: "python.exe", createdMs: 4500 }] };
+t("R5 (a) two rounds, same pid 110, different creation times: the later window still blocks on its child 111", () => {
+  let gate = core.openGate(null, { ok: false, scanOk: false, ended: [{ pid: 110, createdMs: 1000, endedAtMs: 2000 }] }, new Map());
+  gate = core.openGate(gate, { ok: false, scanOk: false, ended: [{ pid: 110, createdMs: 4000, endedAtMs: 5000 }] }, new Map());
+  assert.deepEqual(gate.items.filter((i) => i.check === "scan").map((i) => [i.pid, i.createdMs, i.endedAtMs]), [[110, 1000, 2000], [110, 4000, 5000]]);
+  const next = core.recheckGate(gate, child4500);
+  assert.equal(next.open, true, JSON.stringify(next));
+  assert.deepEqual(next.items.map((i) => [i.pid, i.createdMs]), [[111, 4500]]);
+  assert.equal(core.recheckGate(next, { processes: [] }).open, false, "child gone: cleared");
+});
+for (const [label, order] of [["old identity first", [0, 1]], ["scan first", [1, 0]]]) {
+  t("R5 (b) an old 111 cleared by a new identity does not hide the new 111 from 110's scan (" + label + ")", () => {
+    const items = [{ pid: 111, createdMs: 1500, check: "identity", why: "x" }, { pid: 110, createdMs: 4000, endedAtMs: 5000, check: "scan", why: "y" }];
+    const next = core.recheckGate({ open: true, items: order.map((k) => items[k]) }, child4500);
+    assert.equal(next.open, true, JSON.stringify(next));
+    assert.deepEqual(next.items.map((i) => [i.pid, i.createdMs]), [[111, 4500]]);
+    assert.equal(core.recheckGate(next, child4500).open, true, "still listed: still open");
+    assert.equal(core.recheckGate(next, { processes: [] }).open, false, "child gone: cleared");
+  });
+}
+t("R5 a merge of the same identity never narrows its window; unknown identities are not merged away", () => {
+  const same = (endedAtMs) => ({ ok: false, scanOk: false, ended: [{ pid: 110, createdMs: 4000, endedAtMs }] });
+  let gate = core.openGate(core.openGate(null, same(5000), new Map()), same(6000), new Map());
+  assert.deepEqual(gate.items.map((i) => [i.pid, i.createdMs, i.endedAtMs]), [[110, 4000, 6000]]);
+  assert.equal(core.recheckGate(gate, { processes: [{ pid: 111, ppid: 110, name: "python.exe", createdMs: 5500 }] }).open, true, "the wider end still covers 5500");
+  const later = core.openGate(core.openGate(null, same(6000), new Map()), same(5000), new Map());
+  assert.deepEqual(later.items.map((i) => i.endedAtMs), [6000], "a later, narrower duplicate does not narrow it");
+  gate = core.openGate(gate, same(null), new Map());
+  assert.deepEqual(gate.items.map((i) => i.endedAtMs), [null], "an unknown end stays unknown");
+  const absent = core.openGate(core.openGate(null, { ok: false, unresolved: [{ pid: 120, createdMs: null, reason: "r1" }] }, new Map()),
+    { ok: false, unresolved: [{ pid: 120, createdMs: null, reason: "r2" }] }, new Map());
+  assert.deepEqual(absent.items.map((i) => [i.pid, i.check, i.why]), [[120, "absent", "r1"], [120, "absent", "r2"]]);
+  const twice = core.openGate(absent, { ok: false, unresolved: [{ pid: 120, createdMs: null, reason: "r1" }] }, new Map());
+  assert.equal(twice.items.length, 2, "an exact duplicate merges");
+});
+
 t("patch is idempotent and reverts exactly", () => {
   assert.equal(patch.patchBundle(dist), patch.patchBundle(patch.patchBundle(dist)));
   const reverted = patch.revertBundle(dist);

@@ -301,14 +301,30 @@ function gateItemsFrom(result, owned) {
       why: r.scanOk === false ? "the check for processes started during the kill failed" : "no verified cleanup result" });
   }
   if (!items.length && r.ok !== true) items.push({ pid: null, name: null, createdMs: null, endedAtMs: null, check: "listing", why: "no verified cleanup result and no registered backend pid" });
-  const seen = new Set();
-  return items.filter((i) => { const k = i.pid + ":" + i.check; if (seen.has(k)) return false; seen.add(k); return true; });
+  return mergeItems(items);
+}
+
+// Review 5: evidence is keyed by identity, not by pid. The same pid in two
+// cleanup rounds, or a reused pid, is two items. Only exact duplicates merge
+// (same check, pid, creation time and, when the creation time is unknown, the
+// same reason), and a merge keeps the wider window: an unknown end stays unknown.
+function itemKey(i) {
+  return [i.check, i.pid, i.createdMs, i.startedAtMs, i.createdMs == null ? i.why : "", i.pid == null ? i.error || "" : ""].join("|");
+}
+function mergeItems(list) {
+  const out = [], byKey = new Map();
+  for (const i of list) {
+    const k = itemKey(i), had = byKey.get(k);
+    if (!had) { const c = { ...i }; byKey.set(k, c); out.push(c); continue; }
+    if (had.endedAtMs != null) had.endedAtMs = i.endedAtMs == null ? null : Math.max(had.endedAtMs, i.endedAtMs);
+  }
+  return out;
 }
 
 function openGate(prev, result, owned, meta = {}) {
   const items = gateItemsFrom(result, owned);
   const keep = prev && Array.isArray(prev.items) ? prev.items : [];
-  const merged = keep.concat(items.filter((i) => !keep.some((k) => k.pid === i.pid && k.check === i.check)));
+  const merged = mergeItems(keep.concat(items));
   return { open: merged.length > 0, openedAt: (prev && prev.openedAt) || new Date().toISOString(), source: meta.source || (prev && prev.source) || null,
     items: merged, lastCheck: prev ? prev.lastCheck || null : null };
 }
@@ -316,16 +332,26 @@ function openGate(prev, result, owned, meta = {}) {
 // Direct children of a resolved item created inside its lifetime window. A
 // child with no readable creation time cannot be placed outside it, so it is
 // kept (as "absent"); a child older than the item is a stale ParentProcessId.
-function leftovers(item, now, procs, tracked) {
+function leftovers(item, now, procs, covered) {
   const lo = item.createdMs != null ? item.createdMs : -Infinity;
   const hi = item.endedAtMs != null ? item.endedAtMs : now && now.createdMs != null ? now.createdMs : Infinity;
   const out = [];
   for (const p of procs) {
-    if (tracked.has(p.pid) || (p.ppid !== item.pid && p.spawnParent !== item.pid)) continue;
+    if (covered(p) || (p.ppid !== item.pid && p.spawnParent !== item.pid)) continue;
     if (p.createdMs == null) out.push({ pid: p.pid, name: p.name, createdMs: null, endedAtMs: null, check: "absent", why: `started by pid ${item.pid}; creation time unknown`, from: item.pid });
     else if (p.createdMs >= lo && p.createdMs <= hi) out.push({ pid: p.pid, name: p.name, createdMs: p.createdMs, endedAtMs: null, check: "identity", why: `started by pid ${item.pid} before it ended; not ended`, from: item.pid });
   }
   return out;
+}
+
+// Whether an item's process is still the one listed now (it stays open).
+function isGone(item, now) {
+  if (!now) return true;
+  // A scan item was confirmed ended; whatever has its pid now is another process.
+  if (item.check === "scan") return true;
+  if (item.check === "identity" && item.createdMs != null && now.createdMs != null && now.createdMs !== item.createdMs) return true;
+  if (item.check === "root" && item.startedAtMs != null && now.createdMs != null && now.createdMs > item.startedAtMs + ROOT_CLOCK_TOLERANCE_MS) return true;
+  return false;
 }
 
 function recheckGate(gate, listing) {
@@ -336,21 +362,20 @@ function recheckGate(gate, listing) {
   const byPid = new Map(procs.map((p) => [p.pid, p]));
   const left = [], cleared = [];
   const queue = gate.items.slice();
-  const tracked = new Set(queue.map((i) => i.pid));
+  // A listed process is already tracked only by an item that stays open on it
+  // (same pid and same identity), never by an item for another process that
+  // had the same pid; so the order items are checked in does not matter.
+  const all = queue.slice();
+  const covered = (p) => all.some((i) => i.pid === p.pid && !isGone(i, p));
   while (queue.length) {
     const item = queue.shift();
     if (item.check === "unknown") { left.push(item); continue; }
     if (item.check === "listing") { cleared.push({ ...item, seen: null }); continue; }
     const now = byPid.get(item.pid);
-    let gone = !now;
-    if (now && item.check === "identity" && item.createdMs != null && now.createdMs != null && now.createdMs !== item.createdMs) gone = true;
-    if (now && item.check === "root" && item.startedAtMs != null && now.createdMs != null && now.createdMs > item.startedAtMs + ROOT_CLOCK_TOLERANCE_MS) gone = true;
-    // A scan item was confirmed ended; whatever has its pid now is another process.
-    if (item.check === "scan") gone = true;
     const seen = now ? { name: now.name, createdMs: now.createdMs } : null;
-    if (!gone) { left.push({ ...item, seen }); continue; }
-    const kids = item.check === "absent" ? [] : leftovers(item, now, procs, tracked);
-    for (const k of kids) { tracked.add(k.pid); queue.push(k); }
+    if (!isGone(item, now)) { left.push({ ...item, seen }); continue; }
+    const kids = item.check === "absent" ? [] : leftovers(item, now, procs, covered);
+    for (const k of kids) { all.push(k); queue.push(k); }
     cleared.push({ ...item, seen, leftovers: kids.map((k) => k.pid) });
   }
   return { ...gate, open: left.length > 0, items: left, cleared: (gate.cleared || []).concat(cleared), lastCheck: { at, ok: true, left: left.length, cleared: cleared.length } };
@@ -401,5 +426,5 @@ function failClosedMessage(result, options = {}) {
 }
 
 module.exports = { selectSessionTree, createWindowsKillScope, rootsFromOwned, targetCsv, classifyKill, failClosedMessage, normalize,
-  gateItemsFrom, openGate, recheckGate, gateMessage, leftovers,
+  gateItemsFrom, openGate, recheckGate, gateMessage, leftovers, mergeItems,
   KILL_CODES, PROTECTED, ROOT_CLOCK_TOLERANCE_MS, IDENTITY_TOLERANCE_MS };
