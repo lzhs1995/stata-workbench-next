@@ -27,12 +27,12 @@
       "bytes": 17618
     },
     "scripts/patch_manager.js": {
-      "sha256": "f75769a36d451933768093a401353b370da7f0a88b38699cbf30f9a46f9ba356",
-      "bytes": 96832
+      "sha256": "c0675d706933f42f8be265512afe2990c0c73e8b4311f370ce8d8a6ff94d3edb",
+      "bytes": 97094
     },
     "scripts/mcp_stata_runtime_patch.js": {
-      "sha256": "64013014e8598af5c7f70a276cd80a2f5c21d218eaa6fba59f079096c8f75ac9",
-      "bytes": 76393
+      "sha256": "81a6985043039bad22f7be8f9b94dbf271cf0476f79bef64077ec43f61785c5f",
+      "bytes": 76896
     },
     "scripts/manual_run_policy.js": {
       "sha256": "feaf9b71dca260f3fc2b671cf936db7cb9e7bcb1649a822b66f427fe3675a6ff",
@@ -445,6 +445,10 @@
     "scripts/stata_error_outcome_core.js": {
       "sha256": "67eb6f91ace75ea20063121ce20b6f36e5d93f6eb8fc0bb01833fed87d1bd687",
       "bytes": 7107
+    },
+    "scripts/stata_task_done_rc_patch.js": {
+      "sha256": "b16f0ce965490d1cf8f2a7fb8452bbacca8c1685510a5846106488d195fab5d9",
+      "bytes": 4602
     }
   },
   "acceptanceStatus": "PENDING_LICENSED_MAC_FULL_ACCEPTANCE",
