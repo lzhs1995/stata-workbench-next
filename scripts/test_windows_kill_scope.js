@@ -398,6 +398,59 @@ t("R1 /recovery-smoke re-checks the gate and refuses with 423 before any smoke",
   assert.ok(win.includes("if(__g&&__g.open){__send(__res,423,"), "refuses while the re-checked gate is still open");
 });
 
+// Review 4 R1: an ended root whose child scan failed is not cleared by the root being gone.
+const R4 = (extra) => ({ processes: [{ pid: 100, ppid: 10, name: "Code.exe", createdMs: T0 }].concat(extra) });
+const scanFailed = { ok: false, scanOk: false, targets: [{ pid: 110, createdMs: 2000 }], ended: [{ pid: 110 }] };
+t("R4-R1 root ended + child scan failed + next listing still has its child: gate stays open on the child", () => {
+  const owned = new Map([[110, { pid: 110, startedAt: new Date(5000).toISOString() }]]);
+  const gate = core.openGate(null, scanFailed, owned);
+  assert.ok(gate.items.some((i) => i.pid === 110 && i.check === "scan" && i.createdMs === 2000), JSON.stringify(gate.items));
+  const next = core.recheckGate(gate, { processes: [{ pid: 111, ppid: 110, name: "python.exe", createdMs: 3000, stataish: true }] });
+  assert.equal(next.open, true, JSON.stringify(next));
+  assert.ok(next.items.some((i) => i.pid === 111 && i.check === "identity" && i.createdMs === 3000));
+  assert.deepEqual(next.cleared.map((i) => [i.pid, i.leftovers]), [[110, [111]]]);
+  assert.equal(core.recheckGate(next, { processes: [] }).open, false, "the child gone: cleared");
+  assert.equal(core.recheckGate(gate, { error: "CIM timeout" }).open, true, "a failed rescan keeps it");
+});
+t("R4-R1 the scan window comes from the original target: older (stale ppid) or later (after it ended) children do not block", () => {
+  const gate = core.openGate(null, { ...scanFailed, ended: [{ pid: 110, endedAtMs: 4000 }] }, new Map());
+  const next = core.recheckGate(gate, { processes: [{ pid: 120, ppid: 110, name: "python.exe", createdMs: 1000 }, { pid: 121, ppid: 110, name: "x.exe", createdMs: 9000 }] });
+  assert.equal(next.open, false, JSON.stringify(next.items));
+  const unknown = core.recheckGate(gate, { processes: [{ pid: 122, ppid: 110, name: "python.exe", createdMs: null }] });
+  assert.ok(unknown.open && unknown.items.some((i) => i.pid === 122 && i.check === "absent"), "a child with no readable creation time stays unknown");
+});
+t("R4-R1 run() carries the ended target's creation time and confirmed end time into the gate", () => {
+  const scope = core.createWindowsKillScope({ execFileSync: fakeExec(machine(), [], { ok: false, mode: "scoped", results: [{ pid: 110, code: 0, endedAtMs: T0 + 60_000 }, { pid: 111, code: 0, endedAtMs: T0 + 60_001 }, { pid: 112, code: 0, endedAtMs: -1 }], unresolved: [], scanOk: false }),
+    scriptPath: "x.ps1", platform: "win32", hostPid: 100, ownedPids: () => new Map([[110, { pid: 110, startedAt: new Date(T0 + 50_000).toISOString() }]]) });
+  const r = scope.run({ source: "t" });
+  assert.equal(r.ok, false);
+  const scan = core.gateItemsFrom(r, new Map()).filter((i) => i.check === "scan");
+  assert.deepEqual(scan.map((i) => [i.pid, i.createdMs, i.endedAtMs]), [[110, T0 + 5_000, T0 + 60_000], [111, T0 + 9_000, T0 + 60_001], [112, T0 + 9_100, null]]);
+});
+t("R4-R1 a pending target that is gone later is cleared only with no child left from its lifetime", () => {
+  const gate = core.openGate(null, { ok: false, scanOk: true, targets: [{ pid: 110, createdMs: 2000 }], pending: [{ pid: 110 }] }, new Map());
+  assert.equal(core.recheckGate(gate, R4([{ pid: 111, ppid: 110, name: "python.exe", createdMs: 3000 }])).open, true);
+  assert.equal(core.recheckGate(gate, R4([])).open, false);
+});
+t("R4-R2 an 'unknown' item is never cleared by a re-check; a 'listing' item needs one successful listing", () => {
+  const unknown = { open: true, items: [{ pid: null, check: "unknown", why: "could not build the cleanup check" }] };
+  assert.equal(core.recheckGate(unknown, R4([])).open, true);
+  const listing = core.openGate(null, { ok: false, failClosed: true, reasons: ["could not list"] }, new Map());
+  assert.deepEqual(listing.items.map((i) => i.check), ["listing"]);
+  assert.equal(core.recheckGate(listing, { error: "x" }).open, true);
+  assert.equal(core.recheckGate(listing, R4([])).open, false);
+});
+t("R4 gate text never suggests ending a pid whose start time is unknown, and states what a new window does not prove", () => {
+  const msg = core.gateMessage({ open: true, items: [{ pid: 120, name: "python.exe", createdMs: null, check: "absent", why: "x" }] });
+  assert.match(msg, /may already belong to another program: do not end it/);
+  assert.doesNotMatch(msg, /end one in Task Manager/);
+  assert.match(msg, /does not prove the processes listed here ended/);
+  assert.match(msg, /Get-CimInstance Win32_Process -Filter "ProcessId=<pid>"/);
+  const known = core.gateMessage({ open: true, items: [{ pid: 110, name: "python.exe", createdMs: T0, check: "identity", why: "x" }] });
+  assert.doesNotMatch(known, /do not end it/);
+  assert.match(known, new RegExp("started " + new Date(T0).toISOString().replace(/[.]/g, "[.]")));
+});
+
 t("patch is idempotent and reverts exactly", () => {
   assert.equal(patch.patchBundle(dist), patch.patchBundle(patch.patchBundle(dist)));
   const reverted = patch.revertBundle(dist);

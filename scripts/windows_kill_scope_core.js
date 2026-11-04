@@ -173,7 +173,8 @@ function classifyKill(kill) {
     scanOk: k.scanOk !== false, error: k.error || null };
   if (Array.isArray(k.results)) {
     for (const r of k.results) {
-      const item = { pid: toNumber(r.pid), name: r.name || null, code: toNumber(r.code), reason: KILL_CODES[r.code] || "unknown result " + r.code };
+      const item = { pid: toNumber(r.pid), name: r.name || null, code: toNumber(r.code), reason: KILL_CODES[r.code] || "unknown result " + r.code,
+        endedAtMs: toNumber(r.endedAtMs) > 0 ? toNumber(r.endedAtMs) : null };
       if (r.code === 0) out.killed.push(item);
       else if (r.code === 1 || r.code === 2) out.skipped.push(item);
       else if (r.code === 5 || r.code === 6) out.pending.push(item);
@@ -248,7 +249,8 @@ function createWindowsKillScope(deps) {
     }
     result.kill = kill;
     const verdict = classifyKill(kill);
-    result.ended = verdict.killed;
+    const createdOf = new Map(selection.targets.map((t) => [t.pid, t.createdMs]));
+    result.ended = verdict.killed.map((x) => ({ ...x, createdMs: x.createdMs != null ? x.createdMs : createdOf.get(toNumber(x.pid)) }));
     result.pending = verdict.pending;
     result.failed = verdict.failed;
     result.unresolved = verdict.unresolved.concat(selection.unknownChildren || []);
@@ -264,13 +266,24 @@ function createWindowsKillScope(deps) {
 // unresolved, unknown identity, scan failed, fail-closed, or no result at all)
 // opens an "unresolved cleanup" gate. Readiness stays closed while it is open.
 // A new connection or a passing smoke on the new backend does not close it;
-// only a re-check of the original processes does: each item is resolved when
-// its pid is gone, or now carries a different creation time ("identity"/"root"
-// items), and items with no known creation time only when the pid is gone.
+// only a re-check of the original processes does. Review 4 R1: a pid that is
+// gone (or now another process) is not proof by itself: an item is resolved
+// only after the next successful listing shows no direct child of it created
+// inside its lifetime window ("leftovers", the same rule the kill's own child
+// scan uses); such children become items themselves. Items:
+//   identity  a target with a known creation time (pending/failed/unresolved);
+//   scan      an ended target whose post-kill child scan failed; it keeps the
+//             target's creation time and confirmed end time;
+//   root      a registered root when there is no usable result;
+//   absent    a pid with no known creation time: resolved only when it is gone;
+//   listing   nothing to tie to this window and no usable listing: resolved by
+//             the next successful listing;
+//   unknown   the gate itself could not be built: never resolved by a re-check.
 function gateItemsFrom(result, owned) {
   const r = result || {};
   const items = [];
-  const add = (x, check, why) => { const pid = toNumber(x && x.pid); if (pid > 1) items.push({ pid, name: (x && x.name) || null, createdMs: toNumber(x && x.createdMs), check, why }); };
+  const add = (x, check, why) => { const pid = toNumber(x && x.pid); if (pid > 1) items.push({ pid, name: (x && x.name) || null, createdMs: toNumber(x && x.createdMs),
+    endedAtMs: toNumber(x && x.endedAtMs), check, why }); };
   const created = new Map((r.targets || []).map((t) => [t.pid, t.createdMs]));
   for (const x of r.pending || []) add({ ...x, createdMs: created.get(toNumber(x.pid)) }, "identity", x.reason || "termination not confirmed");
   for (const x of r.failed || []) add({ ...x, createdMs: created.get(toNumber(x.pid)) }, "identity", x.reason || "not ended");
@@ -278,10 +291,16 @@ function gateItemsFrom(result, owned) {
   for (const x of r.uncertainChildren || []) add(x, "absent", "changed identity while being listed");
   for (const x of r.suspectedOrphans || []) add(x, "absent", "left over from an exited backend");
   for (const x of (r.roots || []).filter((y) => y.status === "unverified")) add(x, "absent", "registered but could not be verified");
-  if (r.scanOk === false || r.ok == null || (r.failClosed && !items.length) || (!r.ok && !items.length)) {
-    for (const root of rootsFromOwned(owned)) items.push({ pid: root.pid, name: null, createdMs: null, startedAtMs: root.startedAtMs, check: "root",
+  const ended = (r.ended || []).filter((x) => toNumber(x && x.pid) > 1);
+  if (r.scanOk === false) {
+    for (const x of ended) add({ ...x, createdMs: x.createdMs != null ? x.createdMs : created.get(toNumber(x.pid)) }, "scan",
+      "ended, but the check for processes it started during the kill failed");
+  }
+  if ((r.scanOk === false && !ended.length) || r.ok == null || (r.failClosed && !items.length) || (!r.ok && !items.length)) {
+    for (const root of rootsFromOwned(owned)) items.push({ pid: root.pid, name: null, createdMs: null, endedAtMs: null, startedAtMs: root.startedAtMs, check: "root",
       why: r.scanOk === false ? "the check for processes started during the kill failed" : "no verified cleanup result" });
   }
+  if (!items.length && r.ok !== true) items.push({ pid: null, name: null, createdMs: null, endedAtMs: null, check: "listing", why: "no verified cleanup result and no registered backend pid" });
   const seen = new Set();
   return items.filter((i) => { const k = i.pid + ":" + i.check; if (seen.has(k)) return false; seen.add(k); return true; });
 }
@@ -294,27 +313,63 @@ function openGate(prev, result, owned, meta = {}) {
     items: merged, lastCheck: prev ? prev.lastCheck || null : null };
 }
 
+// Direct children of a resolved item created inside its lifetime window. A
+// child with no readable creation time cannot be placed outside it, so it is
+// kept (as "absent"); a child older than the item is a stale ParentProcessId.
+function leftovers(item, now, procs, tracked) {
+  const lo = item.createdMs != null ? item.createdMs : -Infinity;
+  const hi = item.endedAtMs != null ? item.endedAtMs : now && now.createdMs != null ? now.createdMs : Infinity;
+  const out = [];
+  for (const p of procs) {
+    if (tracked.has(p.pid) || (p.ppid !== item.pid && p.spawnParent !== item.pid)) continue;
+    if (p.createdMs == null) out.push({ pid: p.pid, name: p.name, createdMs: null, endedAtMs: null, check: "absent", why: `started by pid ${item.pid}; creation time unknown`, from: item.pid });
+    else if (p.createdMs >= lo && p.createdMs <= hi) out.push({ pid: p.pid, name: p.name, createdMs: p.createdMs, endedAtMs: null, check: "identity", why: `started by pid ${item.pid} before it ended; not ended`, from: item.pid });
+  }
+  return out;
+}
+
 function recheckGate(gate, listing) {
   if (!gate || !gate.open) return gate || null;
   const at = new Date().toISOString();
   if (!listing || !Array.isArray(listing.processes)) return { ...gate, lastCheck: { at, ok: false, error: (listing && listing.error) || "listing failed" } };
-  const byPid = new Map(listing.processes.map(normalize).filter((p) => p.pid > 0).map((p) => [p.pid, p]));
+  const procs = listing.processes.map(normalize).filter((p) => p.pid > 0);
+  const byPid = new Map(procs.map((p) => [p.pid, p]));
   const left = [], cleared = [];
-  for (const item of gate.items) {
+  const queue = gate.items.slice();
+  const tracked = new Set(queue.map((i) => i.pid));
+  while (queue.length) {
+    const item = queue.shift();
+    if (item.check === "unknown") { left.push(item); continue; }
+    if (item.check === "listing") { cleared.push({ ...item, seen: null }); continue; }
     const now = byPid.get(item.pid);
     let gone = !now;
     if (now && item.check === "identity" && item.createdMs != null && now.createdMs != null && now.createdMs !== item.createdMs) gone = true;
     if (now && item.check === "root" && item.startedAtMs != null && now.createdMs != null && now.createdMs > item.startedAtMs + ROOT_CLOCK_TOLERANCE_MS) gone = true;
-    (gone ? cleared : left).push({ ...item, seen: now ? { name: now.name, createdMs: now.createdMs } : null });
+    // A scan item was confirmed ended; whatever has its pid now is another process.
+    if (item.check === "scan") gone = true;
+    const seen = now ? { name: now.name, createdMs: now.createdMs } : null;
+    if (!gone) { left.push({ ...item, seen }); continue; }
+    const kids = item.check === "absent" ? [] : leftovers(item, now, procs, tracked);
+    for (const k of kids) { tracked.add(k.pid); queue.push(k); }
+    cleared.push({ ...item, seen, leftovers: kids.map((k) => k.pid) });
   }
   return { ...gate, open: left.length > 0, items: left, cleared: (gate.cleared || []).concat(cleared), lastCheck: { at, ok: true, left: left.length, cleared: cleared.length } };
 }
 
+// Review 4: a pid with no known creation time may already be another program's,
+// so the text never suggests ending it; it says how to check and what the way
+// out (a new window) does and does not prove.
 function gateMessage(gate) {
   if (!gate || !gate.open) return null;
-  return "Stata Workbench is not READY: " + gate.items.length + " process(es) of this window's previous backend were not confirmed ended ("
-    + gate.items.map((i) => `pid ${i.pid}${i.name ? " " + i.name : ""}: ${i.why}`).join("; ")
-    + "). It re-checks them before every recovery smoke; only end one in Task Manager if you know it belongs to this window.";
+  const describe = (i) => i.pid == null ? `${i.why}${i.error ? " (" + i.error + ")" : ""}`
+    : `pid ${i.pid}${i.name ? " " + i.name : ""}${i.createdMs != null ? ", started " + new Date(i.createdMs).toISOString() : ", start time unknown"}: ${i.why}`;
+  const unknownStart = gate.items.some((i) => i.pid != null && i.createdMs == null);
+  return "Stata Workbench is not READY: " + gate.items.length + " item(s) of this window's previous backend cleanup are not confirmed ("
+    + gate.items.map(describe).join("; ") + "). It re-checks them before every recovery smoke. "
+    + "To check a pid yourself, run in PowerShell: Get-CimInstance Win32_Process -Filter \"ProcessId=<pid>\" | Select-Object ProcessId,ParentProcessId,CreationDate,CommandLine; "
+    + "only a process whose start time matches the one listed here and whose command line is this extension's mcp_stata or Stata is this window's."
+    + (unknownStart ? " A pid listed with an unknown start time may already belong to another program: do not end it to clear this check." : "")
+    + " If you cannot confirm, close this VS Code window and open a new one: the new window starts its own backend, but that does not prove the processes listed here ended.";
 }
 
 // Text for the warning the KILL command shows when it ended nothing (fail-closed)
@@ -346,5 +401,5 @@ function failClosedMessage(result, options = {}) {
 }
 
 module.exports = { selectSessionTree, createWindowsKillScope, rootsFromOwned, targetCsv, classifyKill, failClosedMessage, normalize,
-  gateItemsFrom, openGate, recheckGate, gateMessage,
+  gateItemsFrom, openGate, recheckGate, gateMessage, leftovers,
   KILL_CODES, PROTECTED, ROOT_CLOCK_TOLERANCE_MS, IDENTITY_TOLERANCE_MS };
