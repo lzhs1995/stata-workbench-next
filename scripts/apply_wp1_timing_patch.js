@@ -9,14 +9,16 @@
 // while warming up, the run_command_background / list_sessions call and its
 // return, the matched log_path event and the first output chunk. With
 // STATA_WORKBENCH_TIMING_FILE set, each line is also appended as JSON to that
-// file, the same file mcp_stata_runtime_patch's Python milestones write to, so
-// one file orders both processes. Log-only: no control flow, return value or
-// budget changes; every hook is wrapped so it cannot throw into the run.
-// Offline bundle edit; no Stata.
+// file; the manual diagnostic tool scripts/stata_timing_patch.js (run only on a
+// disposable runtime copy; the product never instruments its runtime) writes its
+// Python milestones to the same file, so one file orders both processes. Diagnostic observation with
+// synchronous I/O cost (output channel line, optional appendFileSync): no
+// control flow, return value or budget changes; every inserted statement is in
+// its own try/catch so it cannot throw into the run. Offline bundle edit; no Stata.
 const fs = require("node:fs");
 const path = require("node:path");
 const fingerprint = require("./finalize_bundle_identity");
-const MARKER = "// codex patch rc.7.80: W-P1 timing lines for the first Terminal command (log-only)";
+const MARKER = "// codex patch rc.7.80: W-P1 timing lines for the first Terminal command (diagnostic)";
 
 // After the rc.7.79 helper when present (main), else after the rc.7.72 helper (older builds).
 const HELPER_ANCHORS = [
@@ -25,11 +27,32 @@ const HELPER_ANCHORS = [
 ];
 const HELPER = String.raw`
 ${MARKER}
+// Each event keeps only the fields listed for it, and only strings (cut to 80
+// characters), numbers, booleans and null: no options objects, user code, log
+// text or paths. Errors are reduced to their class and code (no message).
 var __codexWbT0 = Date.now();
+const __codexWbFields = {
+  ext_terminal_enter: ["runId"], ext_terminal_warmup_start: ["runId"], ext_backend_warm_start: ["runId"],
+  ext_terminal_warmup_end: ["runId", "outcome", "ms", "errorClass", "errorCode"],
+  ext_backend_warm_end: ["runId", "outcome", "ms", "errorClass", "errorCode"],
+  ext_tool_send: ["tool"], ext_tool_done: ["tool", "ms"], ext_session_status: ["status"],
+  ext_log_path: ["runId"], ext_first_output: ["runId", "bytes"],
+};
+function __codexWbErrorFields(error) {
+  const out = { errorClass: null, errorCode: null };
+  try { out.errorClass = String(error && error.constructor && error.constructor.name || typeof error).slice(0, 40); } catch {}
+  try { if (error && error.code != null) out.errorCode = String(error.code).slice(0, 40); } catch {}
+  return out;
+}
 // quiet: file only (list_sessions polls every 500 ms while Stata starts).
 function __codexWbTiming(event, fields, quiet) {
   try {
-    const record = Object.assign({ event, wall: Date.now() / 1000, mono: (typeof performance !== "undefined" ? performance.now() : Date.now() - __codexWbT0) / 1000, pid: process.pid, src: "ext" }, fields || {});
+    const record = { event, wall: Date.now() / 1000, mono: (typeof performance !== "undefined" ? performance.now() : Date.now() - __codexWbT0) / 1000, pid: process.pid, src: "ext" };
+    for (const key of __codexWbFields[event] || []) {
+      const value = fields ? fields[key] : undefined;
+      if (value === null || typeof value === "number" || typeof value === "boolean") record[key] = value;
+      else if (typeof value === "string") record[key] = value.slice(0, 80);
+    }
     const line = JSON.stringify(record);
     try { if (!quiet && typeof RI === "function") RI("[wb-timing] " + line); } catch {}
     const target = process.env.STATA_WORKBENCH_TIMING_FILE;
@@ -55,22 +78,26 @@ function __codexWbTimedWarm(name, inner) {
   if (typeof inner !== "function" || inner.__codexWbTimed) return inner;
   const timed = async function (runId, source) {
     const started = Date.now();
-    if (name === "ext_terminal_warmup") __codexWbTiming("ext_terminal_enter", { runId: runId == null ? null : String(runId) });
-    __codexWbTiming(name + "_start", { runId: runId == null ? null : String(runId), source: source || null });
+    const id = () => { try { return runId == null ? null : String(runId); } catch { return null; } };
     try {
-      const result = await inner.apply(this, arguments);
-      __codexWbTiming(name + "_end", { runId: runId == null ? null : String(runId), outcome: result && result.outcome || (result == null ? "SKIPPED" : null), ms: Date.now() - started });
-      return result;
+      if (name === "ext_terminal_warmup") __codexWbTiming("ext_terminal_enter", { runId: id() });
+      __codexWbTiming(name + "_start", { runId: id() });
+    } catch {}
+    let result;
+    try {
+      result = await inner.apply(this, arguments);
     } catch (error) {
-      __codexWbTiming(name + "_end", { runId: runId == null ? null : String(runId), outcome: "THREW", ms: Date.now() - started, error: String(error && error.message || error).slice(0, 200) });
+      try { __codexWbTiming(name + "_end", Object.assign({ runId: id(), outcome: "THREW", ms: Date.now() - started }, __codexWbErrorFields(error))); } catch {}
       throw error;
     }
+    try { __codexWbTiming(name + "_end", { runId: id(), outcome: result && typeof result.outcome === "string" ? result.outcome : (result == null ? "SKIPPED" : null), ms: Date.now() - started }); } catch {}
+    return result;
   };
   timed.__codexWbTimed = true;
   return timed;
 }
-if (typeof globalThis.__codexTerminalWarmup === "function") globalThis.__codexTerminalWarmup = __codexWbTimedWarm("ext_terminal_warmup", globalThis.__codexTerminalWarmup);
-if (typeof globalThis.__codexEnsureBackendWarm === "function") globalThis.__codexEnsureBackendWarm = __codexWbTimedWarm("ext_backend_warm", globalThis.__codexEnsureBackendWarm);
+try { if (typeof globalThis.__codexTerminalWarmup === "function") globalThis.__codexTerminalWarmup = __codexWbTimedWarm("ext_terminal_warmup", globalThis.__codexTerminalWarmup); } catch {}
+try { if (typeof globalThis.__codexEnsureBackendWarm === "function") globalThis.__codexEnsureBackendWarm = __codexWbTimedWarm("ext_backend_warm", globalThis.__codexEnsureBackendWarm); } catch {}
 `;
 
 const WB = (event, fields, quiet) => `try{globalThis.__codexWbTiming&&globalThis.__codexWbTiming(${JSON.stringify(event)},${fields}${quiet ? ",!0" : ""})}catch{}`;
@@ -93,7 +120,7 @@ const SITES = [
     "this._log(`[mcp-stata] log_path event matched for run ${o._runId||\"unknown\"}, path=${s}`),(()=>{" + WB("ext_log_path", "{runId:o._runId||null}") + "})(),", true],
   ["I._lastLogAt=Date.now(),I._idleLogged=!1,I._lineBuffer=(I._lineBuffer||\"\")+C;",
     "I._lastLogAt=Date.now(),I._idleLogged=!1,I._lineBuffer=(I._lineBuffer||\"\")+C;"
-      + "if(I&&!I.__codexWbFirstOut){I.__codexWbFirstOut=!0;" + WB("ext_first_output", "{runId:I._runId||null,bytes:C.length}") + "}", true],
+      + "try{if(I&&!I.__codexWbFirstOut){I.__codexWbFirstOut=!0;" + WB("ext_first_output", "{runId:I._runId||null,bytes:C.length}") + "}}catch{}", true],
 ];
 
 function count(source, needle) { return source.split(needle).length - 1; }

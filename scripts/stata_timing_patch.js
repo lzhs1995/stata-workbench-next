@@ -1,13 +1,18 @@
 "use strict";
-// W-P1 diagnostics (rc.7.80): one JSON line per milestone between "worker spawned"
-// and "log_path published", so a Windows run that stalls before its first log line
-// shows which stage it stopped in. Log-only: nothing here changes control flow,
-// return values or timing budgets. mcp_stata_runtime_patch applies it only when
-// STATA_WORKBENCH_TIMING_FILE is set in the extension host's environment, and the
-// inserted helper writes only while that variable is set in the Python process.
-// A point whose anchor is missing is skipped (reported), never fatal: diagnostics
-// must not stop the runtime from starting.
-const MARKER = "Workbench W-P1 timing (log-only; active only when STATA_WORKBENCH_TIMING_FILE is set)";
+// W-P1 diagnostics (rc.7.80), developer tool only. Not part of the product's
+// runtime patch chain: mcp_stata_runtime_patch never loads it, so the patched
+// runtime bytes are the same with or without any environment variable.
+// The inserted lines would also break the next patchRuntime pass (the session
+// lifecycle check refuses blocks it does not know), so run this only on a
+// disposable copy of an already patched runtime, never on an installed one:
+//   node scripts/stata_timing_patch.js <runtime-copy-root> [--write]
+// Default is a dry run; --write rewrites the copy in place. There is no revert;
+// delete the copy. The instrumented copy writes one JSON line per milestone
+// between "worker spawned" and "log_path published" to the file named by
+// STATA_WORKBENCH_TIMING_FILE, and nothing while that variable is unset.
+// Every inserted statement sits in its own try/except; the file writes are
+// synchronous, so timings taken with it include that I/O cost.
+const MARKER = "Workbench W-P1 timing (diagnostic copy only; writes only when STATA_WORKBENCH_TIMING_FILE is set)";
 const ENV = "STATA_WORKBENCH_TIMING_FILE";
 
 const HELPER = `
@@ -35,10 +40,16 @@ const WAIT_ORIGINAL = `async def _wait_for_log_path(task_info: BackgroundTask) -
         await anyio.sleep(0.01)
 `;
 const WAIT_TIMED = `async def _wait_for_log_path(task_info: BackgroundTask) -> None:
-    _wb_timing("server_wait_log_path_start", task_id=task_info.task_id, kind=task_info.kind)
+    try:
+        _wb_timing("server_wait_log_path_start", task_id=task_info.task_id, kind=task_info.kind)
+    except Exception:
+        pass
     while task_info.log_path is None and not task_info.done:
         await anyio.sleep(0.01)
-    _wb_timing("server_wait_log_path_end", task_id=task_info.task_id, has_log_path=task_info.log_path is not None, done=bool(task_info.done))
+    try:
+        _wb_timing("server_wait_log_path_end", task_id=task_info.task_id, has_log_path=task_info.log_path is not None, done=bool(task_info.done))
+    except Exception:
+        pass
 `;
 
 // where: "after" inserts below the anchor, "before" above it; the inserted lines
@@ -113,7 +124,9 @@ function insertPoint(source, point) {
   const ref = point.where === "before" ? anchorLines[0]
     : (point.anchor.endsWith("\n") ? anchorLines[anchorLines.length - 2] : anchorLines[anchorLines.length - 1]);
   const indent = point.indent != null ? point.indent : indentOf(ref);
-  const block = point.lines.map((line) => indent + line + "\n").join("");
+  // Each point is its own try/except: field lookups and set updates included.
+  const block = [indent + "try:\n", ...point.lines.map((line) => indent + "    " + line + "\n"),
+    indent + "except Exception:\n", indent + "    pass\n"].join("");
   const next = point.where === "before"
     ? source.split(point.anchor).join(block + point.anchor)
     : source.split(point.anchor).join(point.anchor + block);
@@ -142,8 +155,53 @@ function patchComponent(component, source) {
   return { source, status };
 }
 
-function timingEnabled(env = process.env) {
-  return typeof env[ENV] === "string" && env[ENV].trim() !== "";
+const FILES = { server: "server.py", session: "sessions.py", client: "stata_client.py" };
+
+// Finds <root>/**/site-packages/mcp_stata (Lib/site-packages on Windows).
+function packageDir(root) {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  for (const lib of ["Lib", "lib"]) {
+    const base = path.join(root, lib);
+    if (!fs.existsSync(base)) continue;
+    const direct = path.join(base, "site-packages", "mcp_stata");
+    if (fs.existsSync(path.join(direct, "sessions.py"))) return direct;
+    for (const name of fs.readdirSync(base)) {
+      const dir = path.join(base, name, "site-packages", "mcp_stata");
+      if (fs.existsSync(path.join(dir, "sessions.py"))) return dir;
+    }
+  }
+  return null;
 }
 
-module.exports = { MARKER, ENV, HELPER, POINTS, WAIT_ORIGINAL, WAIT_TIMED, patchComponent, timingEnabled };
+function instrumentCopy(root, { write = false } = {}) {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const dir = packageDir(root);
+  if (!dir) return { ok: false, status: "not-found", root };
+  const report = { ok: true, status: write ? "written" : "dry-run", dir, components: {} };
+  for (const [component, name] of Object.entries(FILES)) {
+    const file = path.join(dir, name);
+    const raw = fs.readFileSync(file, "utf8");
+    const crlf = raw.includes("\r\n");
+    const result = patchComponent(component, crlf ? raw.replace(/\r\n/g, "\n") : raw);
+    report.components[component] = result.status;
+    const out = crlf ? result.source.replace(/\n/g, "\r\n") : result.source;
+    if (write && out !== raw) fs.writeFileSync(file, out, "utf8");
+  }
+  return report;
+}
+
+if (require.main === module) {
+  const args = process.argv.slice(2);
+  const root = args.find((a) => !a.startsWith("--"));
+  if (!root) {
+    console.error("usage: node scripts/stata_timing_patch.js <runtime-copy-root> [--write]  (disposable copies only)");
+    process.exit(2);
+  }
+  const report = instrumentCopy(root, { write: args.includes("--write") });
+  console.log(JSON.stringify(report));
+  process.exit(report.ok ? 0 : 1);
+}
+
+module.exports = { MARKER, ENV, HELPER, POINTS, WAIT_ORIGINAL, WAIT_TIMED, patchComponent, instrumentCopy };

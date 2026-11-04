@@ -1,12 +1,16 @@
 #!/usr/bin/env node
 "use strict";
 
-// rc.7.80 W-P1 timing is log-only. Checks: the sealed layer replays and reverts
-// byte-exactly; the warm-up wrappers return and throw exactly what they wrap;
-// every inserted site is guarded, so a timing helper that throws changes
-// nothing; the mcp-stata milestones are applied only with
-// STATA_WORKBENCH_TIMING_FILE, compile, write JSON lines only while the variable
-// is set, and skip (never fail) a missing anchor. Mutants of each guard must fail.
+// rc.7.80 W-P1 timing is a diagnostic observation. Checks: the sealed layer
+// replays and reverts byte-exactly; the warm-up wrappers return and throw exactly
+// what they wrap; every inserted site is guarded, so a timing helper that throws
+// changes nothing; each event keeps only its allowlisted scalar fields and an
+// error only its class/code. The Python milestones are a manual tool for a
+// disposable runtime copy: the product's runtime patch never loads it (the
+// full-chain off/on check is in test_mcp_stata_runtime_patch_rc7.js); every
+// inserted statement is try-guarded, it writes JSON lines only while
+// STATA_WORKBENCH_TIMING_FILE is set and skips (never fails) a missing anchor.
+// Mutants of each guard must fail.
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
@@ -71,7 +75,21 @@ function loadHelper(helperText, opts = {}) {
     "ext_terminal_warmup_start", "ext_terminal_warmup_end"]), "warm-up events in order: " + events.join(","));
   ok(h.appended.length === 5 && h.appended.every(([f]) => f === "/t/timing.jsonl"), "file gets every line when the env var is set");
   const end = JSON.parse(h.lines[4].replace("[wb-timing] ", ""));
-  ok(end.outcome === "THREW" && /refused/.test(end.error), "refusal is recorded, not swallowed");
+  ok(end.outcome === "THREW" && end.errorClass === "Error", "refusal is recorded, not swallowed");
+  ok(!h.lines.join("\n").includes("refused") && !("error" in end), "error message text is not logged");
+  const al = loadHelper(patch.HELPER, { env: { STATA_WORKBENCH_TIMING_FILE: "/t/a.jsonl" } });
+  al.ctx.__codexWbTiming("ext_tool_done", { tool: "x".repeat(200), ms: 5, code: "display 1", path: "/Users/a/b.log", opts: { onProgress() {} } });
+  al.ctx.__codexWbTiming("ext_unknown", { tool: "t", runId: "r" });
+  al.ctx.__codexWbTiming("ext_terminal_warmup_start", { runId: { toString() { return "/secret"; } }, source: { cwd: "/w" } });
+  const recs = al.lines.map((l) => JSON.parse(l.replace("[wb-timing] ", "")));
+  const keys = (r) => Object.keys(r).filter((k) => !["event", "wall", "mono", "pid", "src"].includes(k)).sort().join(",");
+  ok(keys(recs[0]) === "ms,tool" && recs[0].tool.length === 80, "allowlist keeps tool/ms only, strings cut to 80");
+  ok(keys(recs[1]) === "" && keys(recs[2]) === "", "unknown events and object values carry no fields");
+  const pathError = Object.assign(new TypeError("cannot open /Users/someone/private/file.log"), { code: "ENOENT" });
+  const ew = loadHelper(patch.HELPER, { warm: async () => { throw pathError; } });
+  await assert.rejects(() => ew.ctx.__codexEnsureBackendWarm("r9"), (e) => e === pathError); checks++;
+  const ee = JSON.parse(ew.lines[1].replace("[wb-timing] ", ""));
+  ok(ee.errorClass === "TypeError" && ee.errorCode === "ENOENT" && !ew.lines.join("").includes("/Users/"), "error keeps class/code, drops message and path");
   const quiet = loadHelper(patch.HELPER, {});
   quiet.ctx.__codexWbTiming("x", {}, true);
   quiet.ctx.__codexWbSessionStatus({ sessions: [{ id: "default", status: "starting" }] });
@@ -86,9 +104,12 @@ function loadHelper(helperText, opts = {}) {
   // Mutants: each must make a check above fail.
   const mutants = [
     ["drop rethrow", "      throw error;\n", "      return null;\n"],
-    ["drop return", "      return result;\n", "      return undefined;\n"],
+    ["drop return", "    return result;\n  };", "    return undefined;\n  };"],
     ["unguarded channel", ["try { if (!quiet && typeof RI === \"function\") RI(\"[wb-timing] \" + line); } catch {}", "  } catch {}\n}\nglobalThis.__codexWbTiming ="],
       ["if (!quiet) RI(\"[wb-timing] \" + line);", "  } finally {}\n}\nglobalThis.__codexWbTiming ="]],
+    ["no allowlist", "    for (const key of __codexWbFields[event] || []) {", "    for (const key of Object.keys(fields || {})) {"],
+    ["error message kept", ["  return out;\n}", '  ext_backend_warm_end: ["runId", "outcome", "ms", "errorClass", "errorCode"],'],
+      ["  out.message = String(error && error.message);\n  return out;\n}", '  ext_backend_warm_end: ["runId", "outcome", "ms", "errorClass", "errorCode", "message"],']],
   ];
   for (const [label, from0, to0] of mutants) {
     const froms = Array.isArray(from0) ? from0 : [from0], tos = Array.isArray(to0) ? to0 : [to0];
@@ -97,7 +118,13 @@ function loadHelper(helperText, opts = {}) {
     let caught = false;
     try {
       const m = loadHelper(text, { warm: async () => state, terminal: async () => { throw new Error("refused: x"); } });
-      if (label === "unguarded channel") m.ctx.RI = () => { throw new Error("channel gone"); };
+      if (label === "unguarded channel") { m.ctx.RI = () => { throw new Error("channel gone"); }; m.ctx.__codexWbTiming("ext_tool_send", { tool: "t" }); }
+      if (label === "no allowlist") { m.ctx.__codexWbTiming("ext_tool_done", { tool: "t", code: "display 1" }); if (m.lines.join("").includes("display 1")) caught = true; }
+      if (label === "error message kept") {
+        const w = loadHelper(text, { warm: async () => { throw new Error("at /Users/x"); } });
+        try { await w.ctx.__codexEnsureBackendWarm("e"); } catch {}
+        if (w.lines.join("").includes("/Users/x")) caught = true;
+      }
       const r = await m.ctx.__codexEnsureBackendWarm("m");
       if (r !== state) caught = true;
       try { await m.ctx.__codexTerminalWarmup("m2", {}); caught = true; } catch (e) { if (!/refused/.test(e.message)) caught = true; }
@@ -131,7 +158,59 @@ function loadHelper(helperText, opts = {}) {
       component + " reports missing anchors instead of failing");
   }
   ok(timing.patchComponent("session", "no anchor here\n").status.helper === "missing", "no helper anchor: skipped");
-  ok(timing.timingEnabled({}) === false && timing.timingEnabled({ STATA_WORKBENCH_TIMING_FILE: "x" }) === true, "gate follows env");
+  // Outside the product chain: the runtime patch must not load or mention it.
+  const runtimeSource = fs.readFileSync(path.join(__dirname, "mcp_stata_runtime_patch.js"), "utf8");
+  ok(!runtimeSource.includes("stata_timing_patch") && !runtimeSource.includes(timing.ENV) && !runtimeSource.includes("_wb_timing"),
+    "mcp_stata_runtime_patch does not load the timing tool");
+  ok(!fs.readFileSync(path.join(ROOT, "dist", "extension.js"), "utf8").includes("stata_timing_patch"), "bundle does not load the timing tool");
+  // Every inserted Python statement is inside its own try/except.
+  for (const component of Object.keys(timing.POINTS)) {
+    const lines = timing.patchComponent(component, synthetic[component]).source.split("\n");
+    lines.forEach((line, i) => {
+      if (!/^\s*_wb_timing\(|_WB_FIRST_LOG\.add/.test(line) || /def _wb_timing/.test(line)) return;
+      const block = lines.slice(Math.max(0, i - 4), i).join("\n");
+      ok(/try:/.test(block), component + " line guarded: " + line.trim().slice(0, 50));
+    });
+  }
+
+  // Python: a broken task_info or a helper that raises never reaches the caller.
+  const pyGuard = ["python3", "python"].find((exe) => cp.spawnSync(exe, ["-c", "import sys"], { stdio: "ignore" }).status === 0);
+  if (pyGuard) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "wp1-guard-"));
+    const server = timing.patchComponent("server", synthetic.server).source
+      .replace("import anyio\n", "import types, asyncio, logging\nanyio = types.SimpleNamespace(sleep=asyncio.sleep)\nBackgroundTask = object\n");
+    const prog = server + `
+class Broken:
+    log_path = "/p"
+    done = True
+    def __getattr__(self, name):
+        raise RuntimeError("no " + name)
+def boom(event, **fields):
+    raise RuntimeError("helper failed")
+r1 = asyncio.run(_wait_for_log_path(Broken()))
+_wb_timing = boom
+r2 = asyncio.run(_wait_for_log_path(Broken()))
+print("GUARD_OK", r1, r2, log_call("t", 1))
+`;
+    fs.writeFileSync(path.join(dir, "g.py"), prog);
+    const g = cp.spawnSync(pyGuard, [path.join(dir, "g.py")], { env: { ...process.env, STATA_WORKBENCH_TIMING_FILE: path.join(dir, "t.jsonl") }, encoding: "utf8" });
+    ok(g.status === 0 && /GUARD_OK None None 1/.test(g.stdout), "python guards: " + (g.stderr || g.stdout).slice(-200));
+    // The CLI works on a copy only when asked: dry run writes nothing; --write keeps CRLF and is idempotent.
+    const pkg = path.join(dir, "rt", "Lib", "site-packages", "mcp_stata");
+    fs.mkdirSync(pkg, { recursive: true });
+    for (const [c, name] of [["server", "server.py"], ["session", "sessions.py"], ["client", "stata_client.py"]]) {
+      fs.writeFileSync(path.join(pkg, name), synthetic[c].replace(/\n/g, "\r\n"));
+    }
+    const before = fs.readFileSync(path.join(pkg, "sessions.py"), "utf8");
+    const dry = timing.instrumentCopy(path.join(dir, "rt"));
+    ok(dry.ok && fs.readFileSync(path.join(pkg, "sessions.py"), "utf8") === before, "dry run writes nothing");
+    timing.instrumentCopy(path.join(dir, "rt"), { write: true });
+    const once = fs.readFileSync(path.join(pkg, "sessions.py"), "utf8");
+    timing.instrumentCopy(path.join(dir, "rt"), { write: true });
+    ok(once !== before && once.includes(timing.MARKER) && !/[^\r]\n/.test(once) && fs.readFileSync(path.join(pkg, "sessions.py"), "utf8") === once,
+      "--write instruments once, keeps CRLF");
+    fs.rmSync(dir, { recursive: true, force: true });
+  } else console.log("SKIP python guard checks: no python3 on PATH");
 
   // Python: the helper compiles, writes only while the variable is set.
   const py = ["python3", "python"].find((exe) => cp.spawnSync(exe, ["-c", "import sys"], { stdio: "ignore" }).status === 0);
