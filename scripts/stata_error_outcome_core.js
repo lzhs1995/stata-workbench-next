@@ -57,15 +57,39 @@ function positiveInt(value) {
   return Number.isSafeInteger(value) && value > 0 ? value : null;
 }
 
+// The one authoritative MCP return code is `raw.rc`: the rc that mcp-stata's
+// task_done event carries for this task (stata_task_done_rc_patch.js). Every
+// other rc field the normalizer exposes must agree with it when present; a
+// missing, zero, negative or non-integer authoritative rc is not evidence.
 function mcpReturnCode(result) {
-  const raw = result && result.raw;
-  const candidates = [result && result.rc, raw && raw.error && raw.error.rc, raw && raw.rc,
-    result && result.error && result.error.rc];
-  for (const value of candidates) if (positiveInt(value) !== null) return value;
-  return null;
+  const raw = result && result.raw && typeof result.raw === "object" ? result.raw : null;
+  const authoritative = raw ? raw.rc : undefined;
+  const others = [result && result.rc, raw && raw.error && typeof raw.error === "object" ? raw.error.rc : undefined,
+    result && result.error && typeof result.error === "object" ? result.error.rc : undefined];
+  if (positiveInt(authoritative) === null) return { rc: null, reason: "mcp-rc-missing" };
+  if (others.some((value) => value !== undefined && value !== null && value !== authoritative)) {
+    return { rc: null, reason: "mcp-rc-conflict" };
+  }
+  return { rc: authoritative, reason: null };
 }
 
-const CANCEL_TEXT = /--Break--|request cancelled|cancelled|canceled|soft-stop|watchdog/i;
+// Every text the failure can carry. An object error contributes its message,
+// so a wrapped Error("[object Object]") cannot hide a cancellation.
+function messageText(value) {
+  if (value == null) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "object" && typeof value.message === "string") return value.message;
+  return "";
+}
+function failureTexts(input, result) {
+  const raw = result && result.raw && typeof result.raw === "object" ? result.raw : {};
+  return [messageText(input.error), result && result.stderr, messageText(result && result.error),
+    messageText(raw.error), raw.error && typeof raw.error === "object" ? raw.error.stderr : null, raw.stderr,
+    typeof raw.status === "string" && raw.status !== "done" ? "status " + raw.status : null]
+    .filter((text) => typeof text === "string" && text !== "");
+}
+
+const CANCEL_TEXT = /--Break--|request cancelled|cancelled|canceled|soft-stop|watchdog|timed out|timeout|stall|status unknown/i;
 
 // input: { runId, result, error, logPath, lifecycle, logText, cancelled, completionMarker }
 function classify(input = {}) {
@@ -75,9 +99,10 @@ function classify(input = {}) {
   if (!result) reasons.push("no-mcp-result");
   else if (!(result.success === false || result.error || (result.raw && result.raw.error))) reasons.push("not-a-failure");
   if (input.cancelled) reasons.push("cancelled");
-  if (result && (result.__codexWatchdogRelease || result.cancelled === true || result.controlPlaneRejected)) reasons.push("cancelled");
-  const message = String((input.error && input.error.message) || (result && result.stderr) || "");
-  if (CANCEL_TEXT.test(message)) reasons.push("cancel-text");
+  if (result && (result.__codexWatchdogRelease || result.cancelled === true || result.controlPlaneRejected
+      || result.guardFailure || result.__codexPreRunTimeout)) reasons.push("cancelled");
+  if (input.error && typeof input.error === "object" && (input.error.__codexPreRunTimeout || input.error.guardFailure)) reasons.push("cancelled");
+  if (failureTexts(input, result).some((text) => CANCEL_TEXT.test(text))) reasons.push("cancel-text");
   if (!input.runId || String(life.runId || "") !== String(input.runId)) reasons.push("lifecycle-not-this-run");
   const resultPath = result && typeof result.logPath === "string" ? result.logPath : null;
   const lifePath = typeof life.logPath === "string" ? life.logPath : null;
@@ -87,7 +112,9 @@ function classify(input = {}) {
   if (typeof input.logText !== "string" || input.logText.length === 0) reasons.push("log-missing");
   if (markerPrinted(input.logText, input.completionMarker)) reasons.push("completion-marker-present");
   const fromLog = lastReturnCode(input.logText);
-  const mcpRc = result ? mcpReturnCode(result) : null;
+  const mcp = result ? mcpReturnCode(result) : { rc: null, reason: "mcp-rc-missing" };
+  const mcpRc = mcp.rc;
+  if (mcp.reason) reasons.push(mcp.reason);
   if (fromLog.rc === null) reasons.push("no-rc-line");
   else if (fromLog.trailing) reasons.push("rc-line-not-last");
   if (fromLog.rc === 1) reasons.push("break-rc");
@@ -99,4 +126,4 @@ function classify(input = {}) {
     : { confirmed: false, stataRc: null, mcpRc, logRc: fromLog.rc, reasons: unique };
 }
 
-module.exports = { classify, lastReturnCode, markerPrinted, stripSmcl, mcpReturnCode };
+module.exports = { classify, lastReturnCode, markerPrinted, stripSmcl, mcpReturnCode, failureTexts, messageText };

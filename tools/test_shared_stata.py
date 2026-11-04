@@ -68,9 +68,10 @@ class SharedClientTests(unittest.TestCase):
         log.write_text(log_text if log_text is not None else fixture.read_text(encoding="utf-8"), encoding="utf-8")
         body = {"ok": False, "outcome": "STATA_ERROR", "executed": True, "stataRc": 111, "payloadMayHaveRun": True,
                 "error": "no variables defined", "runId": "new", "requestId": "req-new", "logPath": str(log),
-                "lifecycle": {"requestId": "req-new", "runId": "new", "sourceMode": "agent", "phase": "failed", "rc": 111}}
+                "lifecycle": {"requestId": "req-new", "runId": "new", "sourceMode": "agent", "phase": "failed", "rc": 111,
+                              "logPath": str(log)}}
         after = state("new")
-        after["status"]["lastCompletedRun"].update(rc=111, phase="failed", completionMarkerVerified=False)
+        after["status"]["lastCompletedRun"].update(rc=111, phase="failed", completionMarkerVerified=False, logPath=str(log))
         if mutate_body:
             mutate_body(body)
         if mutate_after:
@@ -97,6 +98,8 @@ class SharedClientTests(unittest.TestCase):
             "no r(n) line": dict(log_text=". regress nosuchvar_v3a\n{err}no variables defined\n"),
             "missing log": dict(mutate_body=lambda b: b.update(logPath="/nonexistent/mcp_stata_x.log")),
             "payload may have run dropped": dict(mutate_body=lambda b: b.update(payloadMayHaveRun=False)),
+            "completed logPath differs": dict(mutate_after=lambda a: a["status"]["lastCompletedRun"].update(logPath="/tmp/mcp_stata_old.log")),
+            "lifecycle logPath missing": dict(mutate_body=lambda b: b["lifecycle"].pop("logPath")),
         }
         for name, kwargs in cases.items():
             with self.subTest(name), tempfile.TemporaryDirectory() as directory:

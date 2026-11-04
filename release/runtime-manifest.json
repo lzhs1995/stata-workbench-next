@@ -139,8 +139,8 @@
       "bytes": 11107
     },
     "dist/extension.js": {
-      "sha256": "a10884c5de43119752b1bcf62f73d5757b3da5c6d2c3786c835893ec692f67cf",
-      "bytes": 5657584
+      "sha256": "44001688df848fc53ae0e5e8d3e06cc50bce44d1f1b50a57a624607e8851c744",
+      "bytes": 5657693
     },
     "scripts/mac/png_compat_transform.js": {
       "sha256": "cdea12886a1d5bb5b4c2b3e38829de1c7e68ed70e7777e8d6e2eb02bb0ce3514",
@@ -335,15 +335,15 @@
       "bytes": 3225
     },
     "tools/shared_stata.py": {
-      "sha256": "406789938765a7e5ea989c33b88ba32cbb6e799f099f99146cceb9d050303a3a",
-      "bytes": 20414
+      "sha256": "5f1aaa608233c40701e955c205beeb7a4ac0784b0b9bc4efa1ef5e3be3c34cb8",
+      "bytes": 20610
     },
     "tools/workbench_doctor.py": {
       "sha256": "547acffd98bcc6c6371c9a4c6767303760ed56832a646c5f959acc9ccc7e46fe",
       "bytes": 4729
     },
     "tools/verified_workbench.py": {
-      "sha256": "64875154639a70436df7ed1f0865c9f1fc7478f3f2483a889fc472b34a510784",
+      "sha256": "c61abe9c1e6292dec69723148fe13206de656aa6a0a7ffc644398efe5680729a",
       "bytes": 21973
     },
     "tools/workbench_platform.py": {
@@ -439,8 +439,8 @@
       "bytes": 13520
     },
     "scripts/stata_error_outcome_core.js": {
-      "sha256": "35a12996973d1339294ca57a03911d6782257061e7e3e9ec8645cea6b20452ee",
-      "bytes": 5256
+      "sha256": "67eb6f91ace75ea20063121ce20b6f36e5d93f6eb8fc0bb01833fed87d1bd687",
+      "bytes": 7107
     }
   },
   "acceptanceStatus": "PENDING_LICENSED_MAC_FULL_ACCEPTANCE",

@@ -52,7 +52,10 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "v3a-m5-"));
 const real = path.join(tmp, "mcp_stata_real.log");
 fs.copyFileSync(path.join(__dirname, "fixtures", "stata-error-logs", "agent-regress-r111.txt"), real);
 const RUN = "run_mw1oskrn_4bzth2dm";
-const failed = (logPath) => ({ success: false, rc: 0, logPath, stderr: "no variables defined", raw: { error: { message: "no variables defined" } } });
+// raw is the mcp-stata task_done event; raw.rc is the authoritative rc (R1). mcp-stata 1.26.1
+// does not send rc in task_done yet, so the live result is the "no raw.rc" case below.
+const failed = (logPath, rc = 111) => ({ success: false, rc, logPath, stderr: "no variables defined",
+  raw: { event: "task_done", status: "done", rc, log_path: logPath, error: "no variables defined" } });
 
 ok("helper confirms the real agent error log bound to this run", () => {
   const c = helper({ lifecycle: { runId: RUN, logPath: real } });
@@ -68,6 +71,45 @@ ok("helper does not confirm another run, a cancelled run, or a missing log", () 
   const gone = path.join(tmp, "missing.log");
   const missing = helper({ lifecycle: { runId: RUN, logPath: gone } });
   assert.ok(missing.__codexStataErrorOutcome(RUN, failed(gone), null, false).reasons.includes("log-missing"));
+});
+ok("R1: the live 1.26.1 result (task_done without rc) stays unconfirmed", () => {
+  const c = helper({ lifecycle: { runId: RUN, logPath: real } });
+  const live = failed(real); delete live.raw.rc; live.rc = 0;
+  const r = c.__codexStataErrorOutcome(RUN, live, new Error("no variables defined"), false);
+  assert.equal(r.confirmed, false);
+  assert.ok(r.reasons.includes("mcp-rc-missing"));
+});
+ok("R2: same runId but no lifecycle logPath, or a different one, is not confirmed", () => {
+  const old = path.join(tmp, "mcp_stata_old.log");
+  fs.writeFileSync(old, "old run failed\nr(111);\n");
+  for (const life of [{ runId: RUN, logPath: null }, { runId: RUN }, { runId: RUN, logPath: real }]) {
+    const c = helper({ lifecycle: life });
+    const r = c.__codexStataErrorOutcome(RUN, failed(old), null, false);
+    assert.equal(r.confirmed, false, JSON.stringify(life));
+    assert.ok(r.reasons.includes("log-not-bound-to-run"), JSON.stringify(life));
+  }
+});
+ok("R3: the real throw expression feeds classify; a cancel in a structured raw.error is seen", () => {
+  const [, throwAfter] = patch.EDITS[1];
+  const run = (r) => {
+    const context = { __r: r, Error, String, Object };
+    vm.createContext(context);
+    try { vm.runInContext("(function(){" + throwAfter + "})()", context); } catch (error) { return error; }
+    return null;
+  };
+  const cancelled = failed(real);
+  cancelled.stderr = "Request cancelled";
+  cancelled.raw.error = { message: "Request cancelled", rc: 111 };
+  const thrown = run(cancelled);
+  assert.equal(thrown.message, "Request cancelled", "object raw.error yields its message, not [object Object]");
+  assert.equal(thrown.__codexStataResult, cancelled);
+  const c = helper({ lifecycle: { runId: RUN, logPath: real } });
+  const r = c.__codexStataErrorOutcome(RUN, thrown.__codexStataResult, thrown, false);
+  assert.equal(r.confirmed, false);
+  assert.ok(r.reasons.includes("cancel-text"));
+  const plain = run(failed(real));
+  assert.equal(plain.message, "no variables defined");
+  assert.equal(c.__codexStataErrorOutcome(RUN, plain.__codexStataResult, plain, false).confirmed, true);
 });
 ok("a classify failure returns null (old response kept)", () => {
   const c = helper({ lifecycle: { runId: RUN, logPath: real } });

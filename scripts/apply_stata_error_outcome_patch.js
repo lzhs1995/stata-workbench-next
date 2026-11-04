@@ -35,7 +35,7 @@ function __codexStataErrorOutcome(runId, result, error, cancelled) {
       logText = buffer.toString("utf8");
     }
     const outcome = core.classify({ runId: runId == null ? null : String(runId), result, error, logPath,
-      lifecycle: { runId: life.runId, logPath: life.logPath || logPath }, logText, cancelled: Boolean(cancelled),
+      lifecycle: { runId: life.runId, logPath: typeof life.logPath === "string" ? life.logPath : null }, logText, cancelled: Boolean(cancelled),
       completionMarker: runId ? "___CODEX_RUN_DONE_" + String(runId) + "___" : null });
     globalThis.__codexLastStataErrorOutcome = { runId: runId == null ? null : String(runId), at: new Date().toISOString(),
       confirmed: outcome.confirmed, stataRc: outcome.stataRc, reasons: outcome.reasons };
@@ -50,7 +50,7 @@ globalThis.__codexStataErrorOutcome = __codexStataErrorOutcome;
 `;
 
 const THROW_BEFORE = 'if(__r&&(__r.success===!1||__r.error||__r.raw?.error)){let __err=__r.raw?.error||__r.error?.message||__r.stderr||"Stata execution failed";throw new Error(String(__err))}';
-const THROW_AFTER = 'if(__r&&(__r.success===!1||__r.error||__r.raw?.error)){let __err=__r.raw?.error||__r.error?.message||__r.stderr||"Stata execution failed";throw Object.assign(new Error(String(__err)),{__codexStataResult:__r})/* codex patch rc.7.85: keep the mcp-stata result */}';
+const THROW_AFTER = 'if(__r&&(__r.success===!1||__r.error||__r.raw?.error)){let __err=__r.raw?.error||__r.error?.message||__r.stderr||"Stata execution failed";throw Object.assign(new Error(String(__err&&typeof __err==="object"&&typeof __err.message==="string"?__err.message:__err)),{__codexStataResult:__r})/* codex patch rc.7.85: keep the mcp-stata result */}';
 
 const CATCH_BEFORE = '__run&&Gg.failStreamingEntry(__run,e?.message||String(e));__release();let __codexPrt=e&&e.__codexPreRunTimeout;__send(__res,(__codexPrt&&__codexPrt.status)||500,__codexPrt?';
 const CATCH_AFTER = '__run&&Gg.failStreamingEntry(__run,e?.message||String(e));let __codexSe=null;try{__codexSe=e&&e.__codexStataResult&&!(e.__codexPreRunTimeout)&&typeof globalThis.__codexStataErrorOutcome==="function"?globalThis.__codexStataErrorOutcome(__run,e.__codexStataResult,e,!!((typeof __codexBridgePreRunSnapshot!=="undefined"&&__codexBridgePreRunSnapshot&&__codexBridgePreRunSnapshot.stopOwned)||e.__codexStataResult.__codexWatchdogRelease)):null}catch{__codexSe=null}if(__codexSe&&__codexSe.confirmed){__release({rc:__codexSe.stataRc,logPath:__codexSe.logPath,error:e});__send(__res,500,{ok:false,outcome:"STATA_ERROR",executed:true,stataRc:__codexSe.stataRc,payloadMayHaveRun:true,error:e?.message||String(e),runId:__run,requestId:__runId,logPath:__codexSe.logPath,lifecycle:__codexExecution.publicLifecycle(globalThis.__codexBridgeState||{}),state:__current(),patch:__patch});return}/* codex patch rc.7.85: confirmed Stata error */__release();let __codexPrt=e&&e.__codexPreRunTimeout;__send(__res,(__codexPrt&&__codexPrt.status)||500,__codexPrt?';

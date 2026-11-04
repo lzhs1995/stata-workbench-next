@@ -187,6 +187,8 @@ def stata_error_checks(http, body, before, after, marker):
         "completedRunBound": isinstance(rid, str) and bool(rid) and completed.get("runId") == rid
             and lifecycle.get("runId") == rid and lifecycle.get("sourceMode") == "agent",
         "completedRcMatches": completed.get("rc") == rc and completed.get("phase") == "failed",
+        "logPathBound": isinstance(body.get("logPath"), str) and bool(body["logPath"])
+            and completed.get("logPath") == body["logPath"] and lifecycle.get("logPath") == body["logPath"],
         "logRcMatches": bool(log_rcs) and log_rcs[-1] == rc,
         "clientMarkerNotPrinted": bool(lines) and not any(line.endswith("}" + marker) or line == marker for line in lines),
         "sameStataBackend": _valid_backend_pids(before["status"].get("ownedBackendPids"))
