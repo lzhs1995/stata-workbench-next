@@ -170,7 +170,8 @@ t("listing failure fails closed without a kill call", () => {
   assert.equal(r.failClosed, true);
   assert.equal(r.ok, false);
   assert.equal(calls.length, 1);
-  assert.match(core.failClosedMessage(r), /ended none of them/);
+  assert.match(core.failClosedMessage(r), /did not target any of them/);
+  assert.doesNotMatch(core.failClosedMessage(r), /closed its own connection/, "no dispose was passed");
   assert.match(core.failClosedMessage(r), /CIM timeout/);
 });
 
@@ -189,7 +190,7 @@ for (const [label, owned] of [
     assert.ok(!calls.flat().includes("-ScopedTargetCsv"));
     assert.ok(r.targets.length > 0, "proposed targets stay as diagnostics");
     const msg = core.failClosedMessage(r);
-    assert.match(msg, /ended none of them/);
+    assert.match(msg, /did not target any of them/);
     assert.doesNotMatch(msg, /close this window's stuck python\.exe/);
     assert.match(msg, /Only end one of these in Task Manager if you know it belongs to this window/);
   });
@@ -200,7 +201,76 @@ t("processes left behind by the kill make the result not ok and are named", () =
   const r = scope(machine(), calls, { killReply: { ok: true, mode: "scoped", killed: [{ pid: 110 }, { pid: 111 }, { pid: 112 }], unresolved: [{ pid: 120, name: "python.exe", reason: "started by an ended backend process after the listing; not ended" }] } }).run({ dryRun: false });
   assert.equal(r.ok, false);
   assert.equal(r.failClosed, false);
-  assert.match(core.failClosedMessage(r), /ended 3 process\(es\).*pid 120/);
+  assert.match(core.failClosedMessage(r), /ended 3 of 3 process\(es\).*pid 120/);
+});
+
+// V2-R1: a CIM row (parent 110) whose pid was reused before the handle was read.
+t("V2-R1 a row whose CIM and handle creation times differ is never targeted and fails closed", () => {
+  const procs = machine().map((p) => ({ ...p, cimCreatedMs: p.createdMs, handleCreatedMs: p.createdMs }))
+    .map((p) => (p.pid === 111 ? { ...p, handleCreatedMs: T0 + 10_000 } : p));
+  for (const p of procs) delete p.createdMs;
+  const r = core.selectSessionTree({ processes: procs, roots: [rootA], hostPid: 100 });
+  assert.ok(!pids(r).includes(111), "the replacement never enters the target list");
+  assert.equal(r.failClosed, true);
+  assert.deepEqual(r.uncertainChildren.map((x) => x.pid), [111]);
+  const calls = [];
+  const out = core.createWindowsKillScope({ execFileSync: fakeExec(procs, calls), scriptPath: "x", platform: "win32", hostPid: 100,
+    ownedPids: () => new Map([[110, { pid: 110, startedAt: new Date(T0 + 50_000).toISOString() }]]) }).run({ dryRun: false });
+  assert.equal(calls.length, 1, "no kill request");
+  assert.match(core.failClosedMessage(out), /changed identity while being listed/);
+});
+
+t("V2-R1 rows whose CIM and handle creation times agree keep the handle time", () => {
+  const n = core.normalize({ pid: 5, ppid: 1, name: "python.exe", cimCreatedMs: 1000, handleCreatedMs: 1001 });
+  assert.equal(n.createdMs, 1001);
+  assert.equal(n.identityUncertain, false);
+  const denied = core.normalize({ pid: 6, ppid: 1, name: "System", cimCreatedMs: 1000, handleCreatedMs: null });
+  assert.equal(denied.createdMs, null);
+  assert.equal(denied.identityUncertain, false, "no handle (access denied) is not a reuse signal");
+});
+
+// V2-R2: the verdict comes from the raw per-target codes.
+for (const [code, kind] of [[0, "killed"], [1, "skipped"], [2, "skipped"], [3, "failed"], [4, "failed"], [5, "pending"], [6, "pending"], [9, "failed"]]) {
+  t(`V2-R2 native code ${code} is classified as ${kind}`, () => {
+    const v = core.classifyKill({ ok: true, results: [{ pid: 110, name: "python.exe", code }] });
+    assert.equal(v[kind].length, 1);
+    assert.equal(v.complete, kind === "killed" || kind === "skipped");
+  });
+}
+
+t("V2-R2 a wait timeout is not an ended process even if the script said ok", () => {
+  const calls = [];
+  const r = scope(machine(), calls, { killReply: { ok: true, mode: "scoped", results: [
+    { pid: 110, code: 0 }, { pid: 111, code: 5 }, { pid: 112, code: 0 }], unresolved: [], scanOk: true } }).run({ dryRun: false });
+  assert.equal(r.ok, false);
+  assert.deepEqual(r.ended.map((x) => x.pid), [110, 112]);
+  assert.deepEqual(r.pending.map((x) => x.pid), [111]);
+  assert.match(core.failClosedMessage(r), /pid 111 .*not confirmed within 5 s/);
+});
+
+t("V2-R2 a failed child scan makes the result not ok", () => {
+  const calls = [];
+  const r = scope(machine(), calls, { killReply: { ok: true, mode: "scoped", results: [{ pid: 110, code: 0 }, { pid: 111, code: 0 }, { pid: 112, code: 0 }], unresolved: [], scanOk: false } }).run({ dryRun: false });
+  assert.equal(r.ok, false);
+  assert.match(core.failClosedMessage(r), /check for processes started during the kill failed/);
+});
+
+// V2-R3: the warning says what happened.
+t("V2-R3 termination failures are named and no connection close is claimed", () => {
+  const r = { ok: false, failClosed: false, targets: [{ pid: 110 }], ended: [], reasons: [],
+    failed: [{ pid: 110, name: "python.exe", reason: "cannot open process" }], kill: { ok: false } };
+  const msg = core.failClosedMessage(r);
+  assert.match(msg, /ended 0 of 1 process/);
+  assert.match(msg, /pid 110 \(python\.exe\): cannot open process/);
+  assert.doesNotMatch(msg, /could not confirm which processes belong/);
+  assert.doesNotMatch(msg, /closed its own connection/);
+  assert.doesNotMatch(msg, /unknown reason/);
+});
+
+t("V2-R3 the connection-close sentence appears only when the caller disposed", () => {
+  const r = { ok: false, failClosed: true, reasons: ["x"], roots: [] };
+  assert.match(core.failClosedMessage(r, { disposed: true }), /closed its own connection/);
+  assert.doesNotMatch(core.failClosedMessage(r, { disposed: false }), /closed its own connection/);
 });
 
 t("a kill that reports a failure makes the result not ok", () => {
@@ -241,10 +311,12 @@ t("busy force reset no longer escalates to a machine-wide kill", () => {
 t("KILL command: fail-closed resets this window's transport and warns", () => {
   const at = dist.indexOf('registerCommand("stata-workbench.panicKill"');
   const win = dist.slice(at, at + 6000);
+  assert.ok(win.includes("failClosedMessage(__codexKillScope,{disposed:__codexKillDisposed})"), "warning is told whether dispose ran");
+  assert.ok(/__codexForceReset\("panic-kill-command scope unverified"\);__codexKillDisposed=true/.test(win), "disposed only after the reset returned");
   const i = win.indexOf("__codexKillScope.failClosed");
   assert.ok(i > 0);
   assert.ok(win.indexOf('__codexForceReset("panic-kill-command scope unverified")', i) > i);
-  assert.ok(win.indexOf("failClosedMessage(__codexKillScope)", i) > i);
+  assert.ok(win.indexOf("failClosedMessage(__codexKillScope,{disposed:__codexKillDisposed})", i) > i);
   assert.ok(win.indexOf("requestRecovery", i) > i, "recovery is requested after the scoped kill");
   assert.ok(/panic-kill/i.test("panic-kill-command scope unverified"), "the reset reason skips the busy escalation");
 });
@@ -287,17 +359,20 @@ t("panic script keeps scoped mode ahead of name selection", () => {
   assert.ok(list > 0 && scoped > list && byName > scoped, "list and scoped modes exit before name-based selection");
   assert.match(text, /creation time changed \(pid reused\)/);
   assert.match(text, /EndIfSame/, "the same handle is checked and terminated");
+  assert.match(text, /if \(w == 0x102\) return 5;/, "a wait timeout is not success");
+  assert.match(text, /cimCreatedMs = Get-CimCreated/, "the listing carries the CIM row's own creation time");
   assert.doesNotMatch(text, /child started during kill/, "no post-kill adoption of new children");
 });
 
 if (process.platform === "win32") {
   const { execFileSync } = require("node:child_process");
-  t("Windows: -ListProcesses lists this node process with its parent", () => {
+  t("Windows: -ListProcesses lists this node process with its parent; CIM and handle times agree", () => {
     const out = JSON.parse(execFileSync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ps1, "-ListProcesses"], { encoding: "utf8", maxBuffer: 16 << 20 }));
     const me = out.processes.find((p) => p.pid === process.pid);
     assert.ok(me, "own pid listed");
     assert.equal(me.ppid, process.ppid);
-    assert.ok(Number.isFinite(me.createdMs) && Math.abs(me.createdMs - (Date.now() - process.uptime() * 1000)) < 60_000, "createdMs is epoch ms");
+    assert.ok(Math.abs(me.cimCreatedMs - me.handleCreatedMs) <= core.IDENTITY_TOLERANCE_MS, JSON.stringify(me));
+    assert.ok(Number.isFinite(me.handleCreatedMs) && Math.abs(me.handleCreatedMs - (Date.now() - process.uptime() * 1000)) < 60_000, "createdMs is epoch ms");
     const r = core.selectSessionTree({ processes: out.processes, roots: [{ pid: process.pid, startedAtMs: Date.now() }], hostPid: process.ppid });
     assert.ok(r.targets.some((x) => x.pid === process.pid), "a real tree rooted at this process resolves");
   });
@@ -320,6 +395,7 @@ if (process.platform === "win32") {
     while (!row && Date.now() < deadline) {
       const list = JSON.parse(execFileSync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ps1, "-ListProcesses"], { encoding: "utf8", maxBuffer: 16 << 20 }));
       row = list.processes.find((p) => p.pid === child.pid && p.ppid === process.pid);
+      if (row) row.createdMs = row.handleCreatedMs;
     }
     try {
       assert.ok(row && row.createdMs > 0, "child listed with a creation time");
@@ -327,6 +403,8 @@ if (process.platform === "win32") {
       assert.equal(wrong.killedCount, 0, "off by 1 ms is not the same process");
       const out = JSON.parse(execFileSync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ps1, "-Force", "-ScopedTargetCsv", child.pid + ":" + row.createdMs], { encoding: "utf8" }));
       assert.equal(out.killedCount, 1, JSON.stringify(out));
+      assert.equal(out.results[0].code, 0);
+      assert.ok(out.results[0].endedAtMs > 0, "completion time recorded after the handle was signalled");
       let gone = false;
       try { process.kill(child.pid, 0); } catch { gone = true; }
       assert.ok(gone, "the child exited");

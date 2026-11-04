@@ -69,6 +69,9 @@ async function runReset({ reason, busy = false, owned, processes, listFails = fa
     },
     rg: path, yC: { extensionUri: { fsPath: path.join(__dirname, "..") } }, RI: () => {},
   };
+  // The transport client: dispose/cancelAll are recorded so "before dispose" is checked, not assumed.
+  const zgBase = { dispose: async () => { calls.push(["dispose"]); }, cancelAll: async () => { calls.push(["cancelAll"]); } };
+  known.zg = new Proxy(zgBase, { get: (t, k) => (k in t ? t[k] : k === "then" ? undefined : stub()), set: () => true });
   const ctx = new Proxy(known, {
     has: () => true,
     get: (t, k) => (k in t ? t[k] : k === Symbol.unscopables ? undefined : (t[k] = stub())),
@@ -117,11 +120,12 @@ async function t(name, fn) {
   });
   await t("panic-kill reset (KILL fail-closed branch): no list, no kill, no unsafe cleanup", async () => {
     const r = await runReset({ reason: "panic-kill-command scope unverified", owned: foreign, processes: table() });
-    assert.deepEqual(r.calls, []);
+    assert.deepEqual(r.calls.filter((c) => c[0] !== "dispose" && c[0] !== "cancelAll"), []);
+    assert.ok(r.calls.some((c) => c[0] === "dispose"), "the transport is disposed");
   });
   await t("helper failed to load: nothing runs", async () => {
     const r = await runReset({ reason: "watchdog", busy: true, owned: foreign, processes: table(), helperMissing: true });
-    assert.deepEqual(r.calls, []);
+    assert.deepEqual(r.calls.filter((c) => c[0] !== "dispose" && c[0] !== "cancelAll"), []);
   });
   await t("process listing fails: no kill, no unsafe cleanup", async () => {
     const r = await runReset({ reason: "watchdog", owned: [{ pid: 110, startedAtMs: T0 + 50000 }], processes: table(), listFails: true });
@@ -139,6 +143,8 @@ async function t(name, fn) {
     const k = kills(r.calls);
     assert.equal(k.length, 1);
     assert.deepEqual(k[0][k[0].indexOf("-ScopedTargetCsv") + 1].split(","), ["110:" + (T0 + 5000), "111:" + (T0 + 9000)]);
+    const killAt = r.calls.indexOf(k[0]), disposeAt = r.calls.findIndex((c) => c[0] === "dispose");
+    assert.ok(disposeAt > killAt && killAt >= 0, "scoped kill ran before dispose (" + killAt + " < " + disposeAt + ")");
   });
   await t("verified busy reset ends the tree once (escalation, not again before dispose)", async () => {
     const r = await runReset({ reason: "watchdog", busy: true, owned: [{ pid: 110, startedAtMs: T0 + 50000 }], processes: table() });

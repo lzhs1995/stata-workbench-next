@@ -33,12 +33,23 @@ function toNumber(value) {
   return Number.isFinite(n) ? n : null;
 }
 
+// A listing row's parent/name come from the CIM row; its creation time from a
+// handle opened afterwards. They describe the same process only if the CIM row's
+// own CreationDate equals the handle's (to the millisecond; CIM keeps
+// microseconds). Otherwise the pid was reused in between: the row's identity is
+// uncertain and its createdMs is withheld, so it can never become a target.
+const IDENTITY_TOLERANCE_MS = 1;
 function normalize(proc) {
+  const cim = toNumber(proc && proc.cimCreatedMs);
+  const handle = toNumber(proc && proc.handleCreatedMs);
+  const both = proc && ("cimCreatedMs" in proc || "handleCreatedMs" in proc);
+  const uncertain = !!(both && cim != null && handle != null && Math.abs(cim - handle) > IDENTITY_TOLERANCE_MS);
   return {
     pid: toNumber(proc && proc.pid),
     ppid: toNumber(proc && proc.ppid),
     name: String((proc && proc.name) || ""),
-    createdMs: toNumber(proc && proc.createdMs),
+    createdMs: both ? (uncertain || cim == null ? null : handle) : toNumber(proc && proc.createdMs),
+    identityUncertain: uncertain,
     stataish: !!(proc && proc.stataish),
     spawnParent: toNumber(proc && proc.spawnParent),
   };
@@ -104,6 +115,14 @@ function selectSessionTree({ processes, roots, hostPid }) {
     }
   }
 
+  // A row whose CIM ancestry points into the tree but whose handle is another
+  // process instance is never selected; it makes the whole result fail closed.
+  const uncertainChildren = procs.filter((p) => p.identityUncertain && targets.has(p.ppid) && !targets.has(p.pid))
+    .map((p) => ({ pid: p.pid, name: p.name, ppid: p.ppid }));
+  if (uncertainChildren.length) {
+    reasons.push(`${uncertainChildren.length} process(es) under this window's backend changed identity while being listed (pid ${uncertainChildren.map((p) => p.pid).join(", ")}); nothing was targeted`);
+  }
+
   const suspectedOrphans = [];
   for (const proc of procs) {
     if (targets.has(proc.pid)) continue;
@@ -128,9 +147,38 @@ function selectSessionTree({ processes, roots, hostPid }) {
     roots: rootInfo,
     nothingOwned: ordered.length === 0 && !failClosed,
     targets: ordered,
+    uncertainChildren,
     suspectedOrphans,
     census,
   };
+}
+
+// Native EndIfSame codes from panic_kill_stata_chain.ps1 -ScopedTargetCsv.
+const KILL_CODES = { 0: "ended", 1: "already exited", 2: "creation time changed (pid reused)", 3: "TerminateProcess failed",
+  4: "cannot open process", 5: "termination requested but not confirmed within 5 s", 6: "termination requested but the wait failed" };
+// The verdict is rebuilt from the raw per-target codes, not from the script's own
+// summary: only a signalled handle (0) counts as ended; 1 and 2 mean the target
+// is gone or was never ours; 5 and 6 are pending; anything else failed.
+function classifyKill(kill) {
+  const k = kill || {};
+  const out = { killed: [], skipped: [], pending: [], failed: [], unresolved: Array.isArray(k.unresolved) ? k.unresolved : [],
+    scanOk: k.scanOk !== false, error: k.error || null };
+  if (Array.isArray(k.results)) {
+    for (const r of k.results) {
+      const item = { pid: toNumber(r.pid), name: r.name || null, code: toNumber(r.code), reason: KILL_CODES[r.code] || "unknown result " + r.code };
+      if (r.code === 0) out.killed.push(item);
+      else if (r.code === 1 || r.code === 2) out.skipped.push(item);
+      else if (r.code === 5 || r.code === 6) out.pending.push(item);
+      else out.failed.push(item);
+    }
+  } else {
+    out.killed = Array.isArray(k.killed) ? k.killed : [];
+    out.skipped = Array.isArray(k.skipped) ? k.skipped : [];
+    out.pending = Array.isArray(k.pending) ? k.pending : [];
+    out.failed = Array.isArray(k.failed) ? k.failed.map((f) => ({ ...f, reason: f.reason || f.error })) : [];
+  }
+  out.complete = k.ok !== false && !out.error && !out.pending.length && !out.failed.length && !out.unresolved.length && out.scanOk;
+  return out;
 }
 
 function targetCsv(targets) {
@@ -176,29 +224,44 @@ function createWindowsKillScope(deps) {
       kill.error = String((error && error.message) || error);
     }
     result.kill = kill;
-    result.unresolved = Array.isArray(kill.unresolved) ? kill.unresolved : [];
-    result.ok = selection.ok && kill.ok === true && result.unresolved.length === 0;
-    try { deps.log && deps.log(`${source}: ended ${(kill.killed || []).length} of ${selection.targets.length} process(es) in this window's backend tree${selection.failClosed ? "; " + selection.reasons.join("; ") : ""}`); } catch {}
+    const verdict = classifyKill(kill);
+    result.ended = verdict.killed;
+    result.pending = verdict.pending;
+    result.failed = verdict.failed;
+    result.unresolved = verdict.unresolved;
+    result.scanOk = verdict.scanOk;
+    result.ok = selection.ok && verdict.complete;
+    try { deps.log && deps.log(`${source}: ended ${verdict.killed.length} of ${selection.targets.length} process(es) in this window's backend tree; pending ${verdict.pending.length}, failed ${verdict.failed.length}, unresolved ${verdict.unresolved.length}`); } catch {}
     return result;
   }
   return { run };
 }
 
-// Text for the warning the KILL command shows when it ended nothing (fail-closed) or left pids behind.
-function failClosedMessage(result) {
+// Text for the warning the KILL command shows when it ended nothing (fail-closed)
+// or could not finish. It describes only what actually happened: whether the
+// scoped terminator ran, what it ended, and whether the caller disposed this
+// window's own transport (options.disposed).
+function failClosedMessage(result, options = {}) {
   const r = result || {};
-  const why = Array.isArray(r.reasons) && r.reasons.length ? r.reasons.join("; ") : (r.kill && r.kill.error) || "unknown reason";
+  const fmt = (x, why) => `pid ${x.pid} (${x.name || "?"}${x.ppid != null ? ", parent " + x.ppid : ""}): ${why || x.reason || x.error || "not ended"}`;
   const left = [].concat(
-    (r.roots || []).filter((x) => x.status === "unverified").map((x) => `pid ${x.pid} (${x.name || "?"}, parent ${x.ppid}): registered by this window but could not be verified`),
-    (r.suspectedOrphans || []).map((x) => `pid ${x.pid} (${x.name}, parent ${x.ppid}): looks left over from this window's exited backend`),
-    (r.unresolved || []).map((x) => `pid ${x.pid} (${x.name || "?"}): ${x.reason || "not ended"}`));
-  const ended = r.kill && Array.isArray(r.kill.killed) ? r.kill.killed.length : 0;
-  return (ended ? `Stata Workbench ended ${ended} process(es) of this window's backend, but could not finish the job. `
-    : "Stata Workbench could not confirm which processes belong to this window's Stata backend, so it ended none of them; "
-      + "it only closed its own connection to the backend process this window started. ")
-    + "Other VS Code windows and Stata sessions were not touched. "
-    + (left.length ? "Not ended: " + left.join("; ") + ". Only end one of these in Task Manager if you know it belongs to this window. " : "")
-    + "Details: " + why;
+    (r.roots || []).filter((x) => x.status === "unverified").map((x) => fmt(x, "registered by this window but could not be verified")),
+    (r.uncertainChildren || []).map((x) => fmt(x, "changed identity while being listed")),
+    (r.suspectedOrphans || []).map((x) => fmt(x, "looks left over from this window's exited backend")),
+    (r.failed || []).map((x) => fmt(x)),
+    (r.pending || []).map((x) => fmt(x)),
+    (r.unresolved || []).map((x) => fmt(x)));
+  const why = Array.isArray(r.reasons) && r.reasons.length ? r.reasons.join("; ") : (r.kill && r.kill.error) || (r.scanOk === false ? "the check for processes started during the kill failed" : null);
+  const ended = Array.isArray(r.ended) ? r.ended.length : 0;
+  const head = r.failClosed
+    ? "Stata Workbench could not confirm which processes belong to this window's Stata backend, so it did not target any of them."
+    : `Stata Workbench ended ${ended} of ${(r.targets || []).length} process(es) of this window's backend and could not confirm the rest.`;
+  return head
+    + (options.disposed ? " It closed its own connection to the backend process this window started." : "")
+    + " Other VS Code windows and Stata sessions were not touched."
+    + (left.length ? " Not ended: " + left.join("; ") + ". Only end one of these in Task Manager if you know it belongs to this window." : "")
+    + (why ? " Details: " + why : "");
 }
 
-module.exports = { selectSessionTree, createWindowsKillScope, rootsFromOwned, targetCsv, failClosedMessage, PROTECTED, ROOT_CLOCK_TOLERANCE_MS };
+module.exports = { selectSessionTree, createWindowsKillScope, rootsFromOwned, targetCsv, classifyKill, failClosedMessage, normalize,
+  KILL_CODES, PROTECTED, ROOT_CLOCK_TOLERANCE_MS, IDENTITY_TOLERANCE_MS };

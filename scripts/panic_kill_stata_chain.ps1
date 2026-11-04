@@ -14,8 +14,13 @@ $ErrorActionPreference = "Stop"
 # -ScopedTargetCsv "pid:createdMs,...". Each pid is opened once; the creation
 # time is read from that handle and the same handle is terminated, so a pid that
 # was reused (or exits and is reused mid-call) is never ended. createdMs comes
-# from GetProcessTimes in both modes. Processes started by an ended target are
-# reported, never adopted. Name-based selection below is kept for manual
+# from GetProcessTimes in both modes; -ListProcesses also prints the CIM row's
+# own CreationDate so the extension can tell when the row's parent/name and the
+# handle belong to different process instances (pid reused in between). A target
+# counts as ended only after its handle is signalled; a wait timeout or failure
+# is reported as pending. Processes started by an ended target are reported,
+# never adopted, and only direct children are scanned, so an empty list is not
+# proof that nothing survived. Name-based selection below is kept for manual
 # emergency use only.
 $swnHelper = @"
 using System;
@@ -34,9 +39,10 @@ public static class SwnProc {
     if (h == IntPtr.Zero) return -1;
     try { long c, e, k, u; return GetProcessTimes(h, out c, out e, out k, out u) ? ToMs(c) : -1; } finally { CloseHandle(h); }
   }
-  // 0 ended, 1 already exited, 2 creation time differs (pid reused), 3 terminate failed, 4 cannot open
-  public static int EndIfSame(int pid, long createdMs, out long seenMs) {
-    seenMs = -1;
+  // 0 ended (handle signalled), 1 already exited, 2 creation time differs (pid reused), 3 terminate failed,
+  // 4 cannot open, 5 terminate requested but not signalled within 5 s, 6 wait failed
+  public static int EndIfSame(int pid, long createdMs, out long seenMs, out long endedMs) {
+    seenMs = -1; endedMs = -1;
     IntPtr h = OpenProcess(QUERY | TERMINATE | SYNCHRONIZE, false, pid);
     if (h == IntPtr.Zero) return Marshal.GetLastWin32Error() == 87 ? 1 : 4;
     try {
@@ -46,7 +52,10 @@ public static class SwnProc {
       if (seenMs != createdMs) return 2;
       if (GetExitCodeProcess(h, out code) && code != STILL_ACTIVE) return 1;
       if (!TerminateProcess(h, 1)) return 3;
-      WaitForSingleObject(h, 5000);
+      uint w = WaitForSingleObject(h, 5000);
+      if (w == 0x102) return 5;
+      if (w != 0) return 6;
+      endedMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
       return 0;
     } finally { CloseHandle(h); }
   }
@@ -72,6 +81,12 @@ function Get-SpawnParent {
   return $null
 }
 
+function Get-CimCreated {
+  param($Proc)
+  try { if ($Proc.CreationDate) { return [int64](([DateTimeOffset]$Proc.CreationDate.ToUniversalTime()).ToUnixTimeMilliseconds()) } } catch {}
+  return $null
+}
+
 function Get-SwnCreated {
   param([int]$Id)
   $ms = [SwnProc]::CreatedMs($Id)
@@ -87,7 +102,8 @@ if ($ListProcesses) {
       pid = [int]$_.ProcessId
       ppid = [int]$_.ParentProcessId
       name = [string]$_.Name
-      createdMs = Get-SwnCreated ([int]$_.ProcessId)
+      cimCreatedMs = Get-CimCreated $_
+      handleCreatedMs = Get-SwnCreated ([int]$_.ProcessId)
       stataish = Test-Stataish $_
       spawnParent = Get-SpawnParent $_
     }
@@ -112,35 +128,40 @@ if ($PSBoundParameters.ContainsKey('ScopedTargetCsv')) {
     [pscustomobject]@{ ok = $true; mode = "scoped-dry-run"; requested = $wanted.Count; targets = $wanted } | ConvertTo-Json -Depth 4 -Compress
     exit 0
   }
-  $killed = @(); $skipped = @(); $failed = @()
+  $killed = @(); $skipped = @(); $failed = @(); $pending = @(); $results = @()
   foreach ($t in $wanted) {
     $name = [string](Get-CimInstance Win32_Process -Filter "ProcessId=$($t.pid)" -ErrorAction SilentlyContinue).Name
     if ($swnProtected -contains $name) { $skipped += [pscustomobject]@{ pid = $t.pid; name = $name; reason = "protected process" }; continue }
-    $seen = [int64]-1
-    $at = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-    $code = [SwnProc]::EndIfSame($t.pid, $t.createdMs, [ref]$seen)
+    $seen = [int64]-1; $endedMs = [int64]-1
+    $code = [SwnProc]::EndIfSame($t.pid, $t.createdMs, [ref]$seen, [ref]$endedMs)
+    $results += [pscustomobject]@{ pid = $t.pid; name = $name; code = $code; seenMs = $seen; endedAtMs = $endedMs }
     switch ($code) {
-      0 { $killed += [pscustomobject]@{ pid = $t.pid; name = $name; createdMs = $t.createdMs; endedAtMs = $at } }
+      0 { $killed += [pscustomobject]@{ pid = $t.pid; name = $name; createdMs = $t.createdMs; endedAtMs = $endedMs } }
       1 { $skipped += [pscustomobject]@{ pid = $t.pid; name = $name; reason = "already exited" } }
       2 { $skipped += [pscustomobject]@{ pid = $t.pid; name = $name; reason = "creation time changed (pid reused)"; seenMs = $seen } }
+      5 { $pending += [pscustomobject]@{ pid = $t.pid; name = $name; reason = "termination requested but not confirmed within 5 s" } }
+      6 { $pending += [pscustomobject]@{ pid = $t.pid; name = $name; reason = "termination requested but the wait failed" } }
       default { $failed += [pscustomobject]@{ pid = $t.pid; name = $name; error = $(if ($code -eq 3) { "TerminateProcess failed" } else { "cannot open process" }) } }
     }
   }
   # Report (never end) processes started by an ended target before it was ended and not in the request.
   $requested = @{}; foreach ($t in $wanted) { $requested[[int]$t.pid] = $true }
   $endedAt = @{}; foreach ($k in $killed) { $endedAt[[int]$k.pid] = @([int64]$k.createdMs, [int64]$k.endedAtMs) }
-  $unresolved = @()
+  $unresolved = @(); $scanOk = $true
   if ($endedAt.Count -gt 0) {
     Start-Sleep -Milliseconds 300
-    Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $endedAt.ContainsKey([int]$_.ParentProcessId) -and -not $requested.ContainsKey([int]$_.ProcessId) } | ForEach-Object {
+    $after = $null
+    try { $after = @(Get-CimInstance Win32_Process -ErrorAction Stop) } catch { $scanOk = $false }
+    $after | Where-Object { $null -ne $_ } | Where-Object { $endedAt.ContainsKey([int]$_.ParentProcessId) -and -not $requested.ContainsKey([int]$_.ProcessId) } | ForEach-Object {
       $cm = Get-SwnCreated ([int]$_.ProcessId); $win = $endedAt[[int]$_.ParentProcessId]
       if ($null -ne $cm -and $cm -ge $win[0] -and $cm -le $win[1]) {
         $unresolved += [pscustomobject]@{ pid = [int]$_.ProcessId; name = [string]$_.Name; ppid = [int]$_.ParentProcessId; reason = "started by an ended backend process after the listing; not ended" }
       }
     }
   }
-  [pscustomobject]@{ ok = ($failed.Count -eq 0); mode = "scoped"; requested = $wanted.Count; killedCount = $killed.Count; killed = $killed; skipped = $skipped; failed = $failed; unresolved = $unresolved } | ConvertTo-Json -Depth 5 -Compress
-  if ($failed.Count -gt 0) { exit 1 }
+  $allDone = ($failed.Count -eq 0 -and $pending.Count -eq 0 -and $unresolved.Count -eq 0 -and $scanOk)
+  [pscustomobject]@{ ok = $allDone; mode = "scoped"; requested = $wanted.Count; killedCount = $killed.Count; killed = $killed; skipped = $skipped; failed = $failed; pending = $pending; unresolved = $unresolved; scanOk = $scanOk; childScan = "direct children only"; results = $results } | ConvertTo-Json -Depth 5 -Compress
+  if ($failed.Count -gt 0 -or $pending.Count -gt 0) { exit 1 }
   exit 0
 }
 
