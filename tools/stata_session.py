@@ -29,6 +29,10 @@ import verified_workbench as entry
 NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,39}")
 TMP_RE = re.compile(r"\.(?P<sid>[^/\\]+)\.(?P<pid>[0-9]+)\.[0-9a-f]{8}\.tmp")
 MAX_SESSIONS = 5
+# open 只在锁内做检查和预留（名字、端口、上限）；拷运行时、写配置、启动 VS Code 在锁外。
+# 预留件 opening.json 由 open 的进程写、结束时删；进程死了或超过 TTL 就不再算数。
+OPEN_LOCK_TIMEOUT = 60
+OPEN_RESERVATION_TTL = 1800
 PORTS = range(17601, 17621)
 FORBIDDEN_PORTS = {17485, 17416, 17497, 17507}
 MAC_RESERVE_BYTES = 20 * 10**9
@@ -134,7 +138,8 @@ class Sessions:
     """所有外部动作（启动、进程查找、信号、端口探测、磁盘、时钟）都可注入，测试不真开 VS Code。"""
 
     def __init__(self, root=None, platform=None, code=None, run=None, popen=None, instances=None, alive=None,
-                 port_free=port_free, kill=None, sleep=time.sleep, clock=time.monotonic, disk_free=None, environ=None):
+                 port_free=port_free, kill=None, sleep=time.sleep, clock=time.monotonic, disk_free=None, environ=None,
+                 now=time.time):
         self.root = Path(root) if root else state_root()
         self.platform = platform or sys.platform
         self.environ = dict(os.environ if environ is None else environ)
@@ -146,6 +151,7 @@ class Sessions:
         self.port_free = port_free
         self.kill = kill or self._real_kill
         self.sleep, self.clock = sleep, clock
+        self.now = now
         self.disk_free = disk_free or (lambda p: shutil.disk_usage(p).free)
 
     @property
@@ -185,10 +191,21 @@ class Sessions:
         except (OSError, ValueError):
             return {}
 
+    def reservation(self, name):
+        """正在 open 的预留（opening.json）：建它的进程还活着且未过 OPEN_RESERVATION_TTL 秒才算数，否则当陈旧件忽略。"""
+        try:
+            data = json.loads((self.profiles / name / "opening.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        pid, at = data.get("pid"), data.get("at")
+        if type(pid) is not int or not isinstance(at, (int, float)) or not 0 <= self.now() - at < OPEN_RESERVATION_TTL:
+            return None
+        return data if self.alive(pid) else None
+
     def active(self):
-        """活会话：注册表里活着的记录（按会话名），加上有 VS Code 进程但还没写注册表的配置目录。"""
+        """活会话：注册表里活着的记录（按会话名），有 VS Code 进程但还没写注册表的配置目录，加上正在 open 的预留。"""
         active = {r.get("sessionName") or r["sessionId"] for r in self.records()}
-        active.update(name for name in self.names() if self.instances(self.profiles / name))
+        active.update(name for name in self.names() if self.instances(self.profiles / name) or self.reservation(name))
         return active
 
     def pick_port(self, name):
@@ -196,6 +213,7 @@ class Sessions:
         mine = self.meta(name).get("port")
         used = {r["port"] for r in self.records()}
         used.update(p for n in self.names() if n != name for p in [self.meta(n).get("port")] if type(p) is int)
+        used.update(p for n in self.names() if n != name for p in [(self.reservation(n) or {}).get("port")] if type(p) is int)
         candidates = ([mine] if type(mine) is int and mine in PORTS else []) + [p for p in PORTS if p != mine]
         for port in candidates:
             if port not in used and port not in FORBIDDEN_PORTS and self.port_free(port):
@@ -314,11 +332,13 @@ class Sessions:
         workspace = Path(workspace or profile / "workspace")
         if workspace != profile / "workspace" and not workspace.is_dir():
             raise SessionError(f"WORKSPACE_MISSING: {workspace}")
-        with host.file_lock(self.root / "locks" / "stata-session.lock", timeout=10):
+        with host.file_lock(self.root / "locks" / "stata-session.lock", timeout=OPEN_LOCK_TIMEOUT):
             if self.instances(profile):
                 raise SessionError(f"SESSION_ALREADY_OPEN: {name} already has a VS Code window; nothing was launched")
             if any(r.get("sessionName") == name for r in self.records()):
                 raise SessionError(f"SESSION_ALREADY_OPEN: a live registry record already uses the name {name}")
+            if self.reservation(name):
+                raise SessionError(f"SESSION_ALREADY_OPEN: another open of {name} is in progress; nothing was launched")
             active = self.active() - {name}
             if len(active) >= MAX_SESSIONS:
                 raise SessionError(f"SESSION_LIMIT: {len(active)} live Next sessions ({', '.join(sorted(active))}); "
@@ -328,17 +348,29 @@ class Sessions:
             self.check_disk(source if needs_copy and self.platform != "darwin" else None)
             for sub in ("user-data", "tmp", "mcp-temp", "pycache", "locks"):
                 (profile / sub).mkdir(parents=True, exist_ok=True, mode=0o700)
-            workspace.mkdir(parents=True, exist_ok=True, mode=0o700)
-            extensions = self.link_extensions(profile, Path(shared_extensions) if shared_extensions else self.root / "extensions-shared")
-            runtime = self.prepare_runtime(profile, source)
             port = self.pick_port(name)
-            config = self.write_mcp_config(profile, Path(runtime["path"]))
-            settings = self.write_settings(profile, name, port, config)
-            env = self.child_env(profile, name, config)
-            write_json_atomic(profile / "session.json", {"name": name, "port": port, "profile": str(profile),
-                "runtime": runtime, "mcpConfig": str(config), "extensions": extensions,
-                "workspace": str(workspace.resolve()), "openedAt": time.strftime("%Y-%m-%dT%H:%M:%S%z")})
-            argv = self.launch(profile, workspace, env, disable_workspace_trust) if launch else None
+            write_json_atomic(profile / "opening.json", {"pid": os.getpid(), "at": self.now(), "port": port})
+        try:
+            return self._open_reserved(name, profile, workspace, source, port, shared_extensions, launch,
+                                       disable_workspace_trust)
+        finally:
+            try:
+                (profile / "opening.json").unlink()
+            except FileNotFoundError:
+                pass
+
+    def _open_reserved(self, name, profile, workspace, source, port, shared_extensions, launch, disable_workspace_trust):
+        """锁外：名字和端口已由 opening.json 预留。"""
+        workspace.mkdir(parents=True, exist_ok=True, mode=0o700)
+        extensions = self.link_extensions(profile, Path(shared_extensions) if shared_extensions else self.root / "extensions-shared")
+        runtime = self.prepare_runtime(profile, source)
+        config = self.write_mcp_config(profile, Path(runtime["path"]))
+        settings = self.write_settings(profile, name, port, config)
+        env = self.child_env(profile, name, config)
+        write_json_atomic(profile / "session.json", {"name": name, "port": port, "profile": str(profile),
+            "runtime": runtime, "mcpConfig": str(config), "extensions": extensions,
+            "workspace": str(workspace.resolve()), "openedAt": time.strftime("%Y-%m-%dT%H:%M:%S%z")})
+        argv = self.launch(profile, workspace, env, disable_workspace_trust) if launch else None
         installed = any((profile / "extensions").glob("lzhs1995.stata-workbench-next-*"))
         return {"verdict": "LAUNCHED" if launch else "PREPARED", "launchCount": int(bool(launch)), "name": name,
                 "port": port, "profile": str(profile), "runtime": runtime, "mcpConfig": str(config), "settings": str(settings),

@@ -148,6 +148,73 @@ class OpenTests(Base):
         self.running.pop("p3")
         self.assertEqual(s.open("p6", runtime_source=self.source, launch=False)["verdict"], "PREPARED")
 
+    def test_concurrent_opens_launch_outside_the_lock_with_distinct_ports(self):
+        """M8：启动（open -a、焦点门禁）期间不拿 stata-session.lock；三个并发 open 都成功、端口各不相同。"""
+        import threading
+        gate, entered, probes = threading.Event(), [], []
+        def slow_launch(profile, workspace, env, disable_workspace_trust=False):
+            try:
+                with ss.host.file_lock(self.root / "locks" / "stata-session.lock", timeout=0):
+                    probes.append("free")
+            except Exception as exc:
+                probes.append(repr(exc))
+            entered.append(profile.name)
+            gate.wait(20)
+            return ["fake-launch", profile.name]
+        s = self.sessions()
+        s.launch = slow_launch
+        results, errors = {}, []
+        def go(name):
+            try:
+                results[name] = s.open(name, runtime_source=self.source)
+            except Exception as exc:
+                errors.append(repr(exc))
+        threads = [threading.Thread(target=go, args=(n,)) for n in ("c1", "c2", "c3")]
+        for t in threads:
+            t.start()
+        deadline = __import__("time").monotonic() + 15
+        while len(entered) < 3 and __import__("time").monotonic() < deadline:
+            __import__("time").sleep(0.05)
+        self.assertEqual(sorted(entered), ["c1", "c2", "c3"], "all three opens reach launch at the same time")
+        gate.set()
+        for t in threads:
+            t.join(20)
+        self.assertEqual(errors, [])
+        self.assertEqual(probes, ["free"] * 3, "the open lock is not held while VS Code launches")
+        self.assertEqual(len({r["port"] for r in results.values()}), 3)
+        self.assertFalse(any((self.root / "profiles" / n / "opening.json").exists() for n in ("c1", "c2", "c3")))
+
+    def test_in_flight_open_counts_toward_the_limit_and_reserves_its_port(self):
+        """预留件在启动完成前就算一个活会话，并占住端口；陈旧预留（进程已死或超时）不算。"""
+        for n in range(4):
+            write_record(self.root, f"s{n}", 17610 + n, f"r{n}")
+        s = self.sessions(alive=lambda pid: pid != 999999)
+        p = self.root / "profiles" / "busy"
+        p.mkdir(parents=True)
+        ss.write_json_atomic(p / "opening.json", {"pid": os.getpid(), "at": s.now(), "port": 17601})
+        with self.assertRaisesRegex(ss.SessionError, "SESSION_LIMIT"):
+            s.open("p1", runtime_source=self.source, launch=False)
+        with self.assertRaisesRegex(ss.SessionError, "SESSION_ALREADY_OPEN"):
+            s.open("busy", runtime_source=self.source, launch=False)
+        (self.root / "sessions" / "s3.json").unlink()
+        self.assertEqual(s.open("p1", runtime_source=self.source, launch=False)["port"], 17602)
+        ss.write_json_atomic(p / "opening.json", {"pid": 999999, "at": s.now(), "port": 17601})
+        self.assertIsNone(s.reservation("busy"))
+        ss.write_json_atomic(p / "opening.json", {"pid": os.getpid(), "at": s.now() - ss.OPEN_RESERVATION_TTL - 1, "port": 17601})
+        self.assertIsNone(s.reservation("busy"))
+
+    def test_failed_open_releases_its_reservation(self):
+        s = self.sessions()
+        def broken(profile, source):
+            raise ss.SessionError("RUNTIME_COPY_FAILED: test")
+        s.prepare_runtime = broken
+        with self.assertRaisesRegex(ss.SessionError, "RUNTIME_COPY_FAILED"):
+            s.open("f1", runtime_source=self.source, launch=False)
+        self.assertFalse((self.root / "profiles" / "f1" / "opening.json").exists())
+        self.assertNotIn("f1", s.active())
+        ok = self.sessions()
+        self.assertEqual(ok.open("f2", runtime_source=self.source, launch=False)["port"], 17601, "port freed")
+
     def test_live_registry_records_count_toward_the_limit(self):
         for n in range(5):
             write_record(self.root, f"s{n}", 17610 + n, f"r{n}")
