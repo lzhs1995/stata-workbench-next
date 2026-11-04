@@ -139,8 +139,8 @@
       "bytes": 11107
     },
     "dist/extension.js": {
-      "sha256": "63111edcf4cd9bcf31ea07b83605eaf5f4c5f7beae524afad56cc7e560815029",
-      "bytes": 5653510
+      "sha256": "6698b837d9260d2deee8bd59a69cdfabfdf4aea442844e55482ba61ef20d423a",
+      "bytes": 5653569
     },
     "scripts/mac/png_compat_transform.js": {
       "sha256": "cdea12886a1d5bb5b4c2b3e38829de1c7e68ed70e7777e8d6e2eb02bb0ce3514",
@@ -343,7 +343,7 @@
       "bytes": 4729
     },
     "tools/verified_workbench.py": {
-      "sha256": "106c14fc6d628f8362e7617ad7a801e9b48efcda7130d6c3d81b4cbf946121ac",
+      "sha256": "b132260490fddbcd9d52fb9b4238460a7af3df2d4aece3ce69b4591398893501",
       "bytes": 21973
     },
     "tools/workbench_platform.py": {
@@ -435,8 +435,8 @@
       "bytes": 17013
     },
     "scripts/stata_timing_patch.js": {
-      "sha256": "4d7823ecd84445caaa15e5625a323002c2aabc5e9538f81970016e4564d8f2b5",
-      "bytes": 10778
+      "sha256": "8038fcd9cb91f5be6f20c2a451b343a3b99e1eafa5569365499a445c196b2a45",
+      "bytes": 13520
     }
   },
   "acceptanceStatus": "PENDING_LICENSED_MAC_FULL_ACCEPTANCE",

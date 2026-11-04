@@ -195,20 +195,64 @@ print("GUARD_OK", r1, r2, log_call("t", 1))
     fs.writeFileSync(path.join(dir, "g.py"), prog);
     const g = cp.spawnSync(pyGuard, [path.join(dir, "g.py")], { env: { ...process.env, STATA_WORKBENCH_TIMING_FILE: path.join(dir, "t.jsonl") }, encoding: "utf8" });
     ok(g.status === 0 && /GUARD_OK None None 1/.test(g.stdout), "python guards: " + (g.stderr || g.stdout).slice(-200));
-    // The CLI works on a copy only when asked: dry run writes nothing; --write keeps CRLF and is idempotent.
-    const pkg = path.join(dir, "rt", "Lib", "site-packages", "mcp_stata");
+    // The tool never writes the runtime it reads: direct target, directory alias
+    // (symlink / junction) and linked .py files all stay byte-identical; only a
+    // new plain copy is instrumented.
+    const installed = path.join(dir, "installed");
+    const pkg = path.join(installed, "Lib", "site-packages", "mcp_stata");
     fs.mkdirSync(pkg, { recursive: true });
     for (const [c, name] of [["server", "server.py"], ["session", "sessions.py"], ["client", "stata_client.py"]]) {
       fs.writeFileSync(path.join(pkg, name), synthetic[c].replace(/\n/g, "\r\n"));
     }
-    const before = fs.readFileSync(path.join(pkg, "sessions.py"), "utf8");
-    const dry = timing.instrumentCopy(path.join(dir, "rt"));
-    ok(dry.ok && fs.readFileSync(path.join(pkg, "sessions.py"), "utf8") === before, "dry run writes nothing");
-    timing.instrumentCopy(path.join(dir, "rt"), { write: true });
-    const once = fs.readFileSync(path.join(pkg, "sessions.py"), "utf8");
-    timing.instrumentCopy(path.join(dir, "rt"), { write: true });
-    ok(once !== before && once.includes(timing.MARKER) && !/[^\r]\n/.test(once) && fs.readFileSync(path.join(pkg, "sessions.py"), "utf8") === once,
-      "--write instruments once, keeps CRLF");
+    fs.writeFileSync(path.join(pkg, "other.py"), "x = 1\n");
+    const snap = (root) => {
+      const out = {};
+      const walk = (d) => { for (const n of fs.readdirSync(d).sort()) { const f = path.join(d, n), st = fs.lstatSync(f);
+        if (st.isSymbolicLink()) out[path.relative(root, f)] = "link:" + fs.readlinkSync(f);
+        else if (st.isDirectory()) walk(f); else out[path.relative(root, f)] = fs.readFileSync(f).toString("base64"); } };
+      walk(root); return JSON.stringify(out);
+    };
+    const original = snap(installed);
+    const plainCopy = (o, label) => {
+      const d = timing.packageDir(o);
+      for (const name of ["server.py", "sessions.py", "stata_client.py", "other.py"]) {
+        const st = fs.lstatSync(path.join(d, name));
+        ok(st.isFile() && !st.isSymbolicLink() && st.nlink === 1, label + " " + name + " is a plain file");
+      }
+      const text = fs.readFileSync(path.join(d, "sessions.py"), "utf8");
+      ok(text.includes(timing.MARKER) && !/[^\r]\n/.test(text), label + " copy instrumented, CRLF kept");
+    };
+    const a = timing.instrumentCopy(installed, { out: path.join(dir, "outA") });
+    ok(a.ok && snap(installed) === original, "direct target: original unchanged");
+    plainCopy(path.join(dir, "outA"), "direct");
+    ok(timing.instrumentCopy(installed, { out: path.join(dir, "outA") }).status === "output-exists", "existing output refused");
+    ok(timing.instrumentCopy(installed, { out: path.join(pkg, "nested") }).status === "output-overlaps-source" && snap(installed) === original,
+      "output inside the source refused");
+    const again = timing.instrumentCopy(path.join(dir, "outA"), { out: path.join(dir, "outA2") });
+    ok(again.ok && Object.values(again.components).every((c) => !Object.values(c).includes("applied"))
+      && snap(path.join(dir, "outA")) === snap(path.join(dir, "outA2")), "re-instrumenting a copy is a no-op");
+    const alias = path.join(dir, "alias");
+    fs.symlinkSync(installed, alias, process.platform === "win32" ? "junction" : "dir");
+    const b = timing.instrumentCopy(alias, { out: path.join(dir, "outB") });
+    ok(b.ok && snap(installed) === original, "directory alias: original unchanged");
+    plainCopy(path.join(dir, "outB"), "alias");
+    const linked = path.join(dir, "linked", "Lib", "site-packages", "mcp_stata");
+    fs.mkdirSync(linked, { recursive: true });
+    fs.linkSync(path.join(pkg, "server.py"), path.join(linked, "server.py"));
+    let fileLink = true;
+    try { fs.symlinkSync(path.join(pkg, "sessions.py"), path.join(linked, "sessions.py"), "file"); }
+    catch { fileLink = false; fs.linkSync(path.join(pkg, "sessions.py"), path.join(linked, "sessions.py")); }
+    fs.copyFileSync(path.join(pkg, "stata_client.py"), path.join(linked, "stata_client.py"));
+    fs.copyFileSync(path.join(pkg, "other.py"), path.join(linked, "other.py"));
+    const linkedSnap = snap(path.join(dir, "linked"));
+    const c = timing.instrumentCopy(path.join(dir, "linked"), { out: path.join(dir, "outC") });
+    ok(c.ok && snap(installed) === original && snap(path.join(dir, "linked")) === linkedSnap,
+      "hardlinked" + (fileLink ? " and symlinked" : "") + " .py files: originals unchanged");
+    plainCopy(path.join(dir, "outC"), "linked");
+    const d = timing.instrumentCopy(installed);
+    ok(d.ok && (d.out.startsWith(fs.realpathSync(os.tmpdir())) || d.out.startsWith(os.tmpdir())), "default output is a fresh temp dir");
+    ok(snap(installed) === original, "default output: original unchanged");
+    fs.rmSync(path.dirname(d.out), { recursive: true, force: true });
     fs.rmSync(dir, { recursive: true, force: true });
   } else console.log("SKIP python guard checks: no python3 on PATH");
 

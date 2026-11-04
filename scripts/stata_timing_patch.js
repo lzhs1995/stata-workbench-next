@@ -3,15 +3,19 @@
 // runtime patch chain: mcp_stata_runtime_patch never loads it, so the patched
 // runtime bytes are the same with or without any environment variable.
 // The inserted lines would also break the next patchRuntime pass (the session
-// lifecycle check refuses blocks it does not know), so run this only on a
-// disposable copy of an already patched runtime, never on an installed one:
-//   node scripts/stata_timing_patch.js <runtime-copy-root> [--write]
-// Default is a dry run; --write rewrites the copy in place. There is no revert;
-// delete the copy. The instrumented copy writes one JSON line per milestone
-// between "worker spawned" and "log_path published" to the file named by
-// STATA_WORKBENCH_TIMING_FILE, and nothing while that variable is unset.
+// lifecycle check refuses blocks it does not know), so the tool never writes to
+// the runtime it is given. It reads that runtime, copies it into a new directory
+// that must not exist yet (regular files only: links are followed and copied as
+// content, so no file in the output shares an inode or a target with the source)
+// and instruments only that copy:
+//   node scripts/stata_timing_patch.js <source-runtime> [--out <new-dir>]
+// Without --out the copy goes to a fresh directory under the system temp dir.
+// There is no revert; delete the copy. The instrumented copy writes one JSON line
+// per milestone between "worker spawned" and "log_path published" to the file
+// named by STATA_WORKBENCH_TIMING_FILE, and nothing while that variable is unset.
 // Every inserted statement sits in its own try/except; the file writes are
-// synchronous, so timings taken with it include that I/O cost.
+// synchronous, so timings taken with it include that I/O cost. The fields are
+// the literal names below; this side has no per-event allowlist of its own.
 const MARKER = "Workbench W-P1 timing (diagnostic copy only; writes only when STATA_WORKBENCH_TIMING_FILE is set)";
 const ENV = "STATA_WORKBENCH_TIMING_FILE";
 
@@ -174,34 +178,89 @@ function packageDir(root) {
   return null;
 }
 
-function instrumentCopy(root, { write = false } = {}) {
+function inside(child, parent) {
+  const path = require("node:path");
+  const rel = path.relative(parent, child);
+  return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+}
+
+// Copies source into out as plain files and directories. Links (symlinks,
+// junctions) are followed; a directory reached twice through links is refused.
+function copyPlain(source, out, seen = new Set()) {
   const fs = require("node:fs");
   const path = require("node:path");
-  const dir = packageDir(root);
-  if (!dir) return { ok: false, status: "not-found", root };
-  const report = { ok: true, status: write ? "written" : "dry-run", dir, components: {} };
+  const real = fs.realpathSync(source);
+  if (seen.has(real)) throw new Error("link cycle at " + source);
+  seen.add(real);
+  fs.mkdirSync(out);
+  for (const name of fs.readdirSync(source)) {
+    const from = path.join(source, name), to = path.join(out, name);
+    const st = fs.statSync(from);
+    if (st.isDirectory()) copyPlain(from, to, seen);
+    else if (st.isFile()) {
+      fs.writeFileSync(to, fs.readFileSync(from), { flag: "wx", mode: st.mode & 0o777 });
+    }
+  }
+  seen.delete(real);
+}
+
+// Reads `source`, never writes it; returns the new instrumented copy.
+function instrumentCopy(source, { out } = {}) {
+  const fs = require("node:fs");
+  const os = require("node:os");
+  const path = require("node:path");
+  if (!source || !fs.existsSync(source)) return { ok: false, status: "source-not-found", source };
+  const sourceReal = fs.realpathSync(source);
+  if (!packageDir(sourceReal)) return { ok: false, status: "not-a-runtime", source };
+  let target;
+  if (out) {
+    target = path.resolve(out);
+    if (fs.existsSync(target)) return { ok: false, status: "output-exists", out: target };
+    const parentReal = fs.realpathSync(path.dirname(target));
+    const targetReal = path.join(parentReal, path.basename(target));
+    if (inside(targetReal, sourceReal) || inside(sourceReal, targetReal)) {
+      return { ok: false, status: "output-overlaps-source", out: target };
+    }
+  } else {
+    target = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "wp1-timing-runtime-")), "runtime");
+  }
+  copyPlain(sourceReal, target);
+  const dir = packageDir(target);
+  const targetReal = fs.realpathSync(target);
+  // Check every file to be rewritten before writing any of them.
+  const plan = [];
   for (const [component, name] of Object.entries(FILES)) {
     const file = path.join(dir, name);
+    const st = fs.lstatSync(file);
+    if (!st.isFile() || st.isSymbolicLink() || st.nlink !== 1 || !inside(fs.realpathSync(file), targetReal)) {
+      return { ok: false, status: "unsafe-output-file", file };
+    }
     const raw = fs.readFileSync(file, "utf8");
     const crlf = raw.includes("\r\n");
     const result = patchComponent(component, crlf ? raw.replace(/\r\n/g, "\n") : raw);
-    report.components[component] = result.status;
-    const out = crlf ? result.source.replace(/\n/g, "\r\n") : result.source;
-    if (write && out !== raw) fs.writeFileSync(file, out, "utf8");
+    plan.push({ component, file, raw, status: result.status,
+      text: crlf ? result.source.replace(/\n/g, "\r\n") : result.source });
+  }
+  const report = { ok: true, status: "written", source: sourceReal, out: target, dir, components: {} };
+  for (const item of plan) {
+    report.components[item.component] = item.status;
+    if (item.text !== item.raw) fs.writeFileSync(item.file, item.text, "utf8");
   }
   return report;
 }
 
 if (require.main === module) {
   const args = process.argv.slice(2);
-  const root = args.find((a) => !a.startsWith("--"));
-  if (!root) {
-    console.error("usage: node scripts/stata_timing_patch.js <runtime-copy-root> [--write]  (disposable copies only)");
+  const at = args.indexOf("--out");
+  const out = at >= 0 ? args[at + 1] : undefined;
+  const source = args.find((a, i) => !a.startsWith("--") && (at < 0 || i !== at + 1));
+  if (!source || (at >= 0 && !out)) {
+    console.error("usage: node scripts/stata_timing_patch.js <source-runtime> [--out <new-dir>]  (source is read only)");
     process.exit(2);
   }
-  const report = instrumentCopy(root, { write: args.includes("--write") });
+  const report = instrumentCopy(source, { out });
   console.log(JSON.stringify(report));
   process.exit(report.ok ? 0 : 1);
 }
 
-module.exports = { MARKER, ENV, HELPER, POINTS, WAIT_ORIGINAL, WAIT_TIMED, patchComponent, instrumentCopy };
+module.exports = { MARKER, ENV, HELPER, POINTS, WAIT_ORIGINAL, WAIT_TIMED, patchComponent, instrumentCopy, packageDir };

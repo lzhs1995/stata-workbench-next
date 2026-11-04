@@ -27,9 +27,10 @@ const HELPER_ANCHORS = [
 ];
 const HELPER = String.raw`
 ${MARKER}
-// Each event keeps only the fields listed for it, and only strings (cut to 80
-// characters), numbers, booleans and null: no options objects, user code, log
-// text or paths. Errors are reduced to their class and code (no message).
+// Field allowlist: each event keeps only the fields listed for it, and only
+// strings (cut to 80 characters), numbers, booleans and null; objects such as
+// Terminal options are dropped. Errors keep only their class and code, not the
+// message. The allowed values are not content-checked.
 var __codexWbT0 = Date.now();
 const __codexWbFields = {
   ext_terminal_enter: ["runId"], ext_terminal_warmup_start: ["runId"], ext_backend_warm_start: ["runId"],

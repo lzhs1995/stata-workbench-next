@@ -236,19 +236,23 @@ try {
       fs.rmSync(crlfRoot, { recursive: true, force: true });
     }
   }
-  // W-P1 timing (rc.7.80) stays outside this chain: a second full pass, with and
-  // without STATA_WORKBENCH_TIMING_FILE, leaves every runtime byte unchanged.
+  // W-P1 timing (rc.7.80) stays outside this chain: off -> on -> on -> off full
+  // passes (STATA_WORKBENCH_TIMING_FILE unset / set / unset) leave every runtime
+  // byte unchanged.
   {
     const snapshot = () => runtimeFiles.map(file => fs.readFileSync(file));
     const settled = snapshot();
-    const off = runtimePatch.patchRuntime(patchOptions);
-    assert.strictEqual(off.status, "already-applied", JSON.stringify(off));
     const saved = process.env.STATA_WORKBENCH_TIMING_FILE;
-    process.env.STATA_WORKBENCH_TIMING_FILE = path.join(root, "timing.jsonl");
     try {
-      const on = runtimePatch.patchRuntime({ ...patchOptions, env: { ...process.env } });
-      assert.strictEqual(on.status, "already-applied", JSON.stringify(on));
-      assert.ok(!("timing" in on));
+      delete process.env.STATA_WORKBENCH_TIMING_FILE;  // off, whatever the caller inherited
+      const off = runtimePatch.patchRuntime(patchOptions);
+      assert.strictEqual(off.status, "already-applied", JSON.stringify(off));
+      process.env.STATA_WORKBENCH_TIMING_FILE = path.join(root, "timing.jsonl");
+      for (const on of [runtimePatch.patchRuntime({ ...patchOptions, env: { ...process.env } }), runtimePatch.patchRuntime(patchOptions)]) {
+        assert.strictEqual(on.status, "already-applied", JSON.stringify(on));
+        assert.ok(!("timing" in on));
+      }
+      delete process.env.STATA_WORKBENCH_TIMING_FILE;
       const offAgain = runtimePatch.patchRuntime(patchOptions);
       assert.strictEqual(offAgain.status, "already-applied", JSON.stringify(offAgain));
     } finally {
