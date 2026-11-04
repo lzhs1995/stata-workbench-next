@@ -76,7 +76,8 @@ function harness(source, script = {}) {
   async function drive(promise) {
     let done = false, value, error;
     promise.then((v) => { done = true; value = v; }, (e) => { done = true; error = e; });
-    for (let i = 0; i < 200000 && !done; i++) {
+    const until = now + 7_200_000; // a run that never settles stops after 2 h of fake clock
+    for (let i = 0; i < 200000 && !done && now < until; i++) {
       for (let k = 0; k < 8; k++) await new Promise((r) => setImmediate(r));
       if (done) break;
       let next = null;
