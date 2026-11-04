@@ -61,6 +61,58 @@ class SharedClientTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "identity"):
             client.wait_ready(d, 10, observe=lambda _: dict(busy, identityOk=False), clock=lambda: 0, sleep=sleep)
 
+    def _stata_error_run(self, directory, mutate_body=None, mutate_after=None, log_text=None):
+        """rc.7.85：扩展回 outcome=STATA_ERROR；日志用 Mac 实测的真实 per-run log（regress nosuchvar_v3a）。"""
+        fixture = Path(__file__).resolve().parents[1] / "scripts" / "fixtures" / "stata-error-logs" / "agent-regress-r111.txt"
+        log = Path(directory) / "mcp_stata_real.log"
+        log.write_text(log_text if log_text is not None else fixture.read_text(encoding="utf-8"), encoding="utf-8")
+        body = {"ok": False, "outcome": "STATA_ERROR", "executed": True, "stataRc": 111, "payloadMayHaveRun": True,
+                "error": "no variables defined", "runId": "new", "requestId": "req-new", "logPath": str(log),
+                "lifecycle": {"requestId": "req-new", "runId": "new", "sourceMode": "agent", "phase": "failed", "rc": 111}}
+        after = state("new")
+        after["status"]["lastCompletedRun"].update(rc=111, phase="failed", completionMarkerVerified=False)
+        if mutate_body:
+            mutate_body(body)
+        if mutate_after:
+            mutate_after(after)
+        post = Mock(return_value=(500, body))
+        result = client.execute_once(SimpleNamespace(w=SimpleNamespace(http_post=post)), {"code": "regress nosuchvar_v3a"},
+                                     Path(directory) / "receipt", observe=Mock(side_effect=[state(), after]))
+        self.assertEqual((result["postCount"], post.call_count), (1, 1))
+        return result
+
+    def test_confirmed_stata_error_is_its_own_verdict_and_never_retried(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = self._stata_error_run(directory)
+            self.assertEqual(result["verdict"], "STATA_ERROR_CONFIRMED", result.get("stataErrorChecks"))
+            self.assertEqual(result["stataRc"], 111)
+            self.assertTrue((Path(directory) / "receipt" / "run.log").is_file())
+
+    def test_stata_error_outcome_that_does_not_check_out_stays_unconfirmed(self):
+        cases = {
+            "completed rc differs": dict(mutate_after=lambda a: a["status"]["lastCompletedRun"].update(rc=198)),
+            "another request": dict(mutate_after=lambda a: a["status"]["lastCompletedRun"].update(requestId="req-other")),
+            "log rc differs": dict(mutate_body=lambda b: b.update(stataRc=198),
+                                   mutate_after=lambda a: a["status"]["lastCompletedRun"].update(rc=198)),
+            "no r(n) line": dict(log_text=". regress nosuchvar_v3a\n{err}no variables defined\n"),
+            "missing log": dict(mutate_body=lambda b: b.update(logPath="/nonexistent/mcp_stata_x.log")),
+            "payload may have run dropped": dict(mutate_body=lambda b: b.update(payloadMayHaveRun=False)),
+        }
+        for name, kwargs in cases.items():
+            with self.subTest(name), tempfile.TemporaryDirectory() as directory:
+                result = self._stata_error_run(directory, **kwargs)
+                self.assertEqual(result["verdict"], "EXECUTION_UNCONFIRMED_NO_RETRY", name)
+                self.assertNotIn("stataRc", result)
+
+    def test_stata_error_with_printed_client_marker_stays_unconfirmed(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(client.uuid, "uuid4") as uid:
+            uid.return_value = SimpleNamespace(hex="feedface")
+            fixture = Path(__file__).resolve().parents[1] / "scripts" / "fixtures" / "stata-error-logs" / "agent-regress-r111.txt"
+            text = fixture.read_text(encoding="utf-8") + "{res}{txt}___VERIFIED_CLIENT_feedface___\n"
+            result = self._stata_error_run(directory, log_text=text)
+            self.assertEqual(result["verdict"], "EXECUTION_UNCONFIRMED_NO_RETRY")
+            self.assertFalse(result["stataErrorChecks"]["clientMarkerNotPrinted"])
+
     def test_failed_http_envelope_retains_run_identity_without_accepting_or_retrying(self):
         with tempfile.TemporaryDirectory() as directory:
             inner = {"ok": False, "runId": "new", "requestId": "req-new", "rc": 101}

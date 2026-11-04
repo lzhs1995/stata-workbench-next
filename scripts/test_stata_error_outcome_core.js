@@ -1,9 +1,13 @@
 "use strict";
 // rc.7.85 core: a Stata error is confirmed only when every check holds.
-// The r(n); line formats below are not yet checked against a real mcp-stata log
-// (V3-A step 5 was not run); see V3-A-REPORT.md before wiring this into the bundle.
+// fixtures/stata-error-logs/ are real mcp-stata 1.26.1 per-run logs from the
+// Mac live run (V3-A, 2026-11-04 13:39): Terminal `display nosuchvar_v3a`,
+// agent `regress nosuchvar_v3a`, and an agent `display 3+3` that succeeded.
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const core = require("./stata_error_outcome_core");
+const fixture = (name) => fs.readFileSync(path.join(__dirname, "fixtures", "stata-error-logs", name), "utf8");
 
 const RUN = "run_m5_1";
 const LOG = "/tmp/mcp_stata_m5.log";
@@ -29,6 +33,22 @@ ok("plain r(111); after the error text is confirmed", () => {
 ok("SMCL-prefixed and {search r(n)} forms parse", () => {
   assert.equal(core.lastReturnCode("{err}variable x not found\n{txt}r(111);\n").rc, 111);
   assert.equal(core.lastReturnCode("{err}x\n{search r(111), local:r(111);}\n").rc, 111);
+});
+ok("real Terminal and agent error logs are confirmed as rc 111", () => {
+  for (const [name, runId] of [["terminal-display-r111.txt", "debug_terminal_1793770744628_p7yag0qsj1b"],
+    ["agent-regress-r111.txt", "run_mw1oskrn_4bzth2dm"]]) {
+    const r = check((i) => {
+      i.runId = runId; i.lifecycle.runId = runId; i.logText = fixture(name);
+      i.completionMarker = "___CODEX_RUN_DONE_" + runId + "___";
+    });
+    assert.deepEqual([name, r.confirmed, r.stataRc, r.reasons], [name, true, 111, []]);
+  }
+});
+ok("an echoed marker command does not count; a printed marker does", () => {
+  const good = fixture("agent-display-ok.txt");
+  assert.equal(core.markerPrinted(good, "___CODEX_RUN_DONE_run_mw1ossm8_pwud0vvd___"), true);
+  assert.equal(core.markerPrinted(fixture("agent-regress-r111.txt"), "___CODEX_RUN_DONE_run_mw1oskrn_4bzth2dm___"), false);
+  assert.equal(core.lastReturnCode(good).rc, null);
 });
 ok("r(n) in another run's log is not confirmed", () => {
   const r = check((i) => { i.lifecycle = { runId: "run_other", logPath: LOG }; });

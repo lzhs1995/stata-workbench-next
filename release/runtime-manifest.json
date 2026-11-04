@@ -27,8 +27,8 @@
       "bytes": 17618
     },
     "scripts/patch_manager.js": {
-      "sha256": "d0c8b3ed0663a2d09dca597bbe8c7c6c54bae2772ae36efbcf65c32b25b81d4d",
-      "bytes": 95333
+      "sha256": "42ef6070aa3427eeac967916733cd3157eb63f3b20d6c6cfb94677a6a79b4c50",
+      "bytes": 95765
     },
     "scripts/mcp_stata_runtime_patch.js": {
       "sha256": "64013014e8598af5c7f70a276cd80a2f5c21d218eaa6fba59f079096c8f75ac9",
@@ -111,8 +111,8 @@
       "bytes": 5178
     },
     "scripts/apply_rc7_shared_execution_patch.js": {
-      "sha256": "743d1b4729e9498d944cc446c6ea1300b0da987f0f0084773b8c0029cd52024d",
-      "bytes": 340083
+      "sha256": "b5930a47a2f41558fd309a7e4c79666cb250eacc68d163656bc5dab56f6d5025",
+      "bytes": 340332
     },
     "scripts/apply_rc64_routes_patch.js": {
       "sha256": "b01e1225f5844b632e24d616957fb9e565541345a10d6f4fbc640a4b034070b2",
@@ -139,8 +139,8 @@
       "bytes": 11107
     },
     "dist/extension.js": {
-      "sha256": "0b8d733710c2e784669e995b94b58091672fea8c42ff717e0daaa1bbb0282e47",
-      "bytes": 5648468
+      "sha256": "f27bcbc474beedd5d2a35fb3335e7400ace1e2cdb4e02c5f6a8601ac23a00ab1",
+      "bytes": 5651734
     },
     "scripts/mac/png_compat_transform.js": {
       "sha256": "cdea12886a1d5bb5b4c2b3e38829de1c7e68ed70e7777e8d6e2eb02bb0ce3514",
@@ -335,15 +335,15 @@
       "bytes": 3225
     },
     "tools/shared_stata.py": {
-      "sha256": "8bb07f4b3301504afe5be87373d726eb4e4cfcfa254b0b3cb7269f78c53840f8",
-      "bytes": 17201
+      "sha256": "406789938765a7e5ea989c33b88ba32cbb6e799f099f99146cceb9d050303a3a",
+      "bytes": 20414
     },
     "tools/workbench_doctor.py": {
       "sha256": "547acffd98bcc6c6371c9a4c6767303760ed56832a646c5f959acc9ccc7e46fe",
       "bytes": 4729
     },
     "tools/verified_workbench.py": {
-      "sha256": "a4107f3f8c37e937d45abe67dfa423f19cf2c50b2eb487359fd31150e98f2f50",
+      "sha256": "e72a97a140f05dff3ba8276dc693663e2af4fb24dc1aeb9dd6c3c607fba4b3a9",
       "bytes": 21973
     },
     "tools/workbench_platform.py": {
@@ -433,6 +433,10 @@
     "scripts/guard_cancel_restore_core.js": {
       "sha256": "7efc929056497d016467231b82123e0ea902a8a018445fb409f4f24e58b3736a",
       "bytes": 17013
+    },
+    "scripts/stata_error_outcome_core.js": {
+      "sha256": "35a12996973d1339294ca57a03911d6782257061e7e3e9ec8645cea6b20452ee",
+      "bytes": 5256
     }
   },
   "acceptanceStatus": "PENDING_LICENSED_MAC_FULL_ACCEPTANCE",

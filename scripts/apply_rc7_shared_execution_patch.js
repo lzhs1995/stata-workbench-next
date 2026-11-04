@@ -3456,5 +3456,8 @@ text = require("./apply_guard_attribution_patch").patchBundle(text, { finalize: 
 // F fix6: Terminal input waits for Stata start-up (rc.7.72 warm-up) before its
 // pre-log budget, as agent runs already did (W-P1 entry gap).
 text = require("./apply_terminal_warmup_patch").patchBundle(text, { finalize: false });
+// V3 M5: a Stata error that ran to its r(n) line reports Stata's return code
+// (agent STATA_ERROR outcome, Terminal rc) instead of an unconfirmed failure.
+text = require("./apply_stata_error_outcome_patch").patchBundle(text, { finalize: false });
 fs.writeFileSync(target, text, "utf8");
 console.log(baseAlreadyApplied ? "RC7_SHARED_EXECUTION_UPDATED" : "RC7_SHARED_EXECUTION_APPLIED", target);

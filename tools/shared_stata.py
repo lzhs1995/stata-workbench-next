@@ -5,6 +5,7 @@ import hashlib
 import json
 import math
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -157,6 +158,43 @@ def completion_checks(request, http, body, before, after):
     }
 
 
+STATA_RC_LINE = re.compile(r"^(?:\{[a-z]+\})*(?:r\((\d+)\);|\{search r\((\d+)\)(?:,[^}]*)?\})$")
+
+
+def stata_error_checks(http, body, before, after, marker):
+    """rc.7.85：扩展回 outcome=STATA_ERROR 时，核对它确实是本次请求、Stata 跑到了 r(n) 并停下。
+
+    只在全部为真时判 STATA_ERROR_CONFIRMED；否则仍是 EXECUTION_UNCONFIRMED_NO_RETRY。
+    log 里客户端 marker 只能作为回显的命令出现（`. display …`），不能作为输出行出现。"""
+    body = body if isinstance(body, dict) else {}
+    s = after.get("status") or {}
+    completed = s.get("lastCompletedRun") or {}
+    lifecycle = body.get("lifecycle") or {}
+    rc, rid, request_id = body.get("stataRc"), body.get("runId"), body.get("requestId")
+    path = Path(body.get("logPath") or "")
+    lines = []
+    if path.is_file():
+        lines = [line.strip() for line in path.read_text(encoding="utf-8", errors="replace").splitlines()]
+    log_rcs = [int(m.group(1) or m.group(2)) for m in map(STATA_RC_LINE.match, lines) if m]
+    return {
+        "http500": type(http) is int and http == 500,
+        "outcomeStataError": body.get("outcome") == "STATA_ERROR" and body.get("executed") is True,
+        "payloadMayHaveRun": body.get("payloadMayHaveRun") is True,
+        "stataRcPositive": type(rc) is int and rc > 0,
+        "requestBound": isinstance(request_id, str) and bool(request_id)
+            and lifecycle.get("requestId") == request_id and completed.get("requestId") == request_id
+            and request_id != (before["status"].get("lastCompletedRun") or {}).get("requestId"),
+        "completedRunBound": isinstance(rid, str) and bool(rid) and completed.get("runId") == rid
+            and lifecycle.get("runId") == rid and lifecycle.get("sourceMode") == "agent",
+        "completedRcMatches": completed.get("rc") == rc and completed.get("phase") == "failed",
+        "logRcMatches": bool(log_rcs) and log_rcs[-1] == rc,
+        "clientMarkerNotPrinted": bool(lines) and not any(line.endswith("}" + marker) or line == marker for line in lines),
+        "sameStataBackend": _valid_backend_pids(before["status"].get("ownedBackendPids"))
+            and before["status"]["ownedBackendPids"] == s.get("ownedBackendPids"),
+        "readyAfter": ready(after),
+    }
+
+
 def execute_once(d, request, receipt, timeout=3600, observe=entry.observe, sleep=time.sleep, source_path=None):
     receipt = Path(receipt)
     receipt.mkdir(mode=0o700, parents=True, exist_ok=False)
@@ -201,8 +239,9 @@ def execute_once(d, request, receipt, timeout=3600, observe=entry.observe, sleep
         write_once(receipt / "response-diagnostics.json", result["responseDiagnostics"])
         after = look()
         # Only observe completion settlement. Never repeat the POST.
+        stata_error = isinstance(body, dict) and body.get("outcome") == "STATA_ERROR"
         for _ in range(30):
-            if ready(after) or http != 200 or after.get("windowObservation", {}).get("ok") is not True:
+            if ready(after) or (http != 200 and not stata_error) or after.get("windowObservation", {}).get("ok") is not True:
                 break
             sleep(1)
             after = look()
@@ -227,6 +266,16 @@ def execute_once(d, request, receipt, timeout=3600, observe=entry.observe, sleep
             result["log"] = {"originalPath": str(path), "sha256": hashlib.sha256(log).hexdigest(), "bytes": len(log)}
             result["verdict"] = "PASS_VISIBLE_SHARED_RUN"
             result["note"] = "Legacy verdict certifies execution/identity, not simultaneous source/Terminal visibility."
+        elif isinstance(body, dict) and body.get("outcome") == "STATA_ERROR":
+            errors = stata_error_checks(http, body, before, after, marker)
+            result["stataErrorChecks"] = errors
+            if all(errors.values()):
+                log = Path(body["logPath"]).read_bytes()
+                write_once(receipt / "run.log", log)
+                result["log"] = {"originalPath": body["logPath"], "sha256": hashlib.sha256(log).hexdigest(), "bytes": len(log)}
+                result["verdict"] = "STATA_ERROR_CONFIRMED"
+                result["stataRc"] = body["stataRc"]
+                result["note"] = "Stata ran the code and stopped with this return code; nothing is retried."
     except Exception as exc:
         result["error"] = repr(exc)
         result["windowObservation"] = getattr(exc, "observation", None)
@@ -328,6 +377,7 @@ def main():
                       "requestId": diagnostics["fields"].get("requestId"),
                       "responseDiagnostics": diagnostics, "receipt": str(receipt),
                       "error": result["error"], "failedChecks": result.get("failedChecks"),
+                      "stataRc": result.get("stataRc"), "stataErrorChecks": result.get("stataErrorChecks"),
                       "windowObservation": result.get("windowObservation")}, ensure_ascii=False))
     return 0 if result["verdict"] == "PASS_VISIBLE_SHARED_RUN" else 2
 

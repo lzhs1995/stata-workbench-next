@@ -11,7 +11,11 @@
 // else stays unconfirmed, so the existing UNKNOWN/payloadMayHaveRun handling
 // is unchanged. Pure function; the bundle passes in the log tail it read.
 
-// Lines as mcp-stata writes them to the per-run log (plain text or SMCL).
+// Lines as mcp-stata 1.26.1 writes them to the per-run log, checked on Mac
+// 2026-11-04 (scripts/fixtures/stata-error-logs/): the error line is
+// `{txt}{search r(111), local:r(111);}`, written twice, and every command,
+// including the bridge's appended marker and mcp-stata's closing
+// `scalar _wb_rc_<id> = _rc`, is echoed as `{com}. <command>`.
 const SMCL_PREFIX = /^\{(?:res|txt|com|err|inp|error|text|result|input)\}/i;
 const RC_PLAIN = /^r\((\d+)\);$/;
 const RC_SEARCH = /^\{search r\((\d+)\)(?:,[^}]*)?\}$/i;
@@ -22,19 +26,31 @@ function stripSmcl(line) {
   return value;
 }
 
-// Return code of the last r(n); line, and whether anything but blank lines
-// follows it (a later command ran, so it is not the run's final error).
+// An echoed command (`. cmd`, `{com}. cmd`, a bare `.` prompt) is input, not output.
+function isEcho(line) {
+  return line === "." || line.startsWith(". ");
+}
+
+// Return code of the last r(n) line, and whether real output follows it
+// (a later command printed something, so it is not the run's final error).
+// Echoed commands and blank lines after it do not count.
 function lastReturnCode(text) {
-  const lines = String(text || "").split(/\r?\n/);
+  const lines = String(text || "").split(/\r?\n/).map(stripSmcl);
   let rc = null, at = -1;
-  lines.forEach((raw, index) => {
-    const line = stripSmcl(raw);
+  lines.forEach((line, index) => {
     const match = line.match(RC_PLAIN) || line.match(RC_SEARCH);
     if (match) { rc = Number(match[1]); at = index; }
   });
   if (at < 0 || !Number.isSafeInteger(rc)) return { rc: null, trailing: false };
-  const trailing = lines.slice(at + 1).some((raw) => stripSmcl(raw) !== "");
+  const trailing = lines.slice(at + 1).some((line) => line !== "" && !isEcho(line));
   return { rc, trailing };
+}
+
+// The completion marker as printed output (exact line), not as the echoed
+// `display` command that never ran.
+function markerPrinted(text, marker) {
+  if (!marker) return false;
+  return String(text || "").split(/\r?\n/).map(stripSmcl).some((line) => line === marker);
 }
 
 function positiveInt(value) {
@@ -69,7 +85,7 @@ function classify(input = {}) {
     reasons.push("log-not-bound-to-run");
   }
   if (typeof input.logText !== "string" || input.logText.length === 0) reasons.push("log-missing");
-  if (input.completionMarker && String(input.logText || "").includes(input.completionMarker)) reasons.push("completion-marker-present");
+  if (markerPrinted(input.logText, input.completionMarker)) reasons.push("completion-marker-present");
   const fromLog = lastReturnCode(input.logText);
   const mcpRc = result ? mcpReturnCode(result) : null;
   if (fromLog.rc === null) reasons.push("no-rc-line");
@@ -83,4 +99,4 @@ function classify(input = {}) {
     : { confirmed: false, stataRc: null, mcpRc, logRc: fromLog.rc, reasons: unique };
 }
 
-module.exports = { classify, lastReturnCode, stripSmcl, mcpReturnCode };
+module.exports = { classify, lastReturnCode, markerPrinted, stripSmcl, mcpReturnCode };
