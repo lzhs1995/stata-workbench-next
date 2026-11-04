@@ -16,18 +16,21 @@ assert.equal(patch.patchBundle(dist, { finalize: false }), dist, "idempotent on 
 const reverted = patch.revertBundle(dist);
 assert.ok(!reverted.includes(patch.MARKER) && !reverted.includes("__codexStopDuringStartSkipsQuiescence"), "revert removes the layer");
 assert.equal(patch.patchBundle(reverted), dist, "revert then patch is byte-exact");
+// Sits after the last earlier helper (rc.7.80 when present), so their anchor+HELPER replays stay unique.
+assert.ok(patch.HELPER_ANCHORS.some((a) => dist.split(a + patch.HELPER).length - 1 === 1), "after the last earlier helper");
 // The soft Stop branch still asks the global predicate (rc.7.72 call site unchanged).
 assert.equal(dist.split(warm.STOP_AFTER).length - 1, 1, "soft Stop call site intact");
 
 function predicate(source) {
   const from = source.indexOf(warm.HELPER.trim().split("\n")[0]);
-  const end = source.includes(patch.MARKER) ? source.indexOf(patch.HELPER) + patch.HELPER.length
-    : source.indexOf(patch.HELPER_ANCHOR) + patch.HELPER_ANCHOR.length;
+  // Only the rc.7.72 helper (marker through its global assignment) plus, when present, rc.7.83.
+  const warmEnd = "globalThis.__codexWarmupSkipsQuiescence = __codexWarmupSkipsQuiescence;\n";
+  const end = source.indexOf(warmEnd, from) + warmEnd.length;
   assert.ok(from >= 0 && end > from, "helper slice found");
   const ctx = { __codexBackendWarmup: null, __codexWarmTransport: null, zg: {}, process, setTimeout, clearTimeout, Promise };
   ctx.globalThis = ctx;
   vm.createContext(ctx);
-  vm.runInContext(source.slice(from, end), ctx);
+  vm.runInContext(source.slice(from, end) + (source.includes(patch.MARKER) ? patch.HELPER : ""), ctx);
   return (state) => {
     ctx.__codexBackendWarmup = state.warm || null;
     ctx.__codexBackendStartSummary = () => ({ connected: null, current: state.start || null, lastCold: null });
@@ -51,4 +54,4 @@ for (const [name, state, want] of cases) assert.equal(after(state), want, name);
 // Negative control: without rc.7.83 the M3 case still probed (the bug).
 assert.equal(before(cases[0][1]), false, "negative control: rc.7.72 alone probes during backend start");
 assert.equal(before(cases[2][1]), true, "negative control keeps rc.7.72 behaviour");
-console.log(`STOP_DURING_BACKEND_START_OK checks=${cases.length + 7}`);
+console.log(`STOP_DURING_BACKEND_START_OK checks=${cases.length + 8}`);

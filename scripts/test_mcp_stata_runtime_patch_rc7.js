@@ -236,6 +236,33 @@ try {
       fs.rmSync(crlfRoot, { recursive: true, force: true });
     }
   }
+  // W-P1 timing (rc.7.80) stays outside this chain: off -> on -> on -> off full
+  // passes (STATA_WORKBENCH_TIMING_FILE unset / set / unset) leave every runtime
+  // byte unchanged.
+  {
+    const snapshot = () => runtimeFiles.map(file => fs.readFileSync(file));
+    const settled = snapshot();
+    const saved = process.env.STATA_WORKBENCH_TIMING_FILE;
+    try {
+      delete process.env.STATA_WORKBENCH_TIMING_FILE;  // off, whatever the caller inherited
+      const off = runtimePatch.patchRuntime(patchOptions);
+      assert.strictEqual(off.status, "already-applied", JSON.stringify(off));
+      process.env.STATA_WORKBENCH_TIMING_FILE = path.join(root, "timing.jsonl");
+      for (const on of [runtimePatch.patchRuntime({ ...patchOptions, env: { ...process.env } }), runtimePatch.patchRuntime(patchOptions)]) {
+        assert.strictEqual(on.status, "already-applied", JSON.stringify(on));
+        assert.ok(!("timing" in on));
+      }
+      delete process.env.STATA_WORKBENCH_TIMING_FILE;
+      const offAgain = runtimePatch.patchRuntime(patchOptions);
+      assert.strictEqual(offAgain.status, "already-applied", JSON.stringify(offAgain));
+    } finally {
+      if (saved === undefined) delete process.env.STATA_WORKBENCH_TIMING_FILE;
+      else process.env.STATA_WORKBENCH_TIMING_FILE = saved;
+    }
+    snapshot().forEach((bytes, i) => assert.ok(bytes.equals(settled[i]), runtimeFiles[i] + " unchanged by the timing variable"));
+    assert.ok(!runtimeFiles.some(file => fs.readFileSync(file, "utf8").includes("_wb_timing")));
+    assert.ok(!fs.existsSync(path.join(root, "timing.jsonl")));
+  }
   const firstBytes = fs.readFileSync(serverPath);
   assert.ok(firstBytes.toString("utf8").includes(runtimePatch.PATCH_MARKER));
   assert.ok(firstBytes.toString("utf8").includes("listener_task.get_loop()"));

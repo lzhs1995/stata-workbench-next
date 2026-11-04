@@ -26,6 +26,7 @@ const LATER = [
   "./apply_stop_feedback_truth_patch",
   "./apply_guard_attribution_patch",
   "./apply_terminal_warmup_patch",
+  "./apply_wp1_timing_patch",
   "./apply_stop_during_backend_start_patch",
 ];
 

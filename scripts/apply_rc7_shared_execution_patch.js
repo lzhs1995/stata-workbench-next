@@ -3456,6 +3456,8 @@ text = require("./apply_guard_attribution_patch").patchBundle(text, { finalize: 
 // F fix6: Terminal input waits for Stata start-up (rc.7.72 warm-up) before its
 // pre-log budget, as agent runs already did (W-P1 entry gap).
 text = require("./apply_terminal_warmup_patch").patchBundle(text, { finalize: false });
+// W-P1 diagnostics: timing lines for the first Terminal command (log-only).
+text = require("./apply_wp1_timing_patch").patchBundle(text, { finalize: false });
 // V3-S M3: a Stop while the backend is still starting skips the quiescence probe (no dispatch yet).
 text = require("./apply_stop_during_backend_start_patch").patchBundle(text, { finalize: false });
 fs.writeFileSync(target, text, "utf8");

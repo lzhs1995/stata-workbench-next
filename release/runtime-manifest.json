@@ -27,8 +27,8 @@
       "bytes": 17618
     },
     "scripts/patch_manager.js": {
-      "sha256": "41fa945e957b65dd8898f3741f93547dac92c836adc943d8cca2921771294c55",
-      "bytes": 95539
+      "sha256": "1838d904031fa70dec035adc18fbe1a5b87ea6e9fdd7890b11e766ceb2ea9249",
+      "bytes": 95744
     },
     "scripts/mcp_stata_runtime_patch.js": {
       "sha256": "64013014e8598af5c7f70a276cd80a2f5c21d218eaa6fba59f079096c8f75ac9",
@@ -111,8 +111,8 @@
       "bytes": 5178
     },
     "scripts/apply_rc7_shared_execution_patch.js": {
-      "sha256": "be2b8d060bc841583640256ad6ad0ab7d9cbfaffd549bbba0d9f2f50ec050053",
-      "bytes": 340282
+      "sha256": "50bf0745cdc237d8c6f20fff294a8032c81665b276e62ab8b275b39cfaee197c",
+      "bytes": 340442
     },
     "scripts/apply_rc64_routes_patch.js": {
       "sha256": "b01e1225f5844b632e24d616957fb9e565541345a10d6f4fbc640a4b034070b2",
@@ -139,8 +139,8 @@
       "bytes": 11107
     },
     "dist/extension.js": {
-      "sha256": "99500f28587adb512eea9e552e722f4433a664b417e6878735371f484f808992",
-      "bytes": 5649217
+      "sha256": "cc2d4dbae596de02e72e907ccc311aa0cf8bb31b8c1cb9278b43f85f9758d96c",
+      "bytes": 5654318
     },
     "scripts/mac/png_compat_transform.js": {
       "sha256": "cdea12886a1d5bb5b4c2b3e38829de1c7e68ed70e7777e8d6e2eb02bb0ce3514",
@@ -343,7 +343,7 @@
       "bytes": 4729
     },
     "tools/verified_workbench.py": {
-      "sha256": "35f346f7410ad29a041171f61cccea8ff2174ceb03f0596885b7b6223170d699",
+      "sha256": "ca09ae37a451824fdc9b16df68b374ccb8823ac7e8822a3e616dd766c979192d",
       "bytes": 21973
     },
     "tools/workbench_platform.py": {
@@ -433,6 +433,10 @@
     "scripts/guard_cancel_restore_core.js": {
       "sha256": "7efc929056497d016467231b82123e0ea902a8a018445fb409f4f24e58b3736a",
       "bytes": 17013
+    },
+    "scripts/stata_timing_patch.js": {
+      "sha256": "8038fcd9cb91f5be6f20c2a451b343a3b99e1eafa5569365499a445c196b2a45",
+      "bytes": 13520
     }
   },
   "acceptanceStatus": "PENDING_LICENSED_MAC_FULL_ACCEPTANCE",

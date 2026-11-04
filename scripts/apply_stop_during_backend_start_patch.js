@@ -14,8 +14,13 @@ const path = require("node:path");
 const fingerprint = require("./finalize_bundle_identity");
 const MARKER = "// codex patch rc.7.83: Stop during backend start-up skips the quiescence probe";
 
-// After the rc.7.79 helper, which owns the rc.7.72 assignment line as its own anchor.
-const HELPER_ANCHOR = "globalThis.__codexTerminalWarmup = __codexTerminalWarmup;\n";
+// rc.7.79 and rc.7.80 each insert their helper right after an earlier helper's last
+// line and re-find it as anchor+HELPER, so this one goes after the last of them:
+// the end of the rc.7.80 helper when present, else the end of the rc.7.79 helper.
+const HELPER_ANCHORS = [
+  "try { if (typeof globalThis.__codexEnsureBackendWarm === \"function\") globalThis.__codexEnsureBackendWarm = __codexWbTimedWarm(\"ext_backend_warm\", globalThis.__codexEnsureBackendWarm); } catch {}\n",
+  "globalThis.__codexTerminalWarmup = __codexTerminalWarmup;\n",
+];
 const HELPER = String.raw`${MARKER}
 // Keep the rc.7.72 rule by reference: rebinding the global below must not make it call itself.
 const __codexWarmupSkipsQuiescenceBase = __codexWarmupSkipsQuiescence;
@@ -37,21 +42,24 @@ function uniqueAt(source, needle) {
   return at;
 }
 
+function count(source, needle) { return source.split(needle).length - 1; }
+
 function patchBundle(source, options = {}) {
   if (source.includes(MARKER)) {
-    uniqueAt(source, HELPER_ANCHOR + HELPER);
+    uniqueAt(source, HELPER);
   } else {
     if (source.includes("__codexStopDuringStartSkipsQuiescence")) throw new Error("partial stop-during-backend-start patch");
-    uniqueAt(source, HELPER_ANCHOR);
-    source = source.replace(HELPER_ANCHOR, () => HELPER_ANCHOR + HELPER);
+    const anchor = HELPER_ANCHORS.find((a) => count(source, a) === 1);
+    if (!anchor) throw new Error("missing or ambiguous stop-during-backend-start anchor");
+    source = source.replace(anchor, () => anchor + HELPER);
   }
   return options.finalize === false ? source : fingerprint.finalize(source).text;
 }
 
 // Exact inverse, used by tests to rebuild earlier sealed bundles.
 function revertBundle(source) {
-  uniqueAt(source, HELPER_ANCHOR + HELPER);
-  return fingerprint.finalize(source.replace(HELPER_ANCHOR + HELPER, () => HELPER_ANCHOR)).text;
+  uniqueAt(source, HELPER);
+  return fingerprint.finalize(source.replace(HELPER, () => "")).text;
 }
 
 if (require.main === module) {
@@ -62,4 +70,4 @@ if (require.main === module) {
   console.log(JSON.stringify({ changed: before !== after, target, installed: false }));
 }
 
-module.exports = { patchBundle, revertBundle, MARKER, HELPER, HELPER_ANCHOR };
+module.exports = { patchBundle, revertBundle, MARKER, HELPER, HELPER_ANCHORS };
