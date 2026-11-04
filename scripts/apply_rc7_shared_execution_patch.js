@@ -3465,5 +3465,6 @@ text = require("./apply_worker_cpu_progress_patch").patchBundle(text, { finalize
 // PLAN-V3 stage 6: the warm cache follows the default worker (pid/created_at);
 // Terminal input restarts a worker that died while starting, once, without force reset.
 text = require("./apply_warm_worker_identity_patch").patchBundle(text, { finalize: false });
+text = require("./apply_agent_warmup_refusal_patch").patchBundle(text, { finalize: false });
 fs.writeFileSync(target, text, "utf8");
 console.log(baseAlreadyApplied ? "RC7_SHARED_EXECUTION_UPDATED" : "RC7_SHARED_EXECUTION_APPLIED", target);
