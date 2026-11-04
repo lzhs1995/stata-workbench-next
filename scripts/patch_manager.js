@@ -1491,6 +1491,11 @@ const REQUIRED_MARKERS = [
     label: "Terminal input waits for Stata start-up before its pre-log budget",
     marker: "codex patch rc.7.79: Terminal input waits for Stata start-up before its pre-log budget",
   },
+  {
+    key: "stopDuringBackendStart",
+    label: "Stop during backend start-up skips the quiescence probe",
+    marker: "codex patch rc.7.83: Stop during backend start-up skips the quiescence probe",
+  },
 ];
 
 const AUXILIARY_MARKERS = [
