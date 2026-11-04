@@ -27,8 +27,8 @@
       "bytes": 17618
     },
     "scripts/patch_manager.js": {
-      "sha256": "1e2618e7d404899bf4f05831eb9c0511440083c59c50ed28c33a93eda5403533",
-      "bytes": 96615
+      "sha256": "c0675d706933f42f8be265512afe2990c0c73e8b4311f370ce8d8a6ff94d3edb",
+      "bytes": 97094
     },
     "scripts/mcp_stata_runtime_patch.js": {
       "sha256": "81a6985043039bad22f7be8f9b94dbf271cf0476f79bef64077ec43f61785c5f",
@@ -111,8 +111,8 @@
       "bytes": 5178
     },
     "scripts/apply_rc7_shared_execution_patch.js": {
-      "sha256": "7c026269a744444396ca728150b1168ad38faa8125fa901c20e50f87b07dcaa2",
-      "bytes": 340867
+      "sha256": "eb144ddd4ee5cf8039743af80cb4e2e1fb79010335a638fbc6920f0bddf88036",
+      "bytes": 341222
     },
     "scripts/apply_rc64_routes_patch.js": {
       "sha256": "b01e1225f5844b632e24d616957fb9e565541345a10d6f4fbc640a4b034070b2",
@@ -139,8 +139,8 @@
       "bytes": 11107
     },
     "dist/extension.js": {
-      "sha256": "12daf0a81bca2fbd67704762c250fe0a317519d33cd8673167b55b652e055e41",
-      "bytes": 5658463
+      "sha256": "d87324edeae9333d0a5f71711f7dd4a0fd4ba824e8746020ac9386bcf8571faa",
+      "bytes": 5668526
     },
     "scripts/mac/png_compat_transform.js": {
       "sha256": "cdea12886a1d5bb5b4c2b3e38829de1c7e68ed70e7777e8d6e2eb02bb0ce3514",
@@ -335,15 +335,15 @@
       "bytes": 3225
     },
     "tools/shared_stata.py": {
-      "sha256": "5f1aaa608233c40701e955c205beeb7a4ac0784b0b9bc4efa1ef5e3be3c34cb8",
-      "bytes": 20610
+      "sha256": "45a1cc03f2ea85d38df6d2bbf2f41ef343a424b1b938d1a0a2f10035958383e2",
+      "bytes": 23489
     },
     "tools/workbench_doctor.py": {
       "sha256": "547acffd98bcc6c6371c9a4c6767303760ed56832a646c5f959acc9ccc7e46fe",
       "bytes": 4729
     },
     "tools/verified_workbench.py": {
-      "sha256": "77195b8122dd0fc0cce01656efb82a103517fd9cee69cd56afbcb24312daedb4",
+      "sha256": "e17f9c05879d3563d2fc72245517f6dd43dd3f486079d612bcf193615d3b693c",
       "bytes": 21973
     },
     "tools/workbench_platform.py": {

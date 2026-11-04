@@ -3462,6 +3462,10 @@ text = require("./apply_wp1_timing_patch").patchBundle(text, { finalize: false }
 text = require("./apply_stop_during_backend_start_patch").patchBundle(text, { finalize: false });
 // V3-W: worker CPU time counts as watchdog progress for IDLE (V3-M M4 / F-mac P5).
 text = require("./apply_worker_cpu_progress_patch").patchBundle(text, { finalize: false });
+// PLAN-V3 stage 6: the warm cache follows the default worker (pid/created_at);
+// Terminal input restarts a worker that died while starting, once, without force reset.
+text = require("./apply_warm_worker_identity_patch").patchBundle(text, { finalize: false });
+text = require("./apply_agent_warmup_refusal_patch").patchBundle(text, { finalize: false });
 // V3 M5: a Stata error that ran to its r(n) line reports Stata's return code
 // (agent STATA_ERROR outcome, Terminal rc) instead of an unconfirmed failure.
 text = require("./apply_stata_error_outcome_patch").patchBundle(text, { finalize: false });

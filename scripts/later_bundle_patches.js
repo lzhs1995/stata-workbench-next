@@ -29,6 +29,8 @@ const LATER = [
   "./apply_wp1_timing_patch",
   "./apply_stop_during_backend_start_patch",
   "./apply_worker_cpu_progress_patch",
+  "./apply_warm_worker_identity_patch",
+  "./apply_agent_warmup_refusal_patch",
   "./apply_stata_error_outcome_patch",
 ];
 
