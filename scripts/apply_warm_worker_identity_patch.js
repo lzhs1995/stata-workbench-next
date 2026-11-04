@@ -13,7 +13,9 @@
 // more probe records the worker; if it is not "running" (or the probe fails), that
 // READY is dropped and the run waits once more; a second miss refuses the run
 // (PRE_RUN_BACKEND_WARMUP_FAILED, nothing dispatched). Only a positively seen
-// worker marks the run confirmed. A Stop during any of this refuses it as CANCELLED.
+// worker marks the run confirmed. After every probe the current transport and the
+// warm cache must still be the connection the probe used; otherwise its answer is
+// treated as a miss. A Stop during any of this refuses it as CANCELLED.
 //
 // rc.7.79 refused Terminal input when the default worker died while starting
 // ("default Stata session is error"). Its text did not match the Terminal
@@ -42,7 +44,7 @@ globalThis.__codexWarmWorkerSummary = __codexWarmWorkerSummary;
 // null: this mcp-stata has no list_sessions, so rc.7.72 cannot wait either.
 async function __codexProbeDefaultWorker() {
   if (!zg?._transport || typeof zg?._callTool !== "function" || !(zg._availableTools?.has?.("list_sessions") === true)) return null;
-  const started = Date.now();
+  const started = Date.now(), used = zg._transport;
   let timer = null, seen;
   try {
     const call = (async () => zg._parseToolJson(await zg._callTool(await zg._ensureClient(), "list_sessions", {})))();
@@ -53,6 +55,9 @@ async function __codexProbeDefaultWorker() {
     seen = session ? { ok: true, status: String(session.status || ""), pid: session.pid ?? null, createdAt: session.created_at ?? null }
       : { ok: true, status: "missing", pid: null, createdAt: null };
   } catch (error) { seen = { ok: false, error: String(error?.message || error) }; } finally { if (timer) clearTimeout(timer); }
+  // The answer describes the connection the call started on. Callers compare it
+  // with the connection and warm cache after the await.
+  seen.transport = used;
   __codexWarmWorkerStats.lastProbe = { at: new Date().toISOString(), ms: Date.now() - started, ok: seen.ok };
   return seen;
 }
@@ -97,7 +102,9 @@ async function __codexEnsureBackendWarmWorker(runId, source) {
     if (stopped()) throw __codexWarmWorkerCancelled(id, source, "worker identity probe", started);
     if (seen) {
       const known = __codexWarmWorker && __codexWarmWorker.transport === transport ? __codexWarmWorker : null;
-      const changed = !seen.ok ? "probe failed: " + seen.error
+      const changed = seen.transport !== transport || (zg?._transport || null) !== transport || __codexWarmTransport !== transport
+        ? "transport changed during the probe"
+        : !seen.ok ? "probe failed: " + seen.error
         : seen.status !== "running" ? "status " + seen.status
         : known && known.pid != null && seen.pid != null && known.pid !== seen.pid ? "pid " + known.pid + " -> " + seen.pid
         : known && known.createdAt != null && seen.createdAt != null && known.createdAt !== seen.createdAt ? "created_at changed" : null;
@@ -127,14 +134,16 @@ async function __codexEnsureBackendWarmWorker(runId, source) {
     }
     const seen = await __codexProbeDefaultWorker();
     if (stopped()) throw __codexWarmWorkerCancelled(id, source, "worker identity record", started);
-    if (seen && seen.ok && seen.status === "running") {
+    const same = !!seen && seen.transport === warmed && (zg?._transport || null) === warmed && __codexWarmTransport === warmed;
+    if (same && seen.ok && seen.status === "running") {
       __codexWarmWorker = { transport: warmed, pid: seen.pid, createdAt: seen.createdAt };
       __codexWarmWorkerConfirmed = id != null ? { runId: id, transport: warmed, generation } : null;
       return result;
     }
     // READY was seen, but the worker right after it is starting/missing/error or
     // unknown: that READY no longer describes the worker a payload would reach.
-    const why = "after READY: " + (!seen ? "probe unavailable" : !seen.ok ? "probe failed: " + seen.error : "status " + seen.status);
+    const why = "after READY: " + (!seen ? "probe unavailable" : !same ? "transport changed during the probe"
+      : !seen.ok ? "probe failed: " + seen.error : "status " + seen.status);
     __codexWarmWorkerDrop(id, why);
     if (attempt > 0) throw __codexWarmWorkerChanged(id, source, why, started, seen && seen.ok ? seen.status : null);
   }
