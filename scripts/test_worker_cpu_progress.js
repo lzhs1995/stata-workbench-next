@@ -72,6 +72,15 @@ async function guardCases(G) {
   } }));
   // worker computes until 30 s then freezes (SIGSTOP): cancel = last sample known busy (24 s) + idle
   res.freeze = await run(G, 400000, (vc) => ({ cpuProbe: () => vc.delay(200).then(() => ({ cpuMs: Math.min(vc.now(), 30000), pids: [7], key: KEY })) }));
+  // codex v2 end-to-end: production sampleUnix over a fake ps whose only child is an old
+  // orphan (start = root - 1000 ms) burning CPU -> every sample null -> IDLE not extended
+  const OT0 = Math.floor(Date.now() / 1000) * 1000 - 600000;
+  let ocpu = 0;
+  const otable = () => [{ pid: 10, ppid: 5, time: "0:05.00", start: OT0 },
+    { pid: 30, ppid: 10, time: `${Math.floor(ocpu / 60)}:${String(ocpu % 60).padStart(2, "0")}.00`, start: OT0 - 1000 }];
+  res.orphan = await run(G, 400000, (vc) => ({ cpuProbe: () => { ocpu += 10;
+    return core.createOwnedTreeCpuProbe({ platform: "darwin", execFile: fakeExec(otable()).fn,
+      getRoot: () => ({ pid: 10, registeredAtMs: OT0 + 2000, hostPid: 5 }) })(); } }));
   res.prelogCalls = 0;
   res.prelog = await run(G, 400000, (vc) => ({ probe: () => ({}), cpuProbe: () => { res.prelogCalls++; return cpuAt(vc, 1)(); } }));
   return res;
@@ -96,6 +105,8 @@ function assertGuard(G, res) {
   ok(res.stale.r.state.cpuSampleErrors >= 1 && res.stale.r.state.cpuSamples >= 2, "stale: old request timed out, replacements observed");
   ok(res.late.r.state.stallReason === IDLE_ && res.late.ms === 60000, "R2: samples past their deadline give no credit (" + res.late.ms + ")");
   ok(!res.late.r.state.cpuProgressCount && res.late.r.state.cpuSamplesExpired >= 2, "R2: expired samples counted, never credited");
+  ok(res.orphan.r.state.stallReason === IDLE_ && res.orphan.ms === 60000 && !res.orphan.r.state.cpuProgressCount &&
+     res.orphan.r.state.cpuSamples >= 3, "R1v2: old orphan's CPU never extends IDLE (production sampleUnix)");
   ok(res.freeze.r.state.stallReason === IDLE_ && res.freeze.ms === 84000, "freeze: cancelled one idle window after the last sample known busy (" + res.freeze.ms + ")");
   ok(res.budget.r.state.stallReason === G.STALL.HARD_BUDGET && res.budget.ms === 30000, "HARD_BUDGET unchanged");
   ok(res.cap.r.state.stallReason === IDLE_ && res.cap.ms === 90000, "cap: CPU stops counting at maxSilent (" + res.cap.ms + ")");
@@ -185,6 +196,22 @@ async function probeCases() {
   ok(await core.createOwnedTreeCpuProbe({ platform: "darwin", execFile: fakeExec(good).fn, getRoot: () => null })() === null, "no root -> null");
   ok(await core.createOwnedTreeCpuProbe({ platform: "darwin", execFile: () => { throw new Error("spawn"); }, getRoot: () => root })() === null, "execFile throws -> null");
   ok(core.parseUnixRows("10 5 0:01.00 garbage\n") === null, "unparsable ps row -> null");
+  // codex v2: an old orphan born exactly 1 s before the root, ppid naming the reused root pid
+  const orphan = [good[0], { pid: 30, ppid: 10, time: "0:01.00", start: T0 - 1000 }];
+  ({ s } = await mac(orphan));
+  ok(s === null, "R1v2: child started 1000 ms before its parent (old orphan) -> null");
+  ({ s } = await mac(orphan.map((r) => r.pid === 30 ? { ...r, time: "0:11.00" } : r)));
+  ok(s === null, "R1v2: ... and still null on the next sample (no shared key to credit)");
+  // equal second: lstart precision only produces equality, which is accepted
+  ({ s } = await mac([good[0], { pid: 30, ppid: 10, time: "0:02.00", start: T0 }]));
+  ok(s && s.pids.join() === "30" && s.key === `10@${T0},30@${T0}`, "R1v2: child in the same second as its parent is accepted");
+  // compute on a non-leaf: worker 30 busy, its idle child 40 is the only leaf -> only 40's CPU counts
+  const nonleaf = [good[0], { pid: 30, ppid: 10, time: "5:00.00", start: T0 + 3000 }, { pid: 40, ppid: 30, time: "0:00.20", start: T0 + 4000 }];
+  ({ s } = await mac(nonleaf));
+  ok(s && s.pids.join() === "40" && s.cpuMs === 200, "R1v2: busy non-leaf worker is not counted (leaf-only limit, documented)");
+  // dynamic tree: pgrep saw 31, it exited before ps -> whole sample null (log-only fallback)
+  ({ s } = await mac(good, { snap: good.filter((r) => r.pid !== 31) }));
+  ok(s === null, "R1v2: pid discovered then gone before ps -> null");
   // same pid, replaced worker with a higher counter: key changes -> tracker baseline (see trackerCases)
   const a = (await mac(good)).s, b = (await mac(good.map((r) => r.pid === 30 ? { ...r, time: "9:59.00", start: T0 + 90000 } : r))).s;
   ok(a && b && a.key !== b.key, "R1: same-pid worker replacement changes the key");
@@ -240,6 +267,7 @@ const GUARD_MUTANTS = [
 const CORE_SRC = fs.readFileSync(path.join(__dirname, "worker_cpu_progress_core.js"), "utf8");
 const CORE_MUTANTS = [
   ["R1 ppid not checked", "      if (ok.has(r.pid) || !ok.has(r.ppid)) continue;", "      if (ok.has(r.pid)) continue;"],
+  ["R1v2 1 s slack back", "const START_SLACK_MS_UNIX = 0;", "const START_SLACK_MS_UNIX = 1000;"],
   ["R1 child age not checked", "      if (r.startMs < by.get(r.ppid).startMs - slack) return null;\n", ""],
   ["R1 host not checked", "  if (Number(root.hostPid) > 1 && top.ppid !== Number(root.hostPid)) return null;\n", ""],
   ["R1 partial snapshot accepted", "    if (want.size !== by.size - 1 || [...want].some((p) => !by.has(p) || p === top.pid)) return null;\n", ""],

@@ -14,8 +14,12 @@ const MAX_PIDS = 16;
 // The root must have started near the moment this window registered it;
 // otherwise the pid was reused and its children are not ours.
 const ROOT_START_TOLERANCE_MS = 5000;
-// Unix lstart has 1 s resolution; a child may print one second before its parent.
-const START_SLACK_MS_UNIX = 1000;
+// A child is never accepted if it started before its parent (an old orphan whose
+// ppid now names a reused pid). lstart's 1 s resolution only ever turns
+// "child after parent" into "equal", never into "child earlier", so no slack is
+// needed; a clock that went backwards is rejected too. Same-second pid reuse is
+// still beyond lstart precision: this narrows pid reuse, it does not rule it out.
+const START_SLACK_MS_UNIX = 0;
 const PROBE_VERSION = "rc.7.84-v2";
 
 // ps time / etime: [[dd-]hh:]mm:ss[.cc]  ->  milliseconds, or null.
@@ -31,7 +35,11 @@ function parseCpuTime(text) {
 }
 
 
-// One consistent snapshot rows = [{pid, ppid, startMs, cpuMs}] -> verified sample or null.
+// One snapshot rows = [{pid, ppid, startMs, cpuMs}] -> verified sample or null. "One
+// snapshot" is one command's capture, not an atomic freeze of the process table:
+// Unix ps only reports the pids pgrep found, so a pid born after discovery is not
+// seen, and a discovered pid that exited before ps makes the whole sample null.
+// null always means "no credit": the guard keeps its old log-only schedule.
 // The root must be the registered pid, started no later than its registration
 // (+5 s) and, when hostPid is known, be a direct child of this extension host.
 // Every other row must hang off the root through ppid links inside the same

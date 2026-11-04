@@ -435,8 +435,8 @@
       "bytes": 17013
     },
     "scripts/worker_cpu_progress_core.js": {
-      "sha256": "790b70550065e25443fd1fb8605883abfcc66059545e13fe474ec76888431b8a",
-      "bytes": 10491
+      "sha256": "84364a6296495b154a8679ad8ee8b983020acbd8e9a0fdb43775d4408b793ed6",
+      "bytes": 11122
     }
   },
   "acceptanceStatus": "PENDING_LICENSED_MAC_FULL_ACCEPTANCE",
