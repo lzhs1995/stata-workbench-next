@@ -11,16 +11,49 @@ $ErrorActionPreference = "Stop"
 # rc.7.82: the extension no longer asks this script to pick targets by name.
 # -ListProcesses prints the process table; the extension chooses this window's
 # backend tree (scripts/windows_kill_scope_core.js) and passes it back as
-# -ScopedTargetCsv "pid:createdMs,...". Each pid is ended only if it still has
-# that creation time, so a reused pid is skipped. Name-based selection below is
-# kept for manual emergency use only.
-function Get-CreatedMs {
-  param($Proc)
-  try {
-    if ($Proc.CreationDate) { return [int64](([DateTimeOffset]$Proc.CreationDate.ToUniversalTime()).ToUnixTimeMilliseconds()) }
-  } catch {}
-  return $null
+# -ScopedTargetCsv "pid:createdMs,...". Each pid is opened once; the creation
+# time is read from that handle and the same handle is terminated, so a pid that
+# was reused (or exits and is reused mid-call) is never ended. createdMs comes
+# from GetProcessTimes in both modes. Processes started by an ended target are
+# reported, never adopted. Name-based selection below is kept for manual
+# emergency use only.
+$swnHelper = @"
+using System;
+using System.Runtime.InteropServices;
+public static class SwnProc {
+  [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr OpenProcess(uint access, bool inherit, int pid);
+  [DllImport("kernel32.dll", SetLastError = true)] static extern bool GetProcessTimes(IntPtr h, out long c, out long e, out long k, out long u);
+  [DllImport("kernel32.dll", SetLastError = true)] static extern bool GetExitCodeProcess(IntPtr h, out uint code);
+  [DllImport("kernel32.dll", SetLastError = true)] static extern bool TerminateProcess(IntPtr h, uint code);
+  [DllImport("kernel32.dll", SetLastError = true)] static extern uint WaitForSingleObject(IntPtr h, uint ms);
+  [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
+  const uint QUERY = 0x1000, TERMINATE = 0x0001, SYNCHRONIZE = 0x00100000, STILL_ACTIVE = 259;
+  static long ToMs(long ft) { return (ft - 116444736000000000L) / 10000L; }
+  public static long CreatedMs(int pid) {
+    IntPtr h = OpenProcess(QUERY, false, pid);
+    if (h == IntPtr.Zero) return -1;
+    try { long c, e, k, u; return GetProcessTimes(h, out c, out e, out k, out u) ? ToMs(c) : -1; } finally { CloseHandle(h); }
+  }
+  // 0 ended, 1 already exited, 2 creation time differs (pid reused), 3 terminate failed, 4 cannot open
+  public static int EndIfSame(int pid, long createdMs, out long seenMs) {
+    seenMs = -1;
+    IntPtr h = OpenProcess(QUERY | TERMINATE | SYNCHRONIZE, false, pid);
+    if (h == IntPtr.Zero) return Marshal.GetLastWin32Error() == 87 ? 1 : 4;
+    try {
+      long c, e, k, u; uint code;
+      if (!GetProcessTimes(h, out c, out e, out k, out u)) return 4;
+      seenMs = ToMs(c);
+      if (seenMs != createdMs) return 2;
+      if (GetExitCodeProcess(h, out code) && code != STILL_ACTIVE) return 1;
+      if (!TerminateProcess(h, 1)) return 3;
+      WaitForSingleObject(h, 5000);
+      return 0;
+    } finally { CloseHandle(h); }
+  }
 }
+"@
+$swnProtected = @("Code.exe", "powershell.exe", "pwsh.exe", "explorer.exe", "copilot.exe", "cmd.exe", "WindowsTerminal.exe",
+  "svchost.exe", "csrss.exe", "wininit.exe", "services.exe", "lsass.exe", "System", "Idle")
 
 function Test-Stataish {
   param($Proc)
@@ -39,13 +72,22 @@ function Get-SpawnParent {
   return $null
 }
 
+function Get-SwnCreated {
+  param([int]$Id)
+  $ms = [SwnProc]::CreatedMs($Id)
+  if ($ms -lt 0) { return $null }
+  return $ms
+}
+
+if ($ListProcesses -or $PSBoundParameters.ContainsKey('ScopedTargetCsv')) { Add-Type -TypeDefinition $swnHelper -ErrorAction Stop }
+
 if ($ListProcesses) {
   $rows = @(Get-CimInstance Win32_Process -ErrorAction Stop | ForEach-Object {
     [pscustomobject]@{
       pid = [int]$_.ProcessId
       ppid = [int]$_.ParentProcessId
       name = [string]$_.Name
-      createdMs = Get-CreatedMs $_
+      createdMs = Get-SwnCreated ([int]$_.ProcessId)
       stataish = Test-Stataish $_
       spawnParent = Get-SpawnParent $_
     }
@@ -54,48 +96,50 @@ if ($ListProcesses) {
   exit 0
 }
 
-if (-not [string]::IsNullOrWhiteSpace($ScopedTargetCsv)) {
-  $protected = @("Code.exe", "powershell.exe", "pwsh.exe", "explorer.exe", "copilot.exe", "cmd.exe")
-  $wanted = @($ScopedTargetCsv -split "," | ForEach-Object {
-    $parts = $_ -split ":"
-    $p = 0; $c = [int64]0
-    if ($parts.Count -eq 2 -and [int]::TryParse($parts[0], [ref]$p) -and [int64]::TryParse($parts[1], [ref]$c) -and $p -gt 4) {
-      [pscustomobject]@{ pid = $p; createdMs = $c }
-    }
-  })
-  $killed = @(); $skipped = @(); $failed = @(); $late = @()
+if ($PSBoundParameters.ContainsKey('ScopedTargetCsv')) {
+  $wanted = @(); $malformed = @()
+  foreach ($item in @($ScopedTargetCsv -split "," | Where-Object { $_ -ne "" })) {
+    $p = 0; $c = [int64]0; $parts = $item -split ":"
+    if ($parts.Count -eq 2 -and [int]::TryParse($parts[0], [ref]$p) -and [int64]::TryParse($parts[1], [ref]$c) -and $p -gt 4 -and $c -gt 0) {
+      $wanted += [pscustomobject]@{ pid = $p; createdMs = $c }
+    } else { $malformed += $item }
+  }
+  if ($malformed.Count -gt 0 -or $wanted.Count -eq 0) {
+    [pscustomobject]@{ ok = $false; mode = "scoped"; error = "malformed or empty -ScopedTargetCsv; nothing was ended"; malformed = $malformed } | ConvertTo-Json -Depth 4 -Compress
+    exit 2
+  }
   if (-not $Force) {
     [pscustomobject]@{ ok = $true; mode = "scoped-dry-run"; requested = $wanted.Count; targets = $wanted } | ConvertTo-Json -Depth 4 -Compress
     exit 0
   }
-  function Stop-Verified {
-    param($Pid0, $CreatedMs, $Why)
-    $now = Get-CimInstance Win32_Process -Filter "ProcessId=$Pid0" -ErrorAction SilentlyContinue
-    if (-not $now) { $script:skipped += [pscustomobject]@{ pid = $Pid0; reason = "already exited" }; return }
-    $nowMs = Get-CreatedMs $now
-    if ($null -eq $nowMs -or [Math]::Abs($nowMs - $CreatedMs) -gt 2) { $script:skipped += [pscustomobject]@{ pid = $Pid0; name = [string]$now.Name; reason = "creation time changed (pid reused)" }; return }
-    if ($protected -contains [string]$now.Name) { $script:skipped += [pscustomobject]@{ pid = $Pid0; name = [string]$now.Name; reason = "protected process" }; return }
-    try {
-      Stop-Process -Id $Pid0 -Force -ErrorAction Stop
-      $script:killed += [pscustomobject]@{ pid = $Pid0; name = [string]$now.Name; createdMs = $nowMs; why = $Why }
-    } catch {
-      if (Get-Process -Id $Pid0 -ErrorAction SilentlyContinue) { $script:failed += [pscustomobject]@{ pid = $Pid0; name = [string]$now.Name; error = $_.Exception.Message } }
-      else { $script:skipped += [pscustomobject]@{ pid = $Pid0; reason = "exited during kill" } }
+  $killed = @(); $skipped = @(); $failed = @()
+  foreach ($t in $wanted) {
+    $name = [string](Get-CimInstance Win32_Process -Filter "ProcessId=$($t.pid)" -ErrorAction SilentlyContinue).Name
+    if ($swnProtected -contains $name) { $skipped += [pscustomobject]@{ pid = $t.pid; name = $name; reason = "protected process" }; continue }
+    $seen = [int64]-1
+    $at = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+    $code = [SwnProc]::EndIfSame($t.pid, $t.createdMs, [ref]$seen)
+    switch ($code) {
+      0 { $killed += [pscustomobject]@{ pid = $t.pid; name = $name; createdMs = $t.createdMs; endedAtMs = $at } }
+      1 { $skipped += [pscustomobject]@{ pid = $t.pid; name = $name; reason = "already exited" } }
+      2 { $skipped += [pscustomobject]@{ pid = $t.pid; name = $name; reason = "creation time changed (pid reused)"; seenMs = $seen } }
+      default { $failed += [pscustomobject]@{ pid = $t.pid; name = $name; error = $(if ($code -eq 3) { "TerminateProcess failed" } else { "cannot open process" }) } }
     }
   }
-  foreach ($t in $wanted) { Stop-Verified -Pid0 $t.pid -CreatedMs $t.createdMs -Why "this window's backend tree" }
-  # A child started between the listing and the kill: same parent rule (not older than its parent).
-  $ended = @{}; foreach ($k in $killed) { $ended[[int]$k.pid] = [int64]$k.createdMs }
-  if ($ended.Count -gt 0) {
-    Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $ended.ContainsKey([int]$_.ParentProcessId) } | ForEach-Object {
-      $cm = Get-CreatedMs $_
-      if ($null -ne $cm -and $cm -ge $ended[[int]$_.ParentProcessId] -and -not ($protected -contains [string]$_.Name)) {
-        $late += [int]$_.ProcessId
-        Stop-Verified -Pid0 ([int]$_.ProcessId) -CreatedMs $cm -Why "child started during kill"
+  # Report (never end) processes started by an ended target before it was ended and not in the request.
+  $requested = @{}; foreach ($t in $wanted) { $requested[[int]$t.pid] = $true }
+  $endedAt = @{}; foreach ($k in $killed) { $endedAt[[int]$k.pid] = @([int64]$k.createdMs, [int64]$k.endedAtMs) }
+  $unresolved = @()
+  if ($endedAt.Count -gt 0) {
+    Start-Sleep -Milliseconds 300
+    Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $endedAt.ContainsKey([int]$_.ParentProcessId) -and -not $requested.ContainsKey([int]$_.ProcessId) } | ForEach-Object {
+      $cm = Get-SwnCreated ([int]$_.ProcessId); $win = $endedAt[[int]$_.ParentProcessId]
+      if ($null -ne $cm -and $cm -ge $win[0] -and $cm -le $win[1]) {
+        $unresolved += [pscustomobject]@{ pid = [int]$_.ProcessId; name = [string]$_.Name; ppid = [int]$_.ParentProcessId; reason = "started by an ended backend process after the listing; not ended" }
       }
     }
   }
-  [pscustomobject]@{ ok = ($failed.Count -eq 0); mode = "scoped"; requested = $wanted.Count; killedCount = $killed.Count; killed = $killed; skipped = $skipped; failed = $failed; lateChildren = $late } | ConvertTo-Json -Depth 5 -Compress
+  [pscustomobject]@{ ok = ($failed.Count -eq 0); mode = "scoped"; requested = $wanted.Count; killedCount = $killed.Count; killed = $killed; skipped = $skipped; failed = $failed; unresolved = $unresolved } | ConvertTo-Json -Depth 5 -Compress
   if ($failed.Count -gt 0) { exit 1 }
   exit 0
 }

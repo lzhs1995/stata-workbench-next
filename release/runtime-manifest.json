@@ -139,8 +139,8 @@
       "bytes": 11107
     },
     "dist/extension.js": {
-      "sha256": "4bdcd9badaac26974a65aa0a414183e3b7caec73281c7359476b279092068ccc",
-      "bytes": 5650316
+      "sha256": "90912a0665ead5f2a24972007b7f322b3fe7b6b0fa99565036112a4e2509a7ee",
+      "bytes": 5651186
     },
     "scripts/mac/png_compat_transform.js": {
       "sha256": "cdea12886a1d5bb5b4c2b3e38829de1c7e68ed70e7777e8d6e2eb02bb0ce3514",
@@ -343,7 +343,7 @@
       "bytes": 4729
     },
     "tools/verified_workbench.py": {
-      "sha256": "b71e4b0b8e5c62fe4c323d36350f23e5c26ba77f1f790a68389e261e479093d9",
+      "sha256": "f45ebe818c8c043015e1f2e184e81e7000dac509f7d756388f972ae50d7f6340",
       "bytes": 21973
     },
     "tools/workbench_platform.py": {
@@ -435,8 +435,8 @@
       "bytes": 17013
     },
     "scripts/windows_kill_scope_core.js": {
-      "sha256": "0cd04dce2db1d4ed76ec9d00c278b851d738cbe9ba8650f0b3761877e8aa1f69",
-      "bytes": 9549
+      "sha256": "c69c2c919ad1b6028a8dc0e0ce59ae5258eacda88bb49145b5f39fe32a01c881",
+      "bytes": 10950
     }
   },
   "acceptanceStatus": "PENDING_LICENSED_MAC_FULL_ACCEPTANCE",

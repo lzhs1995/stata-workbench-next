@@ -659,7 +659,8 @@ function bundleWiringViolations(src) {
   if (!(forceResetAt >= 0 && resetCaptureAt > forceResetAt && resetFinishAt > resetCaptureAt)) {
     bad.push("capture-after-reset-finishRun");
   }
-  order('__dbResetGate.captureDiagnostic({reason:"force-reset:', "powershell.exe", "capture-after-panic-kill");
+  // rc.7.82: the Windows destructive step is the scoped kill helper (no powershell.exe literal in force reset).
+  order('__dbResetGate.captureDiagnostic({reason:"force-reset:', "__codexWindowsKillScopeRun", "capture-after-panic-kill");
   order('__dbResetGate.captureDiagnostic({reason:"force-reset:', "s.runId=null", "capture-after-runid-clear");
 
   // Rotation / reconnect / status.

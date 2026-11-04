@@ -37,12 +37,12 @@ function machine() {
 const rootA = { pid: 110, startedAtMs: T0 + 50_000 };
 const pids = (r) => r.targets.map((x) => x.pid);
 
-t("A's KILL selects only A's backend tree, children first", () => {
+t("A's KILL selects only A's backend tree, root first", () => {
   const r = core.selectSessionTree({ processes: machine(), roots: [rootA], hostPid: 100 });
   assert.equal(r.ok, true);
   assert.equal(r.failClosed, false);
   assert.deepEqual(pids(r).slice().sort((a, b) => a - b), [110, 111, 112]);
-  assert.equal(r.targets[r.targets.length - 1].pid, 110, "root is ended last");
+  assert.equal(r.targets[0].pid, 110, "root is ended first, so it cannot start new workers");
   for (const other of [100, 200, 210, 211, 300, 400]) assert.ok(!pids(r).includes(other), "must not select " + other);
   assert.ok(r.census.some((p) => p.pid === 300 && !p.selected), "the user's Stata GUI is listed but not selected");
 });
@@ -170,8 +170,37 @@ t("listing failure fails closed without a kill call", () => {
   assert.equal(r.failClosed, true);
   assert.equal(r.ok, false);
   assert.equal(calls.length, 1);
-  assert.match(core.failClosedMessage(r), /did not end them/);
+  assert.match(core.failClosedMessage(r), /ended none of them/);
   assert.match(core.failClosedMessage(r), /CIM timeout/);
+});
+
+for (const [label, owned] of [
+  ["one verified root plus one foreign root", [[110, { pid: 110, startedAt: new Date(T0 + 50_000).toISOString() }], [210, { pid: 210, startedAt: new Date(T0 + 50_000).toISOString() }]]],
+  ["a verified root plus an orphan of an exited root", [[110, { pid: 110, startedAt: new Date(T0 + 50_000).toISOString() }], [910, { pid: 910, startedAt: new Date(T0 + 50_000).toISOString() }]]],
+]) {
+  t("R3 all-or-nothing: " + label + " ends nothing", () => {
+    const calls = [];
+    const procs = machine().concat([{ pid: 911, ppid: 910, name: "python.exe", createdMs: T0 + 9_900, stataish: true, spawnParent: 910 }]);
+    const s = core.createWindowsKillScope({ execFileSync: fakeExec(procs, calls), scriptPath: "x", platform: "win32", hostPid: 100, ownedPids: () => new Map(owned) });
+    const r = s.run({ dryRun: false });
+    assert.equal(r.failClosed, true);
+    assert.equal(r.ok, false);
+    assert.equal(calls.length, 1, "only the listing ran");
+    assert.ok(!calls.flat().includes("-ScopedTargetCsv"));
+    assert.ok(r.targets.length > 0, "proposed targets stay as diagnostics");
+    const msg = core.failClosedMessage(r);
+    assert.match(msg, /ended none of them/);
+    assert.doesNotMatch(msg, /close this window's stuck python\.exe/);
+    assert.match(msg, /Only end one of these in Task Manager if you know it belongs to this window/);
+  });
+}
+
+t("processes left behind by the kill make the result not ok and are named", () => {
+  const calls = [];
+  const r = scope(machine(), calls, { killReply: { ok: true, mode: "scoped", killed: [{ pid: 110 }, { pid: 111 }, { pid: 112 }], unresolved: [{ pid: 120, name: "python.exe", reason: "started by an ended backend process after the listing; not ended" }] } }).run({ dryRun: false });
+  assert.equal(r.ok, false);
+  assert.equal(r.failClosed, false);
+  assert.match(core.failClosedMessage(r), /ended 3 process\(es\).*pid 120/);
 });
 
 t("a kill that reports a failure makes the result not ok", () => {
@@ -199,6 +228,8 @@ t("bundle carries the marker and no product call passes -IncludeStataGui", () =>
   }
   assert.ok(dist.includes('if(__choice!=="Kill this window\'s Stata")return;'));
   assert.equal(dist.includes("Kill all Stata processes"), false);
+  assert.equal(dist.includes("cleanup_mcp_stata_processes"), false, "no bare-pid Windows cleanup left in the bundle");
+  assert.equal(dist.includes("-OwnedPidCsv"), false);
 });
 
 t("busy force reset no longer escalates to a machine-wide kill", () => {
@@ -251,10 +282,12 @@ const ps1 = path.join(__dirname, "panic_kill_stata_chain.ps1");
 t("panic script keeps scoped mode ahead of name selection", () => {
   const text = fs.readFileSync(ps1, "utf8");
   const list = text.indexOf("if ($ListProcesses)");
-  const scoped = text.indexOf("if (-not [string]::IsNullOrWhiteSpace($ScopedTargetCsv))");
+  const scoped = text.indexOf("if ($PSBoundParameters.ContainsKey('ScopedTargetCsv')) {");
   const byName = text.indexOf("function Get-Reason");
   assert.ok(list > 0 && scoped > list && byName > scoped, "list and scoped modes exit before name-based selection");
   assert.match(text, /creation time changed \(pid reused\)/);
+  assert.match(text, /EndIfSame/, "the same handle is checked and terminated");
+  assert.doesNotMatch(text, /child started during kill/, "no post-kill adoption of new children");
 });
 
 if (process.platform === "win32") {
@@ -272,6 +305,32 @@ if (process.platform === "win32") {
     const out = JSON.parse(execFileSync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ps1, "-ScopedTargetCsv", process.pid + ":1"], { encoding: "utf8" }));
     assert.equal(out.mode, "scoped-dry-run");
     assert.equal(out.requested, 1);
+  });
+  t("Windows: malformed scoped targets end nothing", () => {
+    let out;
+    try { execFileSync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ps1, "-Force", "-ScopedTargetCsv", process.pid + ":abc"], { encoding: "utf8" }); }
+    catch (e) { out = JSON.parse(e.stdout); }
+    assert.ok(out && out.ok === false && /malformed/.test(out.error));
+  });
+  t("Windows: -Force with the listed creation time ends exactly that process", () => {
+    const { spawn } = require("node:child_process");
+    const child = spawn(process.execPath, ["-e", "setTimeout(()=>{},60000)"], { stdio: "ignore" });
+    const deadline = Date.now() + 10_000;
+    let row = null;
+    while (!row && Date.now() < deadline) {
+      const list = JSON.parse(execFileSync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ps1, "-ListProcesses"], { encoding: "utf8", maxBuffer: 16 << 20 }));
+      row = list.processes.find((p) => p.pid === child.pid && p.ppid === process.pid);
+    }
+    try {
+      assert.ok(row && row.createdMs > 0, "child listed with a creation time");
+      const wrong = JSON.parse(execFileSync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ps1, "-Force", "-ScopedTargetCsv", child.pid + ":" + (row.createdMs + 1)], { encoding: "utf8" }));
+      assert.equal(wrong.killedCount, 0, "off by 1 ms is not the same process");
+      const out = JSON.parse(execFileSync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ps1, "-Force", "-ScopedTargetCsv", child.pid + ":" + row.createdMs], { encoding: "utf8" }));
+      assert.equal(out.killedCount, 1, JSON.stringify(out));
+      let gone = false;
+      try { process.kill(child.pid, 0); } catch { gone = true; }
+      assert.ok(gone, "the child exited");
+    } finally { try { child.kill(); } catch {} }
   });
   t("Windows: -Force with a wrong creation time does not end the process", () => {
     const out = JSON.parse(execFileSync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ps1, "-Force", "-ScopedTargetCsv", process.pid + ":1"], { encoding: "utf8" }));

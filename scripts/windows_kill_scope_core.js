@@ -10,19 +10,22 @@
 //           later than the moment the host recorded it (a reused pid is newer);
 //   tree  = descendants by ParentProcessId whose creation time is not earlier
 //           than their parent's (a stale ParentProcessId points at an older pid).
-// Anything it cannot tie to such a root is left alone: an alive root that fails
-// the parent check fails closed, and orphans of a root that already exited are
-// only reported (the worker exits by itself once its pipe closes).
-// PowerShell lists processes and ends the chosen pids after re-checking each
-// pid's creation time; the choice itself is made here so it can be tested
-// anywhere.
+// Fail-closed is all-or-nothing: if any registered root cannot be tied to this
+// host, or a process looks left over from an exited root, nothing is ended and
+// the unresolved pids are reported (never "close python.exe"). PowerShell lists
+// processes and ends each chosen pid through one handle after checking that
+// handle's creation time; the choice itself is made here so it can be tested
+// anywhere. Known limit: the host records startedAt after connect, not the
+// process creation time, so a root is accepted up to ROOT_CLOCK_TOLERANCE_MS
+// after that record (a pid reused inside that window by another child of this
+// host would pass); the bridge removes a pid from the registry on exit.
 
 const PROTECTED = new Set(["code.exe", "powershell.exe", "pwsh.exe", "explorer.exe", "copilot.exe",
   "cmd.exe", "windowsterminal.exe", "svchost.exe", "csrss.exe", "wininit.exe",
   "services.exe", "lsass.exe", "system", "idle"]);
 // The host records startedAt after the MCP connect returns, so a genuine root
 // is created before it; allow for clock rounding between Node and CIM.
-const ROOT_CLOCK_TOLERANCE_MS = 2000;
+const ROOT_CLOCK_TOLERANCE_MS = 1000;
 
 function toNumber(value) {
   if (value === null || value === undefined || value === "") return null;
@@ -114,7 +117,8 @@ function selectSessionTree({ processes, roots, hostPid }) {
 
   const census = procs.filter((p) => p.stataish || targets.has(p.pid) || rootInfo.some((r) => r.pid === p.pid))
     .map((p) => ({ pid: p.pid, ppid: p.ppid, name: p.name, createdMs: p.createdMs, selected: targets.has(p.pid) }));
-  const ordered = Array.from(targets.values()).sort((a, b) => b.depth - a.depth || a.pid - b.pid);
+  // Root first: once it is gone it cannot start new workers while the rest are ended.
+  const ordered = Array.from(targets.values()).sort((a, b) => a.depth - b.depth || a.pid - b.pid);
   const failClosed = reasons.length > 0;
   return {
     ok: !failClosed,
@@ -160,7 +164,8 @@ function createWindowsKillScope(deps) {
     }
     const selection = selectSessionTree({ processes: listing.processes, roots, hostPid: deps.hostPid });
     const result = { ...selection, source, dryRun, kill: null };
-    if (dryRun || !selection.targets.length) return result;
+    // All-or-nothing: a fail-closed selection ends nothing; its targets stay as diagnostics only.
+    if (dryRun || selection.failClosed || !selection.targets.length) return result;
     let kill = null;
     try {
       kill = parseJson(deps.execFileSync("powershell.exe", [...base(), "-Force", "-ScopedTargetCsv", targetCsv(selection.targets)], opts));
@@ -171,19 +176,29 @@ function createWindowsKillScope(deps) {
       kill.error = String((error && error.message) || error);
     }
     result.kill = kill;
-    result.ok = selection.ok && kill.ok !== false;
+    result.unresolved = Array.isArray(kill.unresolved) ? kill.unresolved : [];
+    result.ok = selection.ok && kill.ok === true && result.unresolved.length === 0;
     try { deps.log && deps.log(`${source}: ended ${(kill.killed || []).length} of ${selection.targets.length} process(es) in this window's backend tree${selection.failClosed ? "; " + selection.reasons.join("; ") : ""}`); } catch {}
     return result;
   }
   return { run };
 }
 
-// Text for the warning the KILL command shows when it could not confirm the tree.
+// Text for the warning the KILL command shows when it ended nothing (fail-closed) or left pids behind.
 function failClosedMessage(result) {
-  const why = result && Array.isArray(result.reasons) && result.reasons.length ? result.reasons.join("; ") : "unknown reason";
-  return "Stata Workbench could not confirm which processes belong to this window's Stata backend, so it did not end them "
-    + "(other VS Code windows and Stata sessions were not touched). It reset this window's connection instead. "
-    + "If Stata still does not respond, close this window's stuck python.exe in Task Manager and click Stata: KILL again. Details: " + why;
+  const r = result || {};
+  const why = Array.isArray(r.reasons) && r.reasons.length ? r.reasons.join("; ") : (r.kill && r.kill.error) || "unknown reason";
+  const left = [].concat(
+    (r.roots || []).filter((x) => x.status === "unverified").map((x) => `pid ${x.pid} (${x.name || "?"}, parent ${x.ppid}): registered by this window but could not be verified`),
+    (r.suspectedOrphans || []).map((x) => `pid ${x.pid} (${x.name}, parent ${x.ppid}): looks left over from this window's exited backend`),
+    (r.unresolved || []).map((x) => `pid ${x.pid} (${x.name || "?"}): ${x.reason || "not ended"}`));
+  const ended = r.kill && Array.isArray(r.kill.killed) ? r.kill.killed.length : 0;
+  return (ended ? `Stata Workbench ended ${ended} process(es) of this window's backend, but could not finish the job. `
+    : "Stata Workbench could not confirm which processes belong to this window's Stata backend, so it ended none of them; "
+      + "it only closed its own connection to the backend process this window started. ")
+    + "Other VS Code windows and Stata sessions were not touched. "
+    + (left.length ? "Not ended: " + left.join("; ") + ". Only end one of these in Task Manager if you know it belongs to this window. " : "")
+    + "Details: " + why;
 }
 
 module.exports = { selectSessionTree, createWindowsKillScope, rootsFromOwned, targetCsv, failClosedMessage, PROTECTED, ROOT_CLOCK_TOLERANCE_MS };
