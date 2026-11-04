@@ -28,6 +28,7 @@ const sessionHealthPatch = require("./stata_session_health_patch");
 const logQueryPatch = require("./stata_log_query_patch");
 const graphNameBoundaryPatch = require("./stata_graph_name_boundary_patch");
 const preflightTimeoutPatch = require("./stata_preflight_timeout_patch");
+const taskDoneRcPatch = require("./stata_task_done_rc_patch");
 
 const PATCH_MARKER = "UI/DataBrowser HTTP threads must not create a second asyncio loop";
 const TASK_DONE_PATCH_MARKER = "Workbench task_done notification must not retain the MCP transport";
@@ -1209,6 +1210,16 @@ function patchRuntime(options = {}) {
         PATCHED_RESPECT_BACKGROUND_GRAPH_READY_OPTION
       );
     serverStatus = options.dryRun ? "would-apply" : "applied";
+  }
+
+  // task_done carries this run's Stata rc (after the task_done transport patch above).
+  try {
+    const next = taskDoneRcPatch.patchServer(patchedServer);
+    if (next !== patchedServer) serverStatus = options.dryRun ? "would-apply" : "applied";
+    patchedServer = next;
+  } catch (error) {
+    return { ok: false, status: "unsupported-source", component: "server", anchor: "task-done-rc",
+      error: error.message, ...located };
   }
 
   const clientBytes = fs.readFileSync(located.clientPath);
