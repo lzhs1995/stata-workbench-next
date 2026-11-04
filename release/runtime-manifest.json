@@ -15,8 +15,8 @@
       "bytes": 43580
     },
     "scripts/static_windows_gate.js": {
-      "sha256": "4db114e7153ca576767ace7d591bf9acc52217ac7ac8c29974ed36e1a73172f4",
-      "bytes": 6167
+      "sha256": "b336894535ef43dbaeb89f587fa34fc40f8a5e0e3928624650b44e4af3b54785",
+      "bytes": 6759
     },
     "scripts/stata_source_compat_core.js": {
       "sha256": "7682ca890f407f473c88abdf339adaaa40bd90bd6b9dd48835294cf023d68803",
@@ -27,8 +27,8 @@
       "bytes": 17618
     },
     "scripts/patch_manager.js": {
-      "sha256": "c0675d706933f42f8be265512afe2990c0c73e8b4311f370ce8d8a6ff94d3edb",
-      "bytes": 97094
+      "sha256": "30b871b7217f81f5bdeeaa4fc83389fdab30598e5b2749b7a5613c9b4ebf1024",
+      "bytes": 97901
     },
     "scripts/mcp_stata_runtime_patch.js": {
       "sha256": "81a6985043039bad22f7be8f9b94dbf271cf0476f79bef64077ec43f61785c5f",
@@ -111,8 +111,8 @@
       "bytes": 5178
     },
     "scripts/apply_rc7_shared_execution_patch.js": {
-      "sha256": "eb144ddd4ee5cf8039743af80cb4e2e1fb79010335a638fbc6920f0bddf88036",
-      "bytes": 341222
+      "sha256": "2d9af3344a572f621fc5d630a4c305bf0e4611704629b57c8e6c0f85af26ffae",
+      "bytes": 341468
     },
     "scripts/apply_rc64_routes_patch.js": {
       "sha256": "b01e1225f5844b632e24d616957fb9e565541345a10d6f4fbc640a4b034070b2",
@@ -139,8 +139,8 @@
       "bytes": 11107
     },
     "dist/extension.js": {
-      "sha256": "d87324edeae9333d0a5f71711f7dd4a0fd4ba824e8746020ac9386bcf8571faa",
-      "bytes": 5668526
+      "sha256": "988b628c948637beca291894e7f9ca7556f026d4c6d111ede92549f58bcec0dc",
+      "bytes": 5675495
     },
     "scripts/mac/png_compat_transform.js": {
       "sha256": "cdea12886a1d5bb5b4c2b3e38829de1c7e68ed70e7777e8d6e2eb02bb0ce3514",
@@ -343,7 +343,7 @@
       "bytes": 4729
     },
     "tools/verified_workbench.py": {
-      "sha256": "e17f9c05879d3563d2fc72245517f6dd43dd3f486079d612bcf193615d3b693c",
+      "sha256": "1489487fefc49ae82517e22189d9d50c9b105b297c41efba27bef7f0ccfcf3db",
       "bytes": 21973
     },
     "tools/workbench_platform.py": {

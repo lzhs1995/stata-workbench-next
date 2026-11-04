@@ -32,6 +32,7 @@ const LATER = [
   "./apply_warm_worker_identity_patch",
   "./apply_agent_warmup_refusal_patch",
   "./apply_stata_error_outcome_patch",
+  "./apply_windows_kill_scope_patch",
 ];
 
 function revertLaterPatches(source) {

@@ -13,7 +13,16 @@ function windowFrom(marker, length) {
   return bundle.slice(at, at + length);
 }
 
-const reset = windowFrom("globalThis.__codexForceReset=async", 9000);
+// The whole force-reset function, from its unique start to its unique end
+// (no character window that could reach past the function or stop inside it).
+function between(start, end) {
+  const at = bundle.indexOf(start);
+  assert.ok(at >= 0 && bundle.indexOf(start, at + 1) < 0, `missing or ambiguous start: ${start}`);
+  const stop = bundle.indexOf(end, at);
+  assert.ok(stop > at && bundle.indexOf(end, stop + 1) < 0 && bundle.indexOf(end) === stop, `missing or ambiguous end: ${end}`);
+  return bundle.slice(at, stop + end.length);
+}
+const reset = between("globalThis.__codexForceReset=async", "let __state=__current();__state.cleanup=__cleanup;");
 assert.ok(reset.includes("__codexResetGeneration=Number(globalThis.__codexResetGeneration||0)+1"));
 assert.ok(reset.includes("codex patch rc.7.9: force-reset generation fences stale handlers"));
 assert.ok(reset.includes("__codexExecution.finishRun(s,"));

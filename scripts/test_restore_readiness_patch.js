@@ -79,18 +79,20 @@ const resetEnd = bundle.indexOf("}catch{}let __state=__current();", resetAt)
   + "}catch{}let __state=__current();".length;
 assert.ok(resetStart >= 0 && resetEnd > resetStart);
 const forceResetTail = bundle.slice(resetStart, resetEnd);
-function runForceResetTail(reconnect, recoveryRequired, continuityLost, reason) {
+// __cleanup is declared earlier in the force-reset function (rc.7.82 reads it
+// on Windows); the slice gets the completed-cleanup value it has there.
+function runForceResetTail(reconnect, recoveryRequired, continuityLost, reason, cleanup = { ok: true }) {
   const resetCalls = [];
   const global = {
     __codexRestoreReadinessRef: { reset: (value) => resetCalls.push(value) },
     __codexControl: { requestRecovery: (state, why) => ({ state, reason: why }) },
   };
   const fn = new Function(
-    "globalThis", "__reconnect", "__codexRecoveryWasRequired", "__codexHadContinuityLost", "o", "__codexGraphMark", "__current", "resetCalls",
+    "globalThis", "__reconnect", "__codexRecoveryWasRequired", "__codexHadContinuityLost", "o", "__codexGraphMark", "__current", "resetCalls", "__cleanup",
     "try{" + forceResetTail + ";return {resetCalls, state:__state};"
   );
   return fn(global, reconnect, recoveryRequired, continuityLost, reason,
-    () => {}, () => ({ ready: true }), resetCalls);
+    () => {}, () => ({ ready: true }), resetCalls, cleanup);
 }
 assert.deepEqual(runForceResetTail({ ok: true }, false, false, "done").resetCalls,
   ["force-reset-complete"]);
