@@ -1,0 +1,15 @@
+. set more off
+. regress nosuchvar_v3a
+{err}no variables defined
+{txt}{search r(111), local:r(111);}
+{com}. #delimit cr
+{txt}delimiter now cr
+{com}. display as text "___VERIFIED_CLIENT_143b1a624bdf4d77b6aedb24513e53e7___"
+. #delimit cr
+{txt}delimiter now cr
+{com}. display as text "___CODEX_RUN_DONE_run_mw1oskrn_4bzth2dm___"
+. 
+{txt}{search r(111), local:r(111);}
+{txt}
+{com}. scalar _wb_rc_85ec5351fe6f4aabb7fd9c95 = _rc
+{txt}

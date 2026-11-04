@@ -1516,9 +1516,20 @@ const REQUIRED_MARKERS = [
     label: "warm-up refusals say whether a retry can help",
     marker: "codex patch rc.7.86: warm-up refusals say whether a retry can help (nothing was dispatched)",
   },
+  {
+    key: "stataErrorOutcome",
+    label: "confirmed Stata errors report their return code",
+    marker: "codex patch rc.7.85: confirmed Stata errors report their return code",
+  },
 ];
 
 const AUXILIARY_MARKERS = [
+  {
+    key: "stataErrorOutcomeCore",
+    label: "packaged Stata error outcome module confirms only bound, uncancelled r(n) errors",
+    relativePath: path.join("scripts", "stata_error_outcome_core.js"),
+    marker: "function classify",
+  },
   {
     key: "stopCheckpointCore",
     label: "packaged Stop checkpoint module preserves full shared Stata state",

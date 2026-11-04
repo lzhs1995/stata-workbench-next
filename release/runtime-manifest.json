@@ -27,8 +27,8 @@
       "bytes": 17618
     },
     "scripts/patch_manager.js": {
-      "sha256": "aa017a8a6d311341a2ad7ab13b706e47d93317666b4e676c0e5ae88859c75c1c",
-      "bytes": 96400
+      "sha256": "f75769a36d451933768093a401353b370da7f0a88b38699cbf30f9a46f9ba356",
+      "bytes": 96832
     },
     "scripts/mcp_stata_runtime_patch.js": {
       "sha256": "64013014e8598af5c7f70a276cd80a2f5c21d218eaa6fba59f079096c8f75ac9",
@@ -111,8 +111,8 @@
       "bytes": 5178
     },
     "scripts/apply_rc7_shared_execution_patch.js": {
-      "sha256": "c174c5e0b0ad937285803de7c92a2401e83bea898be2840336f963b3f756b660",
-      "bytes": 340973
+      "sha256": "eb144ddd4ee5cf8039743af80cb4e2e1fb79010335a638fbc6920f0bddf88036",
+      "bytes": 341222
     },
     "scripts/apply_rc64_routes_patch.js": {
       "sha256": "b01e1225f5844b632e24d616957fb9e565541345a10d6f4fbc640a4b034070b2",
@@ -139,8 +139,8 @@
       "bytes": 11107
     },
     "dist/extension.js": {
-      "sha256": "890f5ebcc8f26f2d9f008e3beb0e0f2285ce7e0b6036b69adf28b66a59cdbc19",
-      "bytes": 5665151
+      "sha256": "d87324edeae9333d0a5f71711f7dd4a0fd4ba824e8746020ac9386bcf8571faa",
+      "bytes": 5668526
     },
     "scripts/mac/png_compat_transform.js": {
       "sha256": "cdea12886a1d5bb5b4c2b3e38829de1c7e68ed70e7777e8d6e2eb02bb0ce3514",
@@ -335,15 +335,15 @@
       "bytes": 3225
     },
     "tools/shared_stata.py": {
-      "sha256": "6d78192d80328bfb1b6633e3413024220b375b64f0ef46994ad8c6f9a02bf617",
-      "bytes": 20080
+      "sha256": "45a1cc03f2ea85d38df6d2bbf2f41ef343a424b1b938d1a0a2f10035958383e2",
+      "bytes": 23489
     },
     "tools/workbench_doctor.py": {
       "sha256": "547acffd98bcc6c6371c9a4c6767303760ed56832a646c5f959acc9ccc7e46fe",
       "bytes": 4729
     },
     "tools/verified_workbench.py": {
-      "sha256": "3fdab0526f6cb14d2889f2fdc07643357284f5b1082d758fae3c98f6df5abc4b",
+      "sha256": "e17f9c05879d3563d2fc72245517f6dd43dd3f486079d612bcf193615d3b693c",
       "bytes": 21973
     },
     "tools/workbench_platform.py": {
@@ -441,6 +441,10 @@
     "scripts/worker_cpu_progress_core.js": {
       "sha256": "84364a6296495b154a8679ad8ee8b983020acbd8e9a0fdb43775d4408b793ed6",
       "bytes": 11122
+    },
+    "scripts/stata_error_outcome_core.js": {
+      "sha256": "67eb6f91ace75ea20063121ce20b6f36e5d93f6eb8fc0bb01833fed87d1bd687",
+      "bytes": 7107
     }
   },
   "acceptanceStatus": "PENDING_LICENSED_MAC_FULL_ACCEPTANCE",
