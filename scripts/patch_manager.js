@@ -1496,6 +1496,11 @@ const REQUIRED_MARKERS = [
     label: "W-P1 timing lines for the first Terminal command (diagnostic)",
     marker: "codex patch rc.7.80: W-P1 timing lines for the first Terminal command (diagnostic)",
   },
+  {
+    key: "stopDuringBackendStart",
+    label: "Stop during backend start-up skips the quiescence probe",
+    marker: "codex patch rc.7.83: Stop during backend start-up skips the quiescence probe",
+  },
 ];
 
 const AUXILIARY_MARKERS = [
