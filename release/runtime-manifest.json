@@ -15,8 +15,8 @@
       "bytes": 43580
     },
     "scripts/static_windows_gate.js": {
-      "sha256": "dfaf4195ecad6bd7914e3b27ee48426600c7c61f7159e36dc6343e0f83d899fb",
-      "bytes": 6673
+      "sha256": "b336894535ef43dbaeb89f587fa34fc40f8a5e0e3928624650b44e4af3b54785",
+      "bytes": 6759
     },
     "scripts/stata_source_compat_core.js": {
       "sha256": "7682ca890f407f473c88abdf339adaaa40bd90bd6b9dd48835294cf023d68803",
@@ -27,8 +27,8 @@
       "bytes": 17618
     },
     "scripts/patch_manager.js": {
-      "sha256": "168cf07926607d9450f69fe5e4f119073f2870c0fd9cb1f2cbf2fe8e8e1ec236",
-      "bytes": 96140
+      "sha256": "e14ed4275c77d4ad0505d3275444477f1ac74e672c229db6edbe03a3b15080b8",
+      "bytes": 97207
     },
     "scripts/mcp_stata_runtime_patch.js": {
       "sha256": "64013014e8598af5c7f70a276cd80a2f5c21d218eaa6fba59f079096c8f75ac9",
@@ -67,8 +67,8 @@
       "bytes": 15512
     },
     "scripts/execution_guard.js": {
-      "sha256": "39b392e29fdee33b24d795df03537fd3f3271c4fec8daee251b7ccc5e3acdb87",
-      "bytes": 35848
+      "sha256": "f8a2ca0d9aedb7c14d9345cf831fe11f6992226b097ebc0a01a71a4f06f4939a",
+      "bytes": 43055
     },
     "scripts/escalation_ladder_gate.js": {
       "sha256": "0b4487f1c80bee598666ed21d87f71132d44b5fc336c22b1dfee10fb30131adc",
@@ -111,8 +111,8 @@
       "bytes": 5178
     },
     "scripts/apply_rc7_shared_execution_patch.js": {
-      "sha256": "e2e9d9f4215702548b9c91fbd9bc76498e394bb9665efc6ef9c50a222e22bed0",
-      "bytes": 340329
+      "sha256": "3291b2cfcb8690264334943cc64ff9f41ce04ea686c170e46b04f29133dcd741",
+      "bytes": 341219
     },
     "scripts/apply_rc64_routes_patch.js": {
       "sha256": "b01e1225f5844b632e24d616957fb9e565541345a10d6f4fbc640a4b034070b2",
@@ -139,8 +139,8 @@
       "bytes": 11107
     },
     "dist/extension.js": {
-      "sha256": "b077b725f05e89ad8950cf7941d848046ed14190ecb73426fef284b0100bbd2c",
-      "bytes": 5653643
+      "sha256": "5bd2667082a6d2ee84b375d4038ab65fcaa9fdb6d630f775e6d484aeb60cb02a",
+      "bytes": 5672120
     },
     "scripts/mac/png_compat_transform.js": {
       "sha256": "cdea12886a1d5bb5b4c2b3e38829de1c7e68ed70e7777e8d6e2eb02bb0ce3514",
@@ -335,15 +335,15 @@
       "bytes": 3225
     },
     "tools/shared_stata.py": {
-      "sha256": "8bb07f4b3301504afe5be87373d726eb4e4cfcfa254b0b3cb7269f78c53840f8",
-      "bytes": 17201
+      "sha256": "6d78192d80328bfb1b6633e3413024220b375b64f0ef46994ad8c6f9a02bf617",
+      "bytes": 20080
     },
     "tools/workbench_doctor.py": {
       "sha256": "547acffd98bcc6c6371c9a4c6767303760ed56832a646c5f959acc9ccc7e46fe",
       "bytes": 4729
     },
     "tools/verified_workbench.py": {
-      "sha256": "74b7d9e9635c051530d586af577e87494a8c5d9b6bbbfc62ae9953d5065a1af4",
+      "sha256": "b193dc80e2c4676deed083de9974da3ff0f3f0878128dc328ac127b9fc94e5ea",
       "bytes": 21973
     },
     "tools/workbench_platform.py": {
@@ -434,9 +434,13 @@
       "sha256": "7efc929056497d016467231b82123e0ea902a8a018445fb409f4f24e58b3736a",
       "bytes": 17013
     },
-    "scripts/windows_kill_scope_core.js": {
-      "sha256": "8b07619806be569aa0fec220019d79f392d7f4d02a2369b8684270390ebb2703",
-      "bytes": 20825
+    "scripts/stata_timing_patch.js": {
+      "sha256": "8038fcd9cb91f5be6f20c2a451b343a3b99e1eafa5569365499a445c196b2a45",
+      "bytes": 13520
+    },
+    "scripts/worker_cpu_progress_core.js": {
+      "sha256": "84364a6296495b154a8679ad8ee8b983020acbd8e9a0fdb43775d4408b793ed6",
+      "bytes": 11122
     }
   },
   "acceptanceStatus": "PENDING_LICENSED_MAC_FULL_ACCEPTANCE",

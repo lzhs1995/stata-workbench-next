@@ -7,11 +7,15 @@
 open 建 ~/.stata-workbench-next/profiles/<名字>/：settings.json 写端口（17601-17620 里挑空闲的）和会话名；
 扩展目录是指向共用 extensions-shared 的链接；运行时是该会话自己的一份（macOS 用 APFS 克隆 `cp -c -R`，
 不再用机器级 ~/.local/share/stata-workbench，A2 实测扩展会原地改写那份）；mcp.json 指向这份运行时。
-超过 5 个活会话拒绝。open 只启动一次、不等 bridge、不激活窗口、不发 Stata 命令；之后用
+超过 5 个活会话拒绝。并发的 open 互不阻塞：全局锁只管检查和预留，同名 open 由配置目录的 .open.lock 互斥，
+运行时一份一份地拷（拷前重查磁盘）。open 只启动一次、等 VS Code 主进程出现（最多 60 s，launchState 报
+visible / accepted-not-visible / prepare-only）、不等 bridge、不激活窗口、不发 Stata 命令；之后用
 verified_workbench.py --status --session <名字> 核身份。close 只对该配置目录的 VS Code 主进程发普通退出
 （macOS SIGTERM，Windows taskkill 不带 /F），从不强杀。Windows 运行时用整份复制，尚未实机验证。
 """
 import argparse
+from contextlib import ExitStack, contextmanager
+import errno
 import json
 import os
 from pathlib import Path
@@ -22,6 +26,7 @@ import socket
 import subprocess
 import sys
 import time
+import uuid
 
 import workbench_platform as host
 import verified_workbench as entry
@@ -29,6 +34,14 @@ import verified_workbench as entry
 NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,39}")
 TMP_RE = re.compile(r"\.(?P<sid>[^/\\]+)\.(?P<pid>[0-9]+)\.[0-9a-f]{8}\.tmp")
 MAX_SESSIONS = 5
+# open 只在全局锁内做检查和预留（名字、端口、上限）；拷运行时、写配置、启动 VS Code 在全局锁外。
+# 预留的归属是每个配置目录自己的 OS 文件锁 profiles/<名字>/.open.lock：open 在全局锁内拿到它（不阻塞），
+# 一直拿到 VS Code 窗口可见或等待到期；进程死了 OS 自动放锁。opening.json 只记端口和本次 token，
+# 别的进程判断预留还在不在只看这把锁有没有人拿着（拿不准时当作还在），不看 pid、不看时钟。
+OPEN_LOCK_TIMEOUT = 60
+PROFILE_LOCK_WAIT = 2          # 别的进程探测锁只占几毫秒；超过这个时间还拿不到就是有人在 open
+COPY_LOCK_TIMEOUT = 900        # 运行时一份一份地拷：拷之前在锁内重查磁盘，后一个看得到前一个用掉的空间
+LAUNCH_VISIBLE_WAIT = 60       # 启动后等 VS Code 主进程或注册表出现，期间预留不放
 PORTS = range(17601, 17621)
 FORBIDDEN_PORTS = {17485, 17416, 17497, 17507}
 MAC_RESERVE_BYTES = 20 * 10**9
@@ -36,6 +49,68 @@ MAC_RESERVE_BYTES = 20 * 10**9
 
 class SessionError(RuntimeError):
     pass
+
+
+def _lock_byte(handle, lock):
+    """对文件第 0 字节加/放不阻塞的独占锁（与 workbench_platform.file_lock 同一机制）；拿不到时抛 OSError。"""
+    if os.name == "nt":
+        import msvcrt
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK if lock else msvcrt.LK_UNLCK, 1)
+    else:
+        import fcntl
+        fcntl.flock(handle, (fcntl.LOCK_EX | fcntl.LOCK_NB) if lock else fcntl.LOCK_UN)
+
+
+BUSY_ERRNOS = (errno.EACCES, errno.EAGAIN, errno.EDEADLK)
+
+
+def lock_held_elsewhere(path):
+    """该锁文件此刻是否被别的打开方拿着。不存在算没人拿；能拿到就立刻放掉算没人拿；
+    拿不到、或探测本身出错（权限、未知 errno），都按「有人拿着」处理（宁可多算一个预留，不放走在跑的 open）。"""
+    try:
+        fd = os.open(path, os.O_RDWR)
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+    with os.fdopen(fd, "r+b", buffering=0) as handle:
+        try:
+            _lock_byte(handle, True)
+        except OSError:
+            return True
+        try:
+            _lock_byte(handle, False)
+        except OSError:
+            pass
+    return False
+
+
+@contextmanager
+def hold_profile_lock(path, wait=PROFILE_LOCK_WAIT, clock=time.monotonic):
+    """拿住配置目录的 open 锁直到退出 with；wait 秒内拿不到就抛 SessionError（有另一个 open 在跑）。"""
+    path = Path(path)
+    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    with os.fdopen(fd, "r+b", buffering=0) as handle:
+        deadline = clock() + wait
+        while True:
+            try:
+                _lock_byte(handle, True)
+                break
+            except OSError as exc:
+                if exc.errno not in BUSY_ERRNOS:
+                    raise SessionError(f"PROFILE_LOCK_ERROR: cannot lock {path}: {exc}; nothing was launched") from exc
+                if clock() >= deadline:
+                    raise SessionError(f"SESSION_ALREADY_OPEN: another open of {path.parent.name} is in progress "
+                                       f"(it holds {path.name}); nothing was launched") from exc
+                time.sleep(0.05)
+        try:
+            yield handle
+        finally:
+            try:
+                _lock_byte(handle, False)
+            except OSError:
+                pass
 
 
 def state_root():
@@ -134,7 +209,8 @@ class Sessions:
     """所有外部动作（启动、进程查找、信号、端口探测、磁盘、时钟）都可注入，测试不真开 VS Code。"""
 
     def __init__(self, root=None, platform=None, code=None, run=None, popen=None, instances=None, alive=None,
-                 port_free=port_free, kill=None, sleep=time.sleep, clock=time.monotonic, disk_free=None, environ=None):
+                 port_free=port_free, kill=None, sleep=time.sleep, clock=time.monotonic, disk_free=None, environ=None,
+                 now=time.time, launch_wait=LAUNCH_VISIBLE_WAIT):
         self.root = Path(root) if root else state_root()
         self.platform = platform or sys.platform
         self.environ = dict(os.environ if environ is None else environ)
@@ -146,6 +222,8 @@ class Sessions:
         self.port_free = port_free
         self.kill = kill or self._real_kill
         self.sleep, self.clock = sleep, clock
+        self.now = now
+        self.launch_wait = launch_wait
         self.disk_free = disk_free or (lambda p: shutil.disk_usage(p).free)
 
     @property
@@ -185,10 +263,33 @@ class Sessions:
         except (OSError, ValueError):
             return {}
 
+    def reservation(self, name):
+        """正在 open 的预留：opening.json 在，且配置目录的 .open.lock 此刻被别人拿着。
+        归属只看 OS 锁（open 的进程死了 OS 自动放锁），不看 pid 存活、不看时钟，所以 pid 复用、时钟跳变、
+        进程存活查不出来都不会把在跑的 open 当成陈旧件；探测拿不准时按「还在」算。
+        opening.json 内容坏了（不是对象、pid 不是正整数）但锁有人拿着，仍算预留，只是没有端口。"""
+        profile = self.profiles / name
+        try:
+            text = (profile / "opening.json").read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return None
+        except OSError:
+            text = ""
+        if not lock_held_elsewhere(profile / ".open.lock"):
+            return None
+        try:
+            data = json.loads(text)
+        except ValueError:
+            data = None
+        if not isinstance(data, dict) or type(data.get("pid")) is not int or data["pid"] <= 0:
+            return {"name": name, "valid": False}
+        port = data.get("port")
+        return {**data, "name": name, "valid": True, "port": port if type(port) is int else None}
+
     def active(self):
-        """活会话：注册表里活着的记录（按会话名），加上有 VS Code 进程但还没写注册表的配置目录。"""
+        """活会话：注册表里活着的记录（按会话名），有 VS Code 进程但还没写注册表的配置目录，加上正在 open 的预留。"""
         active = {r.get("sessionName") or r["sessionId"] for r in self.records()}
-        active.update(name for name in self.names() if self.instances(self.profiles / name))
+        active.update(name for name in self.names() if self.instances(self.profiles / name) or self.reservation(name))
         return active
 
     def pick_port(self, name):
@@ -196,6 +297,7 @@ class Sessions:
         mine = self.meta(name).get("port")
         used = {r["port"] for r in self.records()}
         used.update(p for n in self.names() if n != name for p in [self.meta(n).get("port")] if type(p) is int)
+        used.update(p for n in self.names() if n != name for p in [(self.reservation(n) or {}).get("port")] if type(p) is int)
         candidates = ([mine] if type(mine) is int and mine in PORTS else []) + [p for p in PORTS if p != mine]
         for port in candidates:
             if port not in used and port not in FORBIDDEN_PORTS and self.port_free(port):
@@ -231,6 +333,8 @@ class Sessions:
         return "shared"
 
     def prepare_runtime(self, profile, source):
+        """调用方拿着该配置目录的 .open.lock。拷/克隆在 locks/runtime-copy.lock 里一份一份地做：
+        锁内先重查磁盘再拷，后一个 open 看得到前一个已经用掉的空间（全局锁内那次检查只是提前拒绝）。"""
         dest = profile / "runtime"
         if runtime_python(dest, self.platform).exists():
             return {"path": str(dest), "method": "existing"}
@@ -241,14 +345,29 @@ class Sessions:
             raise SessionError(f"RUNTIME_INCOMPLETE: {dest} exists without its python; not overwritten")
         staging = profile / ".runtime.partial"
         if staging.exists():
-            raise SessionError(f"RUNTIME_STAGING_EXISTS: {staging} is left from an earlier attempt; not removed")
-        if self.platform == "darwin":
-            self.run(["/bin/cp", "-c", "-R", str(source), str(staging)])  # APFS 克隆：写时才复制
-            method = "apfs-clone"
-        else:
-            shutil.copytree(source, staging, symlinks=True)  # Windows：整份复制，尚未实机验证
-            method = "copy"
-        os.replace(staging, dest)
+            raise SessionError(f"RUNTIME_STAGING_EXISTS: {staging} is left from an earlier open that stopped while copying "
+                               f"(no open of {profile.name} is running now); it was not removed. Delete that directory "
+                               f"by hand, then open again")
+        with ExitStack() as stack:
+            try:
+                stack.enter_context(host.file_lock(self.root / "locks" / "runtime-copy.lock", timeout=COPY_LOCK_TIMEOUT))
+            except TimeoutError:
+                raise SessionError(f"RUNTIME_COPY_BUSY: another session's runtime copy did not finish within "
+                                   f"{COPY_LOCK_TIMEOUT} s; nothing was copied") from None
+            self.check_disk(source if self.platform != "darwin" else None)
+            try:
+                if self.platform == "darwin":
+                    self.run(["/bin/cp", "-c", "-R", str(source), str(staging)])  # APFS 克隆：写时才复制
+                    method = "apfs-clone"
+                else:
+                    shutil.copytree(source, staging, symlinks=True)  # Windows：整份复制
+                    method = "copy"
+            except BaseException:
+                # 本次 open 拿着 .open.lock，staging 只可能是这次建的：拷失败就删掉，下次不会卡在 RUNTIME_STAGING_EXISTS。
+                # 进程被杀时到不了这里，留下的 staging 由上面的 RUNTIME_STAGING_EXISTS 报给人处理。
+                shutil.rmtree(staging, ignore_errors=True)
+                raise
+            os.replace(staging, dest)
         return {"path": str(dest), "method": method, "source": str(source)}
 
     def write_mcp_config(self, profile, runtime):
@@ -309,38 +428,104 @@ class Sessions:
             raise SessionError("UNSUPPORTED_PLATFORM: macOS and Windows only")
         return argv
 
+    def _refuse_if_open(self, name, profile):
+        if self.instances(profile):
+            raise SessionError(f"SESSION_ALREADY_OPEN: {name} already has a VS Code window; nothing was launched")
+        if any(r.get("sessionName") == name for r in self.records()):
+            raise SessionError(f"SESSION_ALREADY_OPEN: a live registry record already uses the name {name}")
+        if self.reservation(name):
+            raise SessionError(f"SESSION_ALREADY_OPEN: another open of {name} is in progress; nothing was launched")
+
     def open(self, name, workspace=None, runtime_source=None, shared_extensions=None, launch=True, disable_workspace_trust=False):
         profile = self.profile(name)
         workspace = Path(workspace or profile / "workspace")
         if workspace != profile / "workspace" and not workspace.is_dir():
             raise SessionError(f"WORKSPACE_MISSING: {workspace}")
-        with host.file_lock(self.root / "locks" / "stata-session.lock", timeout=10):
-            if self.instances(profile):
-                raise SessionError(f"SESSION_ALREADY_OPEN: {name} already has a VS Code window; nothing was launched")
-            if any(r.get("sessionName") == name for r in self.records()):
-                raise SessionError(f"SESSION_ALREADY_OPEN: a live registry record already uses the name {name}")
-            active = self.active() - {name}
-            if len(active) >= MAX_SESSIONS:
-                raise SessionError(f"SESSION_LIMIT: {len(active)} live Next sessions ({', '.join(sorted(active))}); "
-                                   f"at most {MAX_SESSIONS}; close one first; nothing was launched")
-            source = Path(runtime_source) if runtime_source else default_runtime_source(self.platform, self.environ)
-            needs_copy = not runtime_python(profile / "runtime", self.platform).exists()
-            self.check_disk(source if needs_copy and self.platform != "darwin" else None)
-            for sub in ("user-data", "tmp", "mcp-temp", "pycache", "locks"):
-                (profile / sub).mkdir(parents=True, exist_ok=True, mode=0o700)
-            workspace.mkdir(parents=True, exist_ok=True, mode=0o700)
-            extensions = self.link_extensions(profile, Path(shared_extensions) if shared_extensions else self.root / "extensions-shared")
-            runtime = self.prepare_runtime(profile, source)
-            port = self.pick_port(name)
-            config = self.write_mcp_config(profile, Path(runtime["path"]))
-            settings = self.write_settings(profile, name, port, config)
-            env = self.child_env(profile, name, config)
-            write_json_atomic(profile / "session.json", {"name": name, "port": port, "profile": str(profile),
-                "runtime": runtime, "mcpConfig": str(config), "extensions": extensions,
-                "workspace": str(workspace.resolve()), "openedAt": time.strftime("%Y-%m-%dT%H:%M:%S%z")})
-            argv = self.launch(profile, workspace, env, disable_workspace_trust) if launch else None
+        token = uuid.uuid4().hex
+        with ExitStack() as owned:
+            with host.file_lock(self.root / "locks" / "stata-session.lock", timeout=OPEN_LOCK_TIMEOUT):
+                self._refuse_if_open(name, profile)
+                active = self.active() - {name}
+                if len(active) >= MAX_SESSIONS:
+                    raise SessionError(f"SESSION_LIMIT: {len(active)} live Next sessions ({', '.join(sorted(active))}); "
+                                       f"at most {MAX_SESSIONS}; close one first; nothing was launched")
+                source = Path(runtime_source) if runtime_source else default_runtime_source(self.platform, self.environ)
+                needs_copy = not runtime_python(profile / "runtime", self.platform).exists()
+                self.check_disk(source if needs_copy and self.platform != "darwin" else None)  # 提前拒绝；拷之前在拷贝锁里重查
+                for sub in ("user-data", "tmp", "mcp-temp", "pycache", "locks"):
+                    (profile / sub).mkdir(parents=True, exist_ok=True, mode=0o700)
+                # 这把锁一直拿到本次 open 结束（窗口可见、等待到期或失败），离开全局锁也不放。
+                owned.enter_context(hold_profile_lock(profile / ".open.lock"))
+                # 拿到锁后再核一次：上一个同名 open 可能刚好在我们等锁时让窗口可见并放了锁。
+                if self.instances(profile) or any(r.get("sessionName") == name for r in self.records()):
+                    raise SessionError(f"SESSION_ALREADY_OPEN: {name} became live while this open waited; nothing was launched")
+                port = self.pick_port(name)
+                owned.callback(self._release_reservation, profile, token)
+                write_json_atomic(profile / "opening.json", {"pid": os.getpid(), "at": self.now(), "port": port, "token": token})
+            return self._open_reserved(name, profile, workspace, source, port, shared_extensions, launch,
+                                       disable_workspace_trust)
+
+    def _release_reservation(self, profile, token):
+        """只删自己写的 opening.json（核 token）；调用时仍拿着 .open.lock，没有别的 open 能在这之间写它。"""
+        path = profile / "opening.json"
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return
+        if isinstance(data, dict) and data.get("token") == token:
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                pass
+
+    def _wait_visible(self, name, profile):
+        """启动后等这个配置目录的 VS Code 主进程或同名注册表记录出现，最多 launch_wait 秒；期间预留不放。"""
+        deadline = self.clock() + self.launch_wait
+        while True:
+            try:
+                if self.instances(profile) or any(r.get("sessionName") == name for r in self.records()):
+                    return "visible"
+            except Exception:
+                pass  # 查进程出错不等于没启动；照样等到期，结果报 accepted-not-visible
+            if self.clock() >= deadline:
+                return "accepted-not-visible"
+            self.sleep(0.5)
+
+    def _open_reserved(self, name, profile, workspace, source, port, shared_extensions, launch, disable_workspace_trust):
+        """全局锁外：名字和端口由 opening.json 预留，归属由本进程拿着的 .open.lock 保证。"""
+        workspace.mkdir(parents=True, exist_ok=True, mode=0o700)
+        extensions = self.link_extensions(profile, Path(shared_extensions) if shared_extensions else self.root / "extensions-shared")
+        runtime = self.prepare_runtime(profile, source)
+        config = self.write_mcp_config(profile, Path(runtime["path"]))
+        settings = self.write_settings(profile, name, port, config)
+        env = self.child_env(profile, name, config)
+        meta_path = profile / "session.json"
+        try:
+            previous = meta_path.read_bytes()
+        except FileNotFoundError:
+            previous = None
+        write_json_atomic(meta_path, {"name": name, "port": port, "profile": str(profile),
+            "runtime": runtime, "mcpConfig": str(config), "extensions": extensions,
+            "workspace": str(workspace.resolve()), "openedAt": time.strftime("%Y-%m-%dT%H:%M:%S%z")})
+        argv, state = None, "prepare-only"
+        if launch:
+            try:
+                argv = self.launch(profile, workspace, env, disable_workspace_trust)
+            except BaseException as exc:
+                # 启动失败：把 session.json 还原成本次之前的样子，新会话的端口不留在 pick_port 的记录里。
+                if previous is None:
+                    meta_path.unlink(missing_ok=True)
+                else:
+                    tmp = meta_path.with_name("." + meta_path.name + f".{os.getpid()}.restore.tmp")
+                    tmp.write_bytes(previous)
+                    os.replace(tmp, meta_path)
+                if isinstance(exc, Exception) and not isinstance(exc, SessionError):
+                    raise SessionError(f"LAUNCH_FAILED: {exc}; session.json restored; the runtime and settings were kept") from exc
+                raise
+            state = self._wait_visible(name, profile)
         installed = any((profile / "extensions").glob("lzhs1995.stata-workbench-next-*"))
         return {"verdict": "LAUNCHED" if launch else "PREPARED", "launchCount": int(bool(launch)), "name": name,
+                "launchState": state,
                 "port": port, "profile": str(profile), "runtime": runtime, "mcpConfig": str(config), "settings": str(settings),
                 "extensions": extensions, "extensionInstalled": installed, "argv": argv,
                 "next": f"python3 -B tools/verified_workbench.py --status --session {name}",
@@ -361,6 +546,7 @@ class Sessions:
             meta = self.meta(name)
             mine = [public(r) for r in records if r.get("sessionName") == name]
             rows.append({"name": name, "port": meta.get("port"), "profile": str(self.profiles / name),
+                         "opening": bool(self.reservation(name)),
                          "runtime": (meta.get("runtime") or {}).get("method"),
                          "vscodePids": self.instances(self.profiles / name), "sessions": mine})
         known = set(self.names())
@@ -372,6 +558,10 @@ class Sessions:
         if not profile.is_dir():
             raise SessionError(f"SESSION_UNKNOWN: {profile} does not exist")
         pids = self.instances(profile)
+        if not pids and self.reservation(name):
+            return {"verdict": "OPENING", "name": name, "signalled": [],
+                    "note": "an open of this session is still in progress (it holds .open.lock); nothing was signalled; "
+                            "run close again after the open returns"}
         if not pids:
             return {"verdict": "NOT_RUNNING", "name": name, "signalled": [], "removedRegistryFiles": self._remove_dead_records(name),
                     "removedTmpFiles": self._remove_orphan_tmp()}
@@ -459,7 +649,7 @@ def main(argv=None, sessions=None):
     else:
         result = s.close(args.name, args.wait)
     print(json.dumps(result, ensure_ascii=False))
-    return 2 if result.get("verdict") == "CLOSE_PENDING" else 0
+    return 2 if result.get("verdict") in ("CLOSE_PENDING", "OPENING") else 0
 
 
 if __name__ == "__main__":

@@ -1492,6 +1492,31 @@ const REQUIRED_MARKERS = [
     marker: "codex patch rc.7.79: Terminal input waits for Stata start-up before its pre-log budget",
   },
   {
+    key: "wp1Timing",
+    label: "W-P1 timing lines for the first Terminal command (diagnostic)",
+    marker: "codex patch rc.7.80: W-P1 timing lines for the first Terminal command (diagnostic)",
+  },
+  {
+    key: "stopDuringBackendStart",
+    label: "Stop during backend start-up skips the quiescence probe",
+    marker: "codex patch rc.7.83: Stop during backend start-up skips the quiescence probe",
+  },
+  {
+    key: "workerCpuProgress",
+    label: "worker CPU time counts as watchdog progress",
+    marker: "codex patch rc.7.84: worker CPU time counts as watchdog progress",
+  },
+  {
+    key: "warmWorkerIdentity",
+    label: "warm cache follows the default worker; Terminal restarts a worker that died while starting",
+    marker: "codex patch rc.7.81: warm cache follows the default worker; Terminal restarts a worker that died while starting",
+  },
+  {
+    key: "agentWarmupRefusal",
+    label: "warm-up refusals say whether a retry can help",
+    marker: "codex patch rc.7.86: warm-up refusals say whether a retry can help (nothing was dispatched)",
+  },
+  {
     key: "windowsKillScope",
     label: "Windows KILL ends only this session's backend process tree",
     marker: "codex patch rc.7.82: Windows KILL ends only this session's backend process tree",

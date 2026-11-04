@@ -45,7 +45,7 @@ function table(extra = []) {
   ].concat(extra);
 }
 
-async function runReset({ reason, busy = false, owned, processes, listFails = false, helperMissing = false, killReply = null, dispose = "ok" }) {
+async function runReset({ reason, busy = false, owned, processes, listFails = false, helperMissing = false, killReply = null, dispose = "ok", openGateThrows = false, noResult = false, ownedOverride = null }) {
   const calls = [];
   const execFileSync = (file, args) => {
     calls.push([file, ...args]);
@@ -90,11 +90,15 @@ async function runReset({ reason, busy = false, owned, processes, listFails = fa
   // Globals the patch reads must start undefined/null, not as the permissive stub.
   ctx.__codexUnresolvedCleanup = null; ctx.__codexLastKillScope = null; ctx.__codexKillScopeGeneration = null; ctx.__codexSoftStopInFlight = false;
   ctx.__codexContinuityLost = null;
+  ctx.__codexWindowsKillScopeRef = undefined; ctx.__codexWindowsKillScope = undefined; ctx.__codexWindowsKillScopeError = undefined;
   ctx.__codexControl = { ensureRecoveryState: (x) => x || { required: false }, requestRecovery: (st, why) => { events.push(["requestRecovery", why]); return { required: true, reason: why }; } };
   ctx.__codexGraphMark = (m) => events.push(["graphMark", m.readinessState, m.readinessReason]);
   ctx.__codexRestoreReadinessRef = { reset: (w) => events.push(["restoreReset", w]) };
   ctx.__codexPendingOutcomesRef = { clear: (w) => events.push(["pendingClear", w]) };
   vm.runInContext(HELPER, ctx);
+  if (openGateThrows) ctx.__codexWindowsKillScopeRef = { ...ctx.__codexWindowsKillScopeRef, openGate: () => { throw new Error("openGate broke"); } };
+  if (noResult) ctx.__codexWindowsKillScopeRun = () => undefined;
+  if (ownedOverride) ctx.__codexOwnedBackendPids = ownedOverride;
   vm.runInContext(FORCE_RESET, ctx);
   let state = null;
   await Promise.race([ctx.__codexForceReset(reason).then((s) => { state = s; }, () => {}), new Promise((r) => setTimeout(r, 1500))]);
@@ -193,11 +197,54 @@ async function t(name, fn) {
     const core = require("./windows_kill_scope_core");
     const still = core.recheckGate(gate, { processes: table().map((p) => ({ ...p, cimCreatedMs: p.createdMs, handleCreatedMs: p.createdMs })) });
     assert.equal(still.open, true, "same pid, same creation time: still open");
-    const reused = core.recheckGate(gate, { processes: table().map((p) => (p.pid === 110 ? { ...p, cimCreatedMs: T0 + 99000, handleCreatedMs: T0 + 99000 } : { ...p, cimCreatedMs: p.createdMs, handleCreatedMs: p.createdMs })) });
-    assert.equal(reused.open, false, "pid now another process: cleared");
-    const gone = core.recheckGate(gate, { processes: table().filter((p) => p.pid !== 110) });
-    assert.equal(gone.open, false, "pid gone: cleared");
+    const reused = (rows) => core.recheckGate(gate, { processes: rows.map((p) => (p.pid === 110 ? { ...p, cimCreatedMs: T0 + 99000, handleCreatedMs: T0 + 99000 } : { ...p, cimCreatedMs: p.createdMs, handleCreatedMs: p.createdMs })) });
+    assert.equal(reused(table()).open, true, "pid now another process but its old child 111 is still there: open");
+    assert.equal(reused(table().filter((p) => p.pid !== 111)).open, false, "pid now another process, no child from its lifetime: cleared");
+    assert.equal(core.recheckGate(gate, { processes: table().filter((p) => p.pid !== 110) }).open, true, "pid gone, child 111 left: open");
+    assert.equal(core.recheckGate(gate, { processes: table().filter((p) => p.pid !== 110 && p.pid !== 111) }).open, false, "pid and child gone: cleared");
     assert.equal(core.recheckGate(gate, { error: "CIM timeout" }).open, true, "a failed listing does not clear it");
+  });
+  // Review 4 R2: the gate does not depend on the helper module; a broken gate stays unknown.
+  const keepsPending = (r, label) => {
+    assert.ok(r.ctx.__codexUnresolvedCleanup && r.ctx.__codexUnresolvedCleanup.open, label + ": gate open " + JSON.stringify(r.ctx.__codexUnresolvedCleanup));
+    const marks = r.events.filter((e) => e[0] === "graphMark");
+    assert.ok(marks.length && marks.every((e) => e[1] !== "ready" && e[2] !== "force-reset-complete"), label + ": " + JSON.stringify(marks));
+    assert.ok(!r.events.some((e) => e[0] === "restoreReset" || e[0] === "pendingClear"), label + ": readiness/pending kept");
+    assert.ok(r.events.some((e) => e[0] === "requestRecovery"), label + ": recovery required");
+  };
+  await t("R4-R2 helper module missing: cleanup unknown keeps readiness and pending, gate is unknown", async () => {
+    const r = await runReset({ reason: "watchdog", owned: ours, processes: table(), helperMissing: true });
+    assert.equal(r.state.cleanup.ok, false);
+    keepsPending(r, "module missing");
+    const items = r.ctx.__codexUnresolvedCleanup.items;
+    assert.ok(items.length === 1 && items[0].check === "unknown" && /module missing/.test(items[0].error), JSON.stringify(items));
+    assert.equal(r.ctx.__codexUnresolvedCleanupRecheck().open, true, "a re-check cannot clear it without the helper");
+  });
+  await t("R4-R2 openGate throws: the gate stays open as unknown, not swallowed", async () => {
+    const reply = { ok: false, mode: "scoped", results: [{ pid: 110, code: 5 }, { pid: 111, code: 0 }], unresolved: [], scanOk: true };
+    const r = await runReset({ reason: "watchdog", owned: ours, processes: table(), killReply: reply, openGateThrows: true });
+    keepsPending(r, "openGate throws");
+    assert.ok(r.ctx.__codexUnresolvedCleanup.items.some((i) => i.check === "unknown" && /openGate broke/.test(i.error)));
+  });
+  await t("R4-R2 the scoped run returns no result: readiness and pending kept", async () => {
+    const r = await runReset({ reason: "watchdog", owned: ours, processes: table(), noResult: true });
+    assert.notEqual(r.state.cleanup.ok, true);
+    keepsPending(r, "no result");
+  });
+  await t("R4-R2 no gate at all but cleanup not ok: __needsSmoke still holds readiness", async () => {
+    const r = await runReset({ reason: "watchdog", owned: ours, processes: table(), helperMissing: true });
+    r.ctx.__codexUnresolvedCleanup = null;
+    assert.equal(r.ctx.__codexCleanupBlocks({ ok: null }), true);
+    assert.ok(r.ctx.__codexUnresolvedCleanup && r.ctx.__codexUnresolvedCleanup.open, "and it opened the gate");
+    assert.equal(r.ctx.__codexCleanupBlocks({ ok: true }), true, "an open gate keeps blocking");
+    r.ctx.__codexUnresolvedCleanup = null;
+    assert.equal(r.ctx.__codexCleanupBlocks({ ok: true }), false, "a complete cleanup with no gate does not block");
+  });
+  await t("R4-R2 the cleanup step throws before it can open the gate: readiness still held", async () => {
+    const r = await runReset({ reason: "watchdog", owned: ours, processes: table(), ownedOverride: { keys: () => { throw new Error("registry broke"); } } });
+    assert.equal(r.state.cleanup.ok, false);
+    assert.match(String(r.state.cleanup.error), /registry broke/);
+    keepsPending(r, "cleanup threw");
   });
   // Review 3 R3: dispose evidence.
   for (const [mode, ok, settled] of [["ok", true, true], ["reject", false, true], ["hang", false, false]]) {

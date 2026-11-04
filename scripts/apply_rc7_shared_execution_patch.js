@@ -3456,6 +3456,16 @@ text = require("./apply_guard_attribution_patch").patchBundle(text, { finalize: 
 // F fix6: Terminal input waits for Stata start-up (rc.7.72 warm-up) before its
 // pre-log budget, as agent runs already did (W-P1 entry gap).
 text = require("./apply_terminal_warmup_patch").patchBundle(text, { finalize: false });
+// W-P1 diagnostics: timing lines for the first Terminal command (log-only).
+text = require("./apply_wp1_timing_patch").patchBundle(text, { finalize: false });
+// V3-S M3: a Stop while the backend is still starting skips the quiescence probe (no dispatch yet).
+text = require("./apply_stop_during_backend_start_patch").patchBundle(text, { finalize: false });
+// V3-W: worker CPU time counts as watchdog progress for IDLE (V3-M M4 / F-mac P5).
+text = require("./apply_worker_cpu_progress_patch").patchBundle(text, { finalize: false });
+// PLAN-V3 stage 6: the warm cache follows the default worker (pid/created_at);
+// Terminal input restarts a worker that died while starting, once, without force reset.
+text = require("./apply_warm_worker_identity_patch").patchBundle(text, { finalize: false });
+text = require("./apply_agent_warmup_refusal_patch").patchBundle(text, { finalize: false });
 // F v3: Windows KILL, /panic-kill and a busy force reset end only this window's
 // backend process tree instead of every mcp-stata process and Stata GUI.
 text = require("./apply_windows_kill_scope_patch").patchBundle(text, { finalize: false });
