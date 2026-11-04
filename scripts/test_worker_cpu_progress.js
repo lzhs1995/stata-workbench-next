@@ -20,7 +20,8 @@ const base = { preLogMs: 5000, idleMs: IDLE, pollMs: 10, cpuSampleMs: 40, cpuTim
 // Log line at t=0, silent afterwards.
 const logOnce = () => ({ logPath: "/l", logBytes: 10 });
 // CPU grows at `rate` ms per wall ms (1 = a full core) on pids [7].
-const cpuAt = (rate, t0) => async () => ({ cpuMs: Math.round((Date.now() - t0) * rate), pids: [7] });
+// Not rounded: a 1 ms rounding step would exceed 2 % of a 40 ms test interval.
+const cpuAt = (rate, t0) => async () => ({ cpuMs: (Date.now() - t0) * rate, pids: [7] });
 
 async function run(G, workMs, extra) {
   const c = { n: 0 };
@@ -77,7 +78,8 @@ function assertGuard(G, res) {
   ok(res.hangs.r.state.cpuSampleErrors >= 1, "hangs: stuck sample abandoned");
   ok(res.budget.r.state.stallReason === G.STALL.HARD_BUDGET && res.budget.ms < 330, "HARD_BUDGET unchanged");
   ok(res.cap.r.ok === false && res.cap.r.state.stallReason === G.STALL.IDLE, "cap: still cancelled");
-  ok(res.cap.ms >= 450 && res.cap.ms < 450 + IDLE + 250, "cap: cancelled after maxSilent+idle (" + res.cap.ms + " ms)");
+  // idle (300) <= maxSilent (450): once the log has been silent 450 ms CPU stops counting and IDLE fires at once.
+  ok(res.cap.ms >= 450 && res.cap.ms < 450 + 150, "cap: cancelled right at maxSilent (" + res.cap.ms + " ms)");
   ok(res.prelog.r.state.stallReason === G.STALL.PRE_LOG && res.prelog.ms < 330, "PRE_LOG unchanged");
   ok(!res.prelog.r.state.cpuSamples, "PRE_LOG: no CPU sampling before the first log line");
   const pub = G.publicSummary(res.busy.r.state);
