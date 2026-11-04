@@ -3456,6 +3456,8 @@ text = require("./apply_guard_attribution_patch").patchBundle(text, { finalize: 
 // F fix6: Terminal input waits for Stata start-up (rc.7.72 warm-up) before its
 // pre-log budget, as agent runs already did (W-P1 entry gap).
 text = require("./apply_terminal_warmup_patch").patchBundle(text, { finalize: false });
+// W-P1 diagnostics: timing lines for the first Terminal command (log-only).
+text = require("./apply_wp1_timing_patch").patchBundle(text, { finalize: false });
 // PLAN-V3 stage 6: the warm cache follows the default worker (pid/created_at);
 // Terminal input restarts a worker that died while starting, once, without force reset.
 text = require("./apply_warm_worker_identity_patch").patchBundle(text, { finalize: false });

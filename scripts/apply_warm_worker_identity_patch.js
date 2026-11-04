@@ -9,8 +9,11 @@
 // run, e.g. Terminal then BeginGraphRun, reuses it): a worker that is not
 // "running", not the one recorded when the cache was filled, or a probe that
 // failed or ran past 5 s drops the cache, and the run goes through rc.7.72's
-// bounded wait (three failed polls refuse it, nothing dispatched). A Stop during
-// either probe refuses the run as CANCELLED before anything is dispatched.
+// bounded wait (three failed polls refuse it, nothing dispatched). After READY one
+// more probe records the worker; if it is not "running" (or the probe fails), that
+// READY is dropped and the run waits once more; a second miss refuses the run
+// (PRE_RUN_BACKEND_WARMUP_FAILED, nothing dispatched). Only a positively seen
+// worker marks the run confirmed. A Stop during any of this refuses it as CANCELLED.
 //
 // rc.7.79 refused Terminal input when the default worker died while starting
 // ("default Stata session is error"). Its text did not match the Terminal
@@ -60,12 +63,29 @@ function __codexWarmWorkerCancelled(runId, source, stage, started) {
     payloadDispatched: false, recoveryRequired: false, lastStatus: null, polls: 0, recovery: null, timeoutMs: null,
     elapsedMs: Date.now() - started, stageStartedAt: new Date(started).toISOString(), message, cancelledDuring: stage } });
 }
+function __codexWarmWorkerDrop(runId, reason) {
+  __codexWarmTransport = null;
+  __codexWarmWorker = null;
+  __codexWarmWorkerConfirmed = null;
+  __codexWarmWorkerStats.drops++;
+  __codexWarmWorkerStats.lastDrop = { at: new Date().toISOString(), runId, reason };
+}
+// Worker changed twice around READY: refuse before dispatch (not the stopped-session
+// text, so kM never force-resets for it).
+function __codexWarmWorkerChanged(runId, source, reason, started, lastStatus) {
+  const code = "PRE_RUN_BACKEND_WARMUP_FAILED", message = "Stata worker changed while this command waited (" + reason + ")";
+  return Object.assign(new Error(code + ": " + message), { code, __codexPreRunTimeout: {
+    ok: false, status: 500, error: code, reasonCode: code, preRunStage: "backend-warmup", runId, sourceMode: source || null,
+    payloadDispatched: false, recoveryRequired: false, lastStatus, polls: 0, recovery: null, timeoutMs: null,
+    elapsedMs: Date.now() - started, stageStartedAt: new Date(started).toISOString(), message, workerChanged: true } });
+}
 async function __codexEnsureBackendWarmWorker(runId, source) {
   const generation = Number(globalThis.__codexResetGeneration || 0), started = Date.now();
   const id = runId == null ? null : String(runId);
   const stopped = () => Number(globalThis.__codexResetGeneration || 0) !== generation;
   const transport = zg?._transport || null;
   const confirmed = __codexWarmWorkerConfirmed;
+  let verified = false;
   if (transport && __codexWarmTransport === transport && id != null && confirmed
     && confirmed.runId === id && confirmed.transport === transport && confirmed.generation === generation) {
     __codexWarmWorkerStats.skipped++;
@@ -81,23 +101,43 @@ async function __codexEnsureBackendWarmWorker(runId, source) {
         : seen.status !== "running" ? "status " + seen.status
         : known && known.pid != null && seen.pid != null && known.pid !== seen.pid ? "pid " + known.pid + " -> " + seen.pid
         : known && known.createdAt != null && seen.createdAt != null && known.createdAt !== seen.createdAt ? "created_at changed" : null;
-      if (changed) {
-        __codexWarmTransport = null;
-        __codexWarmWorker = null;
-        __codexWarmWorkerStats.drops++;
-        __codexWarmWorkerStats.lastDrop = { at: new Date().toISOString(), runId: id, reason: changed };
-      } else if (!known) __codexWarmWorker = { transport, pid: seen.pid, createdAt: seen.createdAt };
+      if (changed) __codexWarmWorkerDrop(id, changed);
+      else {
+        if (!known) __codexWarmWorker = { transport, pid: seen.pid, createdAt: seen.createdAt };
+        verified = true;
+      }
     }
   }
-  const result = await __codexEnsureBackendWarmByGeneration(runId, source);
-  const warmed = __codexWarmTransport && __codexWarmTransport === (zg?._transport || null) ? __codexWarmTransport : null;
-  if (result && result.outcome === "READY" && warmed) {
+  // Old mcp-stata without list_sessions: the probe returns null and rc.7.72 returns
+  // null without waiting, so nothing can be verified. The run proceeds as before
+  // rc.7.72, never marked confirmed. Every READY below comes from list_sessions.
+  for (let attempt = 0; ; attempt++) {
+    const result = await __codexEnsureBackendWarmByGeneration(runId, source);
+    if (stopped()) throw __codexWarmWorkerCancelled(id, source, "backend warm-up", started);
+    const warmed = __codexWarmTransport && __codexWarmTransport === (zg?._transport || null) ? __codexWarmTransport : null;
+    if (!(result && result.outcome === "READY")) {
+      if (attempt > 0) throw __codexWarmWorkerChanged(id, source, "the worker could not be confirmed after it changed", started, null);
+      __codexWarmWorkerConfirmed = verified && warmed && id != null ? { runId: id, transport: warmed, generation } : null;
+      return result;
+    }
+    if (!warmed) {
+      __codexWarmWorkerDrop(id, "after READY: transport changed");
+      if (attempt > 0) throw __codexWarmWorkerChanged(id, source, "after READY: transport changed", started, null);
+      continue;
+    }
     const seen = await __codexProbeDefaultWorker();
     if (stopped()) throw __codexWarmWorkerCancelled(id, source, "worker identity record", started);
-    __codexWarmWorker = seen && seen.ok && seen.status === "running" ? { transport: warmed, pid: seen.pid, createdAt: seen.createdAt } : null;
+    if (seen && seen.ok && seen.status === "running") {
+      __codexWarmWorker = { transport: warmed, pid: seen.pid, createdAt: seen.createdAt };
+      __codexWarmWorkerConfirmed = id != null ? { runId: id, transport: warmed, generation } : null;
+      return result;
+    }
+    // READY was seen, but the worker right after it is starting/missing/error or
+    // unknown: that READY no longer describes the worker a payload would reach.
+    const why = "after READY: " + (!seen ? "probe unavailable" : !seen.ok ? "probe failed: " + seen.error : "status " + seen.status);
+    __codexWarmWorkerDrop(id, why);
+    if (attempt > 0) throw __codexWarmWorkerChanged(id, source, why, started, seen && seen.ok ? seen.status : null);
   }
-  __codexWarmWorkerConfirmed = warmed && id != null ? { runId: id, transport: warmed, generation } : null;
-  return result;
 }
 async function __codexEnsureBackendWarmRestartOnce(runId, source) {
   const generation = Number(globalThis.__codexResetGeneration || 0);
