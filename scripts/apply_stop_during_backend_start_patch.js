@@ -14,7 +14,8 @@ const path = require("node:path");
 const fingerprint = require("./finalize_bundle_identity");
 const MARKER = "// codex patch rc.7.83: Stop during backend start-up skips the quiescence probe";
 
-const HELPER_ANCHOR = "globalThis.__codexWarmupSkipsQuiescence = __codexWarmupSkipsQuiescence;\n";
+// After the rc.7.79 helper, which owns the rc.7.72 assignment line as its own anchor.
+const HELPER_ANCHOR = "globalThis.__codexTerminalWarmup = __codexTerminalWarmup;\n";
 const HELPER = String.raw`${MARKER}
 // Keep the rc.7.72 rule by reference: rebinding the global below must not make it call itself.
 const __codexWarmupSkipsQuiescenceBase = __codexWarmupSkipsQuiescence;
