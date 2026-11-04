@@ -82,6 +82,18 @@ function harness(source, script = {}) {
         if (script.probeFails > 0) { script.probeFails--; throw new Error("list_sessions transport hiccup"); }
         if (script.probeThrows) throw new Error("list_sessions transport hiccup");
         const st = statusNow();
+        // Review V3-R1: the connection is replaced (reset generation unchanged) right
+        // after the Nth "running" answer, before the awaiting code resumes.
+        if (st === "running" && script.swapAt) {
+          script.runningSeen = (script.runningSeen || 0) + 1;
+          if (script.swapAt[0] === script.runningSeen) {
+            script.swapAt.shift();
+            const reply = { sessions: [{ id: "default", status: st, created_at: sess.createdAt, pid: sess.pid }] };
+            zg._transport = { id: 900 + script.runningSeen };
+            replace({ readyIn: 30_000 });
+            return reply;
+          }
+        }
         // Review V2-R1: change the worker right after a poll that answered "running",
         // i.e. just before the next list_sessions (the post-READY record probe).
         if (st === "running" && script.afterRunning && script.afterRunning.length) {
@@ -348,6 +360,56 @@ const CASES = {
     assert.equal(refusal(r).payloadDispatched, false);
     assert.equal(h.dispatches.length, 0);
   },
+  // V3-R1: the connection is replaced while the post-READY record probe is in flight.
+  async transportSwapDuringRecordProbe(src) {
+    for (const via of ["terminal", "agent"]) {
+      const h = harness(src, { status: "running" });
+      h.script.swapAt = [2];
+      const r = via === "terminal" ? await h.run("display 1", "debug_terminal_1") : await h.warm("agent_run_1", "visible-bridge");
+      if (via === "terminal") {
+        assert.ok(ok(r), "Terminal completes");
+        assert.deepEqual(h.dispatches.map((d) => d.status), ["running"], "Terminal dispatched only into a running worker");
+      } else {
+        assert.equal(r.value?.outcome, "READY");
+        assert.equal(h.sess.status, "running", "agent would dispatch into a running worker");
+      }
+      assert.ok(h.now >= h.t0 + 30 * S, via + ": waited for the worker on the new connection");
+      assert.equal(h.summary().worker?.transport, h.zg._transport, via + ": recorded worker is on the current connection");
+      assert.match(String(h.summary().lastDrop?.reason), /transport changed during the probe/);
+      assert.equal(h.g.__codexResetGeneration, 0, "no Stop/reset involved");
+    }
+  },
+  // The connection changes during both record probes: refused, nothing dispatched.
+  async transportSwapTwiceRefused(src) {
+    for (const via of ["terminal", "agent"]) {
+      const h = harness(src, { status: "running" });
+      h.script.swapAt = [2, 4];
+      const r = via === "terminal" ? await h.run("display 1", "debug_terminal_1") : await h.warm("agent_run_1", "visible-bridge");
+      const f = via === "terminal" ? refusal(r) : (r.error?.__codexPreRunTimeout || {});
+      assert.equal(f.reasonCode, "PRE_RUN_BACKEND_WARMUP_FAILED", via);
+      assert.equal(f.payloadDispatched, false);
+      assert.equal(f.workerChanged, true);
+      assert.equal(h.dispatches.length, 0, via + ": nothing dispatched");
+      assert.equal(h.counts.forceResets, 0);
+    }
+  },
+  // The connection is replaced while the cache-hit entry probe is in flight.
+  async transportSwapDuringEntryProbe(src) {
+    const h = harness(src, { status: "running" });
+    await h.run("display 1", "debug_terminal_1");
+    h.script.swapAt = [1];
+    assert.ok(ok(await h.run("display 2", "debug_terminal_2")));
+    assert.equal(h.dispatches[1].status, "running", "Terminal not dispatched into the worker starting on the new connection");
+    assert.match(String(h.summary().lastDrop?.reason), /^transport changed during the probe/);
+    assert.equal(h.summary().worker?.transport, h.zg._transport);
+    const a = harness(src, { status: "running" });
+    await a.warm("agent_run_1", "visible-bridge");
+    a.script.swapAt = [1];
+    const t = a.now, r = await a.warm("agent_run_2", "visible-bridge");
+    assert.equal(r.value?.outcome, "READY");
+    assert.equal(a.sess.status, "running", "agent waited for the new worker");
+    assert.ok(a.now - t >= 30 * S);
+  },
   // Old mcp-stata without list_sessions: nothing to verify, the run proceeds and is never "confirmed".
   async oldServerNoListSessions(src) {
     const h = harness(src, { status: "running" });
@@ -459,12 +521,14 @@ const MUTANTS = [
   ["cache-hit status ignored", 'seen.status !== "running" ? "status "', 'false ? "status "'],
   ["pid not compared", "known.pid !== seen.pid", "false"],
   ["created_at not compared", "known.createdAt !== seen.createdAt", "false"],
-  ["probe failure keeps cache", 'const changed = !seen.ok ? "probe failed: " + seen.error', "const changed = !seen.ok ? null"],
+  ["probe failure keeps cache", '        : !seen.ok ? "probe failed: " + seen.error\n', "        : !seen.ok ? null\n"],
   ["probe not bounded", 'timer = setTimeout(() => reject(new Error("worker identity probe timed out after 5000 ms")), 5000);', "void reject;"],
   ["Stop during entry probe ignored", 'if (stopped()) throw __codexWarmWorkerCancelled(id, source, "worker identity probe", started);', ""],
   ["Stop during record probe ignored", 'if (stopped()) throw __codexWarmWorkerCancelled(id, source, "worker identity record", started);', ""],
   ["probe every call", "__codexWarmWorkerStats.skipped++;\n    return null;", "__codexWarmWorkerStats.skipped++;"],
   ["identity not recorded", "      __codexWarmWorker = { transport: warmed, pid: seen.pid, createdAt: seen.createdAt };\n", "      __codexWarmWorker = null;\n"],
+  ["record probe ignores the connection", "const same = !!seen && seen.transport === warmed && (zg?._transport || null) === warmed && __codexWarmTransport === warmed;", "const same = !!seen;"],
+  ["entry probe ignores the connection", 'const changed = seen.transport !== transport || (zg?._transport || null) !== transport || __codexWarmTransport !== transport\n        ? "transport changed during the probe"\n        : ', "const changed = "],
   ["record miss keeps stale READY", "    __codexWarmWorkerDrop(id, why);\n", "    return result;\n"],
   ["record miss retried without limit", "    if (attempt > 0) throw __codexWarmWorkerChanged(id, source, why, started, seen && seen.ok ? seen.status : null);\n", ""],
   ["no restart", "    __codexWarmWorkerStats.restarts++;\n", "    throw error;\n"],

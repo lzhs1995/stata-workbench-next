@@ -27,8 +27,8 @@
       "bytes": 17618
     },
     "scripts/patch_manager.js": {
-      "sha256": "787a3cb6fa6d00e1d5b296f8430e809af6e188be4b3fa04bacd6a54eb198291b",
-      "bytes": 96016
+      "sha256": "780d184e767d972e9c355100dd31f6eef1c57f7d42191f33009c0bf01b6d09a5",
+      "bytes": 96193
     },
     "scripts/mcp_stata_runtime_patch.js": {
       "sha256": "64013014e8598af5c7f70a276cd80a2f5c21d218eaa6fba59f079096c8f75ac9",
@@ -67,8 +67,8 @@
       "bytes": 15512
     },
     "scripts/execution_guard.js": {
-      "sha256": "39b392e29fdee33b24d795df03537fd3f3271c4fec8daee251b7ccc5e3acdb87",
-      "bytes": 35848
+      "sha256": "f8a2ca0d9aedb7c14d9345cf831fe11f6992226b097ebc0a01a71a4f06f4939a",
+      "bytes": 43055
     },
     "scripts/escalation_ladder_gate.js": {
       "sha256": "0b4487f1c80bee598666ed21d87f71132d44b5fc336c22b1dfee10fb30131adc",
@@ -111,8 +111,8 @@
       "bytes": 5178
     },
     "scripts/apply_rc7_shared_execution_patch.js": {
-      "sha256": "68a5147a857ca150a60361352442ccfebc4b7484ac381fe59d627cd9386952d8",
-      "bytes": 340704
+      "sha256": "4de0f58e355186e727fc8918b793ab46b1a8074cddc2c3ceac90e8677eb3e56e",
+      "bytes": 340880
     },
     "scripts/apply_rc64_routes_patch.js": {
       "sha256": "b01e1225f5844b632e24d616957fb9e565541345a10d6f4fbc640a4b034070b2",
@@ -139,8 +139,8 @@
       "bytes": 11107
     },
     "dist/extension.js": {
-      "sha256": "e50721e118b0585838b2da63b1b996b0b3d3805f52f144c3cf1f922828da1189",
-      "bytes": 5662992
+      "sha256": "133e2b256ce9f6f7801ec91b0ed47b368fdae268ef8e8a75604db85c74586a09",
+      "bytes": 5664294
     },
     "scripts/mac/png_compat_transform.js": {
       "sha256": "cdea12886a1d5bb5b4c2b3e38829de1c7e68ed70e7777e8d6e2eb02bb0ce3514",
@@ -343,7 +343,7 @@
       "bytes": 4729
     },
     "tools/verified_workbench.py": {
-      "sha256": "972710c523a6e9a6f608e3198932cc05b4b09b9d05485c332ddd3a34a3687627",
+      "sha256": "56c066c6faa73348799229eaa4cdbb722769cbb3778f055a83d7e030317e2643",
       "bytes": 21973
     },
     "tools/workbench_platform.py": {
@@ -437,6 +437,10 @@
     "scripts/stata_timing_patch.js": {
       "sha256": "8038fcd9cb91f5be6f20c2a451b343a3b99e1eafa5569365499a445c196b2a45",
       "bytes": 13520
+    },
+    "scripts/worker_cpu_progress_core.js": {
+      "sha256": "84364a6296495b154a8679ad8ee8b983020acbd8e9a0fdb43775d4408b793ed6",
+      "bytes": 11122
     }
   },
   "acceptanceStatus": "PENDING_LICENSED_MAC_FULL_ACCEPTANCE",
