@@ -1,4 +1,5 @@
 """Next 阶段 D：tools/stata_session.py。所有启动、进程、信号、端口、磁盘都用替身，不开 VS Code。"""
+import errno
 import io
 import json
 import os
@@ -6,7 +7,10 @@ from pathlib import Path
 import shutil
 import socket
 import subprocess
+import sys
 import tempfile
+import threading
+import time
 import unittest
 from contextlib import redirect_stdout
 from unittest.mock import Mock, patch
@@ -43,7 +47,29 @@ class Base(unittest.TestCase):
         self.calls = []
 
     def tearDown(self):
+        self.join_all()
         self.tmp.cleanup()
+
+    def in_threads(self, s, names, until, timeout=15):
+        """每个名字一个线程跑 s.open；等 until() 成立（或超时）后返回结果表和错误表（线程还在跑）。"""
+        results, errors = {}, []
+        def go(name):
+            try:
+                results[name] = s.open(name, runtime_source=self.source)
+            except Exception as exc:
+                errors.append(repr(exc))
+        self.threads = getattr(self, "threads", []) + [threading.Thread(target=go, args=(n,), daemon=True) for n in names]
+        for t in self.threads[-len(names):]:
+            t.start()
+        deadline = time.monotonic() + timeout
+        while not until() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        return results, errors
+
+    def join_all(self):
+        for t in getattr(self, "threads", []):
+            t.join(20)
+        self.threads = []
 
     def run_cmd(self, argv):
         self.calls.append(list(argv))
@@ -56,7 +82,7 @@ class Base(unittest.TestCase):
                     else "C:/VSCode/Code.exe",
                     instances=lambda profile: self.running.get(Path(profile).name, []),
                     alive=lambda pid: True, port_free=lambda port: True, sleep=Mock(), disk_free=lambda p: 10**12,
-                    environ={"SystemRoot": "C:\\Windows"})
+                    environ={"SystemRoot": "C:\\Windows"}, launch_wait=0)
         args.update(kw)
         return ss.Sessions(**args)
 
@@ -149,59 +175,209 @@ class OpenTests(Base):
         self.assertEqual(s.open("p6", runtime_source=self.source, launch=False)["verdict"], "PREPARED")
 
     def test_concurrent_opens_launch_outside_the_lock_with_distinct_ports(self):
-        """M8：启动（open -a、焦点门禁）期间不拿 stata-session.lock；三个并发 open 都成功、端口各不相同。"""
-        import threading
-        gate, entered, probes = threading.Event(), [], []
+        """M8：三个并发 open 能同时停在启动里（全局锁已放），端口各不相同，结束后没有残留预留。"""
+        gate, entered = threading.Event(), []
         def slow_launch(profile, workspace, env, disable_workspace_trust=False):
-            try:
-                with ss.host.file_lock(self.root / "locks" / "stata-session.lock", timeout=0):
-                    probes.append("free")
-            except Exception as exc:
-                probes.append(repr(exc))
             entered.append(profile.name)
             gate.wait(20)
             return ["fake-launch", profile.name]
         s = self.sessions()
         s.launch = slow_launch
-        results, errors = {}, []
-        def go(name):
-            try:
-                results[name] = s.open(name, runtime_source=self.source)
-            except Exception as exc:
-                errors.append(repr(exc))
-        threads = [threading.Thread(target=go, args=(n,)) for n in ("c1", "c2", "c3")]
-        for t in threads:
-            t.start()
-        deadline = __import__("time").monotonic() + 15
-        while len(entered) < 3 and __import__("time").monotonic() < deadline:
-            __import__("time").sleep(0.05)
+        results, errors = self.in_threads(s, ("c1", "c2", "c3"), until=lambda: len(entered) == 3)
         self.assertEqual(sorted(entered), ["c1", "c2", "c3"], "all three opens reach launch at the same time")
         gate.set()
-        for t in threads:
-            t.join(20)
+        self.join_all()
         self.assertEqual(errors, [])
-        self.assertEqual(probes, ["free"] * 3, "the open lock is not held while VS Code launches")
         self.assertEqual(len({r["port"] for r in results.values()}), 3)
         self.assertFalse(any((self.root / "profiles" / n / "opening.json").exists() for n in ("c1", "c2", "c3")))
 
     def test_in_flight_open_counts_toward_the_limit_and_reserves_its_port(self):
-        """预留件在启动完成前就算一个活会话，并占住端口；陈旧预留（进程已死或超时）不算。"""
+        """预留只看 .open.lock 有没有人拿着：拿着就算活会话并占端口；没人拿着的 opening.json 是陈旧件。"""
         for n in range(4):
             write_record(self.root, f"s{n}", 17610 + n, f"r{n}")
-        s = self.sessions(alive=lambda pid: pid != 999999)
+        s = self.sessions(alive=lambda pid: False)  # pid 查出来是死的也不影响：只看锁
         p = self.root / "profiles" / "busy"
         p.mkdir(parents=True)
-        ss.write_json_atomic(p / "opening.json", {"pid": os.getpid(), "at": s.now(), "port": 17601})
-        with self.assertRaisesRegex(ss.SessionError, "SESSION_LIMIT"):
-            s.open("p1", runtime_source=self.source, launch=False)
-        with self.assertRaisesRegex(ss.SessionError, "SESSION_ALREADY_OPEN"):
-            s.open("busy", runtime_source=self.source, launch=False)
-        (self.root / "sessions" / "s3.json").unlink()
-        self.assertEqual(s.open("p1", runtime_source=self.source, launch=False)["port"], 17602)
-        ss.write_json_atomic(p / "opening.json", {"pid": 999999, "at": s.now(), "port": 17601})
+        ss.write_json_atomic(p / "opening.json", {"pid": 999999, "at": 0, "port": 17601, "token": "other"})
+        self.assertIsNone(s.reservation("busy"), "nobody holds the lock: stale file")
+        s4 = self.sessions()
+        with ss.hold_profile_lock(p / ".open.lock"):
+            self.assertEqual(s.reservation("busy")["port"], 17601)
+            with self.assertRaisesRegex(ss.SessionError, "SESSION_LIMIT"):
+                s4.open("p1", runtime_source=self.source, launch=False)
+            with self.assertRaisesRegex(ss.SessionError, "SESSION_ALREADY_OPEN"):
+                s4.open("busy", runtime_source=self.source, launch=False)
+            (self.root / "sessions" / "s3.json").unlink()
+            self.assertEqual(s4.open("p1", runtime_source=self.source, launch=False)["port"], 17602)
         self.assertIsNone(s.reservation("busy"))
-        ss.write_json_atomic(p / "opening.json", {"pid": os.getpid(), "at": s.now() - ss.OPEN_RESERVATION_TTL - 1, "port": 17601})
-        self.assertIsNone(s.reservation("busy"))
+        self.assertEqual(s4.open("busy", runtime_source=self.source, launch=False)["verdict"], "PREPARED")
+
+    def test_same_name_open_is_refused_while_the_first_still_runs_even_after_a_clock_jump(self):
+        """R1：先开的 open 停在启动里，30 分钟、时钟前跳或后跳都不让同名第二个 open 进来；
+        第一个结束后它只删自己的预留。"""
+        gate, entered = threading.Event(), []
+        def slow_launch(profile, workspace, env, disable_workspace_trust=False):
+            entered.append(profile.name)
+            gate.wait(20)
+            return ["fake-launch"]
+        clock = {"now": 10000.0}
+        first = self.sessions(now=lambda: clock["now"])
+        first.launch = slow_launch
+        results, errors = self.in_threads(first, ("dup",), until=lambda: entered == ["dup"])
+        second = self.sessions(now=lambda: clock["now"])
+        for jump in (ss.OPEN_LOCK_TIMEOUT * 31, -10**6):
+            clock["now"] += jump
+            with self.assertRaisesRegex(ss.SessionError, "SESSION_ALREADY_OPEN"):
+                second.open("dup", runtime_source=self.source)
+        self.assertEqual(entered, ["dup"], "the second open never reached launch")
+        gate.set()
+        self.join_all()
+        self.assertEqual(errors, [])
+        self.assertFalse((self.root / "profiles/dup/opening.json").exists())
+        self.assertEqual(second.open("dup", runtime_source=self.source)["verdict"], "LAUNCHED")
+
+    def test_open_rechecks_after_waiting_for_the_profile_lock(self):
+        """前一个同名 open 在我们等 .open.lock 的那一小段里让窗口可见并放了锁：拿到锁后重查，拒绝重复启动。"""
+        held = threading.Event()
+        p = self.root / "profiles" / "rc"
+        p.mkdir(parents=True)
+        def holder():
+            with ss.hold_profile_lock(p / ".open.lock"):
+                held.set()
+                time.sleep(0.3)
+                self.running["rc"] = [5151]
+        self.threads = [threading.Thread(target=holder, daemon=True)]
+        self.threads[0].start()
+        self.assertTrue(held.wait(10))
+        with self.assertRaisesRegex(ss.SessionError, "became live while this open waited"):
+            self.sessions().open("rc", runtime_source=self.source, launch=False)
+        self.assertFalse((p / "session.json").exists())
+
+    def test_an_old_opener_never_deletes_a_reservation_it_does_not_own(self):
+        """compare-and-delete：opening.json 的 token 不是自己的就不删。"""
+        s = self.sessions()
+        def swap_owner(profile, workspace, env, disable_workspace_trust=False):
+            ss.write_json_atomic(profile / "opening.json", {"pid": 4242, "at": 0, "port": 17609, "token": "someone-else"})
+            return ["fake-launch"]
+        s.launch = swap_owner
+        s.open("own", runtime_source=self.source)
+        left = json.loads((self.root / "profiles/own/opening.json").read_text())
+        self.assertEqual(left["token"], "someone-else")
+
+    def test_unknown_lock_state_or_broken_reservation_fails_closed(self):
+        """R2：探测锁出错按「有人在 open」算；opening.json 内容坏了但锁有人拿着，也算预留（只是没有端口）。"""
+        s = self.sessions()
+        p = self.root / "profiles" / "u1"
+        p.mkdir(parents=True)
+        ss.write_json_atomic(p / "opening.json", {"pid": 1, "at": 0, "port": 17601, "token": "x"})
+        (p / ".open.lock").write_bytes(b"")
+        with patch.object(ss, "_lock_byte", side_effect=OSError(errno.EIO, "probe failed")):
+            self.assertTrue(s.reservation("u1"))
+        with patch.object(ss.os, "open", side_effect=PermissionError("denied")):
+            self.assertTrue(ss.lock_held_elsewhere(p / ".open.lock"))
+        with ss.hold_profile_lock(p / ".open.lock"):
+            self.assertEqual(s.pick_port("other"), 17602, "the reserved port is skipped")
+            for bad in ("[1, 2]", "not json", json.dumps({"pid": -3, "port": 17601}), json.dumps({"pid": "7"})):
+                (p / "opening.json").write_text(bad, encoding="utf-8")
+                r = s.reservation("u1")
+                self.assertEqual((bool(r), r["valid"]), (True, False), bad)
+                self.assertIn("u1", s.active())
+                with self.assertRaisesRegex(ss.SessionError, "SESSION_ALREADY_OPEN"):
+                    s.open("u1", runtime_source=self.source, launch=False)
+        (p / "opening.json").write_text("[1, 2]", encoding="utf-8")
+        self.assertIsNone(s.reservation("u1"), "broken file, nobody holds the lock: ignored without raising")
+        self.assertNotIn("u1", s.active())
+
+    def test_concurrent_copies_near_the_disk_reserve_recheck_inside_the_copy_lock(self):
+        """R3：两份 Windows 整份复制同时过了全局锁里的检查，第二份在拷贝锁里重查时看到第一份用掉的空间而拒绝。"""
+        free = {"bytes": int(3.5 * 10**9)}
+        tree = 10**9
+        started, inside = [], threading.Event()
+        real_prepare = ss.Sessions.prepare_runtime
+        s = self.sessions(platform="win32", popen=Mock(), disk_free=lambda p: free["bytes"])
+        def prepare(profile, source):
+            started.append(profile.name)
+            return real_prepare(s, profile, source)
+        s.prepare_runtime = prepare
+        def fake_copytree(src, dst, symlinks=True):
+            inside.wait(10)  # 两个 open 都过了全局锁里的检查之后，第一份才真正占用空间
+            Path(dst).mkdir(parents=True)
+            fake_runtime(dst)
+            free["bytes"] -= tree
+        with patch.object(ss, "tree_bytes", return_value=tree), patch.object(ss.shutil, "copytree", side_effect=fake_copytree):
+            results, errors = self.in_threads(s, ("w1", "w2"), until=lambda: len(started) == 2)
+            inside.set()
+            self.join_all()
+        self.assertEqual(len(results), 1, errors)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("DISK_RESERVE", errors[0])
+        self.assertGreaterEqual(free["bytes"], 2 * 10**9, "the 2 GB reserve is kept")
+        loser = ({"w1", "w2"} - set(results)).pop()
+        self.assertFalse((self.root / "profiles" / loser / ".runtime.partial").exists())
+        self.assertFalse((self.root / "profiles" / loser / "opening.json").exists())
+
+    def test_close_during_an_open_reports_opening_and_signals_nothing(self):
+        s = self.sessions()
+        p = self.root / "profiles" / "o1"
+        p.mkdir(parents=True)
+        ss.write_json_atomic(p / "opening.json", {"pid": os.getpid(), "at": 0, "port": 17601, "token": "t"})
+        kill = Mock()
+        s.kill = kill
+        with ss.hold_profile_lock(p / ".open.lock"):
+            r = s.close("o1")
+            self.assertEqual(r["verdict"], "OPENING")
+            self.assertTrue(s.list()["profiles"][0]["opening"])
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(ss.main(["close", "o1"], sessions=s), 2)
+        kill.assert_not_called()
+        self.assertEqual(s.close("o1")["verdict"], "NOT_RUNNING")
+
+    def test_launch_waits_until_the_window_is_visible_and_reports_when_it_is_not(self):
+        """启动后等 VS Code 主进程出现才放预留；到期没出现报 accepted-not-visible，预留也放掉。"""
+        ticks = iter(range(0, 10000))
+        s = self.sessions(clock=lambda: next(ticks), launch_wait=5)
+        seen = []
+        def launch(profile, workspace, env, disable_workspace_trust=False):
+            return ["fake-launch"]
+        def sleep(_):
+            seen.append(s.reservation("v1") is not None)
+            if len(seen) == 2:
+                self.running["v1"] = [3131]
+        s.launch, s.sleep = launch, sleep
+        r = s.open("v1", runtime_source=self.source)
+        self.assertEqual((r["verdict"], r["launchState"]), ("LAUNCHED", "visible"))
+        self.assertEqual(seen, [True, True], "the reservation is held while waiting for the window")
+        self.assertFalse((self.root / "profiles/v1/opening.json").exists())
+        self.running.clear()
+        r = s.open("v2", runtime_source=self.source)
+        self.assertEqual(r["launchState"], "accepted-not-visible")
+        self.assertFalse((self.root / "profiles/v2/opening.json").exists())
+        self.assertEqual(s.open("v3", runtime_source=self.source, launch=False)["launchState"], "prepare-only")
+
+    def test_os_lock_is_released_when_the_opening_process_dies(self):
+        """真多进程：子进程拿着 .open.lock 时同名 open 被拒；杀掉子进程后锁由 OS 放掉，下一个 open 进得来。"""
+        p = self.root / "profiles" / "mp"
+        p.mkdir(parents=True)
+        ss.write_json_atomic(p / "opening.json", {"pid": 1, "at": 0, "port": 17601, "token": "child"})
+        code = ("import sys,time; sys.path.insert(0, sys.argv[1]); import stata_session as ss\n"
+                "with ss.hold_profile_lock(sys.argv[2]):\n    print('HELD', flush=True); time.sleep(120)\n")
+        child = subprocess.Popen([sys.executable, "-B", "-c", code, str(Path(ss.__file__).parent), str(p / ".open.lock")],
+                                 stdout=subprocess.PIPE, text=True)
+        try:
+            self.assertEqual(child.stdout.readline().strip(), "HELD")
+            s = self.sessions()
+            self.assertTrue(s.reservation("mp"))
+            with self.assertRaisesRegex(ss.SessionError, "SESSION_ALREADY_OPEN"):
+                s.open("mp", runtime_source=self.source, launch=False)
+        finally:
+            child.kill()
+            child.wait(30)
+            child.stdout.close()
+        deadline = time.monotonic() + 10
+        while s.reservation("mp") and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertIsNone(s.reservation("mp"), "the OS released the dead child's lock")
+        self.assertEqual(s.open("mp", runtime_source=self.source, launch=False)["verdict"], "PREPARED")
 
     def test_failed_open_releases_its_reservation(self):
         s = self.sessions()
@@ -214,6 +390,33 @@ class OpenTests(Base):
         self.assertNotIn("f1", s.active())
         ok = self.sessions()
         self.assertEqual(ok.open("f2", runtime_source=self.source, launch=False)["port"], 17601, "port freed")
+
+    def test_each_failure_stage_releases_what_it_reserved(self):
+        """拷到一半失败删掉本次 staging；启动失败把 session.json 还原（新会话端口放掉，重开的会话端口原样保留）。"""
+        win = self.sessions(platform="win32", popen=Mock())
+        def half_copy(src, dst, symlinks=True):
+            Path(dst).mkdir(parents=True)
+            (Path(dst) / "half").write_text("x", encoding="utf-8")
+            raise OSError(errno.ENOSPC, "disk full")
+        with patch.object(ss.shutil, "copytree", side_effect=half_copy):
+            with self.assertRaises(OSError):
+                win.open("c1", runtime_source=self.source)
+        self.assertFalse((self.root / "profiles/c1/.runtime.partial").exists(), "own staging removed")
+        self.assertFalse((self.root / "profiles/c1/opening.json").exists())
+        s = self.sessions()
+        def boom(*a, **k):
+            raise RuntimeError("open -a failed")
+        s.launch = boom
+        with self.assertRaisesRegex(ss.SessionError, "LAUNCH_FAILED"):
+            s.open("l1", runtime_source=self.source)
+        self.assertFalse((self.root / "profiles/l1/session.json").exists(), "new session metadata removed")
+        self.assertFalse((self.root / "profiles/l1/opening.json").exists())
+        self.assertEqual(self.sessions().open("l2", runtime_source=self.source, launch=False)["port"], 17601, "port freed")
+        before = (self.root / "profiles/l2/session.json").read_bytes()
+        with self.assertRaisesRegex(ss.SessionError, "LAUNCH_FAILED"):
+            s.open("l2", runtime_source=self.source)
+        self.assertEqual((self.root / "profiles/l2/session.json").read_bytes(), before, "reopened session keeps its metadata")
+        self.assertEqual(self.sessions().pick_port("x"), 17602, "l2 still owns 17601")
 
     def test_live_registry_records_count_toward_the_limit(self):
         for n in range(5):
