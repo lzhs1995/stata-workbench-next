@@ -120,7 +120,7 @@ function cpuProgressTracker(minMs, minShare) {
       const delta = sample.cpuMs - prev.cpuMs, wall = at - prev.at;
       if (delta < 0 || wall <= 0) return { progress: false, reason: delta < 0 ? "negative-delta" : "no-wall" };
       return delta >= Math.max(minMs, minShare * wall)
-        ? { progress: true, deltaMs: delta, wallMs: wall }
+        ? { progress: true, deltaMs: delta, wallMs: wall, creditAt: prev.at }
         : { progress: false, reason: "below-threshold", deltaMs: delta, wallMs: wall };
     },
     reset() { base = null; },
@@ -606,7 +606,10 @@ async function guardProgress(work, opts) {
       if (!sample) state.cpuSampleErrors++;
       const r = cpuTracker.observe(sample, at);
       if (r.progress) {
-        state.cpuProgressCount++; state.lastCpuProgressAt = at;
+        // 记在较早一次采样的开始：CPU 增长只证明「上一采样时刻之后还在算」，
+        // 记在后一次会把真挂（采样之间停下）多算最多一个采样间隔（Mac 实测 SIGSTOP 对照 84.7 s）
+        state.cpuProgressCount++;
+        state.lastCpuProgressAt = Math.max(state.lastCpuProgressAt || 0, r.creditAt);
         // 只记数字，不记代码与路径
         if (state.cpuProgressCount === 1) cpuLog("[exec-guard] worker CPU progress while log silent"
           + " (cpu +" + Math.round(r.deltaMs) + " ms in " + Math.round(r.wallMs) + " ms); idle window extended");

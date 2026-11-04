@@ -67,8 +67,8 @@
       "bytes": 15512
     },
     "scripts/execution_guard.js": {
-      "sha256": "08523e5302d2952bee8de049e79cb5fc60e6a90bbd1a6c1e5da992ba5167c81b",
-      "bytes": 41431
+      "sha256": "167df564931dd455e88cca86f0b43ee9369e90f9188ab45e2f49af20b0dffe14",
+      "bytes": 41746
     },
     "scripts/escalation_ladder_gate.js": {
       "sha256": "0b4487f1c80bee598666ed21d87f71132d44b5fc336c22b1dfee10fb30131adc",
