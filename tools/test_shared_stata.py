@@ -116,6 +116,53 @@ class SharedClientTests(unittest.TestCase):
             self.assertEqual(result["verdict"], "EXECUTION_UNCONFIRMED_NO_RETRY")
             self.assertFalse(result["stataErrorChecks"]["clientMarkerNotPrinted"])
 
+    def _stopped_run(self, directory, mutate_body=None, mutate_after=None):
+        """rc.7.87：扩展回 500 + stoppedBy（Mac 实测形状：Request cancelled、lastCompletedRun failed、soft-stop 恢复成功）。"""
+        before = state()
+        before["status"]["resetGeneration"] = 0
+        body = {"ok": False, "error": "Request cancelled", "runId": "req-new",
+                "stoppedBy": {"by": "person", "reason": "terminal Stop button", "runId": "new", "generation": 1, "at": "t"}}
+        after = state("new")
+        after["status"].update(resetGeneration=1, resetGenerationKind="soft-stop",
+                               lastSoftStop={"runId": "new", "generation": 1, "ok": True, "restored": True})
+        after["status"]["lastCompletedRun"].update(phase="failed", completionMarkerVerified=False)
+        if mutate_body:
+            mutate_body(body)
+        if mutate_after:
+            mutate_after(after)
+        post = Mock(return_value=(500, body))
+        result = client.execute_once(SimpleNamespace(w=SimpleNamespace(http_post=post)), {"code": "display 1"},
+                                     Path(directory) / "receipt", sleep=Mock(), observe=Mock(side_effect=[before, after]))
+        self.assertEqual((result["postCount"], post.call_count), (1, 1))
+        return result
+
+    def test_stop_with_bound_record_is_its_own_verdict_and_never_retried(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = self._stopped_run(directory)
+            self.assertEqual(result["verdict"], "STOPPED_NO_RETRY", result.get("stopChecks"))
+            self.assertEqual(result["stoppedBy"], "person")
+
+    def test_stop_record_that_does_not_check_out_stays_unconfirmed(self):
+        cases = {
+            "no stoppedBy": dict(mutate_body=lambda b: b.pop("stoppedBy")),
+            "stop of another run": dict(mutate_body=lambda b: b["stoppedBy"].update(runId="other")),
+            "unknown stopper": dict(mutate_body=lambda b: b["stoppedBy"].update(by="other")),
+            "stop before this submit": dict(mutate_body=lambda b: b["stoppedBy"].update(generation=0)),
+            "a later reset happened": dict(mutate_after=lambda a: a["status"].update(resetGeneration=2)),
+            "not a soft-stop reset": dict(mutate_after=lambda a: a["status"].update(resetGenerationKind="force-reset")),
+            "restore failed": dict(mutate_after=lambda a: a["status"]["lastSoftStop"].update(ok=False)),
+            "restore of another run": dict(mutate_after=lambda a: a["status"]["lastSoftStop"].update(runId="other")),
+            "another request": dict(mutate_after=lambda a: a["status"]["lastCompletedRun"].update(requestId="req-other")),
+            "run not failed": dict(mutate_after=lambda a: a["status"]["lastCompletedRun"].update(phase="completed")),
+            "not ready after": dict(mutate_after=lambda a: a["status"].update(trueReady=False)),
+            "also a Stata error": dict(mutate_body=lambda b: b.update(outcome="STATA_ERROR")),
+        }
+        for name, kwargs in cases.items():
+            with self.subTest(name), tempfile.TemporaryDirectory() as directory:
+                result = self._stopped_run(directory, **kwargs)
+                self.assertEqual(result["verdict"], "EXECUTION_UNCONFIRMED_NO_RETRY", name)
+                self.assertNotIn("stoppedBy", result)
+
     def test_failed_http_envelope_retains_run_identity_without_accepting_or_retrying(self):
         with tempfile.TemporaryDirectory() as directory:
             inner = {"ok": False, "runId": "new", "requestId": "req-new", "rc": 101}

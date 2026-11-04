@@ -26,10 +26,28 @@ const HELPER = "/* codex patch rc.7.87: the progress toast's Cancel stops this v
   + "if(__same)Promise.resolve(Gg._handleCancelRun()).catch(__e=>{try{RI(\"[Codex progress-cancel] Stop failed: \"+(__e?.message||__e))}catch{}})})}"
   + "catch(__e){try{RI(\"[Codex progress-cancel] hook failed: \"+(__e?.message||__e))}catch{}return null}};";
 
+// D2: when a Stop ended an agent run, /run-command answered a bare 500
+// "Request cancelled" and the client could only say EXECUTION_UNCONFIRMED.
+// The failure now carries stoppedBy, read from this run's own soft-stop
+// supersede record (who: person = Terminal Stop / toast Cancel, api =
+// POST /soft-stop, watchdog = exec guard cancel). No record for this run -> null.
+const STOPPED_HELPER = "/* codex patch rc.7.87b: an agent failure says which Stop ended the run */"
+  + "globalThis.__codexStoppedBy=(__rid)=>{try{if(__rid==null)return null;let __h=globalThis.__codexSupersedeHistory||[];"
+  + "for(let __i=__h.length-1;__i>=0;__i--){let __r=__h[__i];if(__r&&__r.kind===\"soft-stop\"&&String(__r.runId)===String(__rid)){let __why=String(__r.reason||\"\");"
+  + "return{by:/^terminal Stop button/.test(__why)?\"person\":/^http \\/soft-stop/.test(__why)?\"api\":/^guard cancel/.test(__why)?\"watchdog\":\"other\","
+  + "reason:__why.slice(0,120),runId:String(__r.runId),generation:__r.toGeneration,at:__r.at}}}return null}catch(__e){return null}};";
+
+const AGENT_FAILURE = "/* codex patch rc.7.85: confirmed Stata error */__release();let __codexPrt=e&&e.__codexPreRunTimeout;"
+  + "__send(__res,(__codexPrt&&__codexPrt.status)||500,__codexPrt?Object.assign({},__codexPrt,{ok:false,runId:__runId,state:__current(),patch:__patch}):"
+  + "{ok:false,error:e?.message||String(e),runId:__runId,";
+
 const EDITS = [
   ["helper",
     "Gg.setExtensionUri(g.extensionUri),",
-    "Gg.setExtensionUri(g.extensionUri)," + "(()=>{" + HELPER + "})(),"],
+    "Gg.setExtensionUri(g.extensionUri)," + "(()=>{" + HELPER + STOPPED_HELPER + "})(),"],
+  ["agent failure stoppedBy",
+    AGENT_FAILURE,
+    AGENT_FAILURE + "stoppedBy:(globalThis.__codexStoppedBy?globalThis.__codexStoppedBy(__run):null),"],
   ["selection toast",
     "await IP(\"Running selection\",async E=>{",
     "await IP(\"Running selection\",async E=>{globalThis.__codexProgressCancelStop&&globalThis.__codexProgressCancelStop(E,\"human-selection\");"],
@@ -50,7 +68,7 @@ function patchBundle(source, options = {}) {
   if (source.includes(MARKER)) {
     for (const [name, , after] of EDITS) uniqueAt(source, after, name);
   } else {
-    if (source.includes("__codexProgressCancelStop")) throw new Error("partial progress-cancel patch");
+    if (source.includes("__codexProgressCancelStop") || source.includes("__codexStoppedBy")) throw new Error("partial progress-cancel patch");
     for (const [name, before] of EDITS) uniqueAt(source, before, name);
     for (const [, before, after] of EDITS) source = source.replace(before, () => after);
   }
@@ -61,7 +79,7 @@ function patchBundle(source, options = {}) {
 function revertBundle(source) {
   for (const [name, , after] of EDITS) uniqueAt(source, after, name);
   for (const [, before, after] of [...EDITS].reverse()) source = source.replace(after, () => before);
-  if (source.includes("__codexProgressCancelStop")) throw new Error("progress-cancel marker survived the revert");
+  if (source.includes("__codexProgressCancelStop") || source.includes("__codexStoppedBy")) throw new Error("progress-cancel marker survived the revert");
   return fingerprint.finalize(source).text;
 }
 
@@ -73,4 +91,4 @@ if (require.main === module) {
   console.log(JSON.stringify({ changed: before !== after, target, installed: false }));
 }
 
-module.exports = { patchBundle, revertBundle, MARKER, EDITS, HELPER };
+module.exports = { patchBundle, revertBundle, MARKER, EDITS, HELPER, STOPPED_HELPER };

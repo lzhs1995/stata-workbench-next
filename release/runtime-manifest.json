@@ -139,8 +139,8 @@
       "bytes": 11107
     },
     "dist/extension.js": {
-      "sha256": "d61a7155e93f54f617123f7f0e3612f4f1927defcd49a1b2f251e03b27fa5e09",
-      "bytes": 5676660
+      "sha256": "73dab3e3636c80b49e070016713a69952693ea4e7988be7ffa75e7adb2e7341a",
+      "bytes": 5677353
     },
     "scripts/mac/png_compat_transform.js": {
       "sha256": "cdea12886a1d5bb5b4c2b3e38829de1c7e68ed70e7777e8d6e2eb02bb0ce3514",
@@ -335,15 +335,15 @@
       "bytes": 3225
     },
     "tools/shared_stata.py": {
-      "sha256": "45a1cc03f2ea85d38df6d2bbf2f41ef343a424b1b938d1a0a2f10035958383e2",
-      "bytes": 23489
+      "sha256": "3a0091a105eef8a1f68fb3035b59351c7dbad62b9473013e27346dc4923ccfc2",
+      "bytes": 25941
     },
     "tools/workbench_doctor.py": {
       "sha256": "547acffd98bcc6c6371c9a4c6767303760ed56832a646c5f959acc9ccc7e46fe",
       "bytes": 4729
     },
     "tools/verified_workbench.py": {
-      "sha256": "83da9d976ccc6cc71471eefddb07ee1ac26b4ec12fdea9aad675aef5dd451031",
+      "sha256": "781fdca013e6568591a3c3b7aa532dc6c5d2fa18ee972918b0d95ee44041f0ef",
       "bytes": 21973
     },
     "tools/workbench_platform.py": {
@@ -451,12 +451,12 @@
       "bytes": 4602
     },
     "scripts/apply_progress_cancel_stop_patch.js": {
-      "sha256": "62ff7395572447fbf361df7540cc1ac5a41142dbd80a7458a5acd236e59c3a7f",
-      "bytes": 4332
+      "sha256": "de05524a2fb4cf61cd1262cafc28137c9ac8f7629d8cea05a59bad695aafd123",
+      "bytes": 5995
     },
     "scripts/test_progress_cancel_stop_patch.js": {
-      "sha256": "ea37616b779e4c89c88aa6d88d1452cfd37331ec146f7271c712c0cc2b120b11",
-      "bytes": 6124
+      "sha256": "ce20f5872ea343090596c1bd3222b49cce5d929c3a11809c3f39ff14107f00a3",
+      "bytes": 8814
     }
   },
   "acceptanceStatus": "PENDING_LICENSED_MAC_FULL_ACCEPTANCE",

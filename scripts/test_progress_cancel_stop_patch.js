@@ -90,16 +90,58 @@ function expectGood(out) {
   }
   console.log("PROGRESS_CANCEL_MUTANTS_KILLED " + Object.keys(mutants).length);
 
+  // D2: __codexStoppedBy reads only this run's own soft-stop record.
+  const stoppedBy = (helper, history, rid) => {
+    const ctx = { __codexSupersedeHistory: history };
+    ctx.globalThis = ctx;
+    vm.runInNewContext(helper, ctx);
+    return ctx.__codexStoppedBy(rid);
+  };
+  const rec = (runId, reason, toGeneration, kind = "soft-stop") => ({ kind, runId, reason, toGeneration, at: "t" + toGeneration });
+  const stoppedCases = (helper) => ({
+    person: stoppedBy(helper, [rec("r1", "terminal Stop button", 1)], "r1"),
+    api: stoppedBy(helper, [rec("r1", "http /soft-stop", 1)], "r1")?.by,
+    watchdog: stoppedBy(helper, [rec("r1", "guard cancel: IDLE", 1)], "r1")?.by,
+    other: stoppedBy(helper, [rec("r1", "something else", 1)], "r1")?.by,
+    otherRun: stoppedBy(helper, [rec("r2", "terminal Stop button", 1)], "r1"),
+    notSoftStop: stoppedBy(helper, [rec("r1", "terminal Stop button", 1, "force-reset")], "r1"),
+    latestWins: stoppedBy(helper, [rec("r1", "http /soft-stop", 1), rec("r1", "terminal Stop button", 2)], "r1")?.generation,
+    noRun: stoppedBy(helper, [rec("r1", "terminal Stop button", 1)], null),
+  });
+  const expectStopped = (c) => {
+    assert.deepEqual(c.person && JSON.parse(JSON.stringify(c.person)), { by: "person", reason: "terminal Stop button", runId: "r1", generation: 1, at: "t1" });
+    assert.equal(c.api, "api"); assert.equal(c.watchdog, "watchdog"); assert.equal(c.other, "other");
+    assert.equal(c.otherRun, null, "another run's Stop is not reported");
+    assert.equal(c.notSoftStop, null, "only soft-stop records count");
+    assert.equal(c.latestWins, 2, "the newest record for this run wins");
+    assert.equal(c.noRun, null);
+  };
+  expectStopped(stoppedCases(patch.STOPPED_HELPER));
+  const stopMutants = {
+    anyRun: ["&&String(__r.runId)===String(__rid)", ""],
+    anyKind: ["__r.kind===\"soft-stop\"&&", ""],
+    oldestFirst: ["for(let __i=__h.length-1;__i>=0;__i--)", "for(let __i=0;__i<__h.length;__i++)"],
+    personForAll: ["by:/^terminal Stop button/.test(__why)?\"person\":", "by:true?\"person\":"],
+  };
+  for (const [name, [from, to]] of Object.entries(stopMutants)) {
+    assert.equal(patch.STOPPED_HELPER.split(from).length - 1, 1, `stoppedBy mutant anchor ${name}`);
+    let killed = false;
+    try { expectStopped(stoppedCases(patch.STOPPED_HELPER.replace(from, to))); } catch (e) { killed = e instanceof assert.AssertionError; }
+    assert.ok(killed, `stoppedBy mutant survived: ${name}`);
+  }
+  console.log("STOPPED_BY_PASS mutants=" + Object.keys(stopMutants).length);
+
   // Bundle edits on the real dist (patched by the replay chain).
   const dist = fs.readFileSync(path.join(__dirname, "..", "dist", "extension.js"), "utf8");
   assert.ok(dist.includes(patch.MARKER), "dist carries rc.7.87");
   for (const [name, , after] of patch.EDITS) assert.equal(dist.split(after).length - 1, 1, `dist edit ${name}`);
+  assert.equal(patch.EDITS.length, 4, "helper, agent failure stoppedBy, selection toast, run file toast");
   const base = patch.revertBundle(dist);
   assert.ok(!base.includes("__codexProgressCancelStop"), "revert removes every trace");
   for (const [name, before] of patch.EDITS) assert.equal(base.split(before).length - 1, 1, `base anchor ${name}`);
   assert.equal(patch.patchBundle(base), fingerprint.finalize(dist).text, "patch(revert(dist)) == dist");
   assert.equal(patch.patchBundle(dist), fingerprint.finalize(dist).text, "idempotent on dist");
-  assert.throws(() => patch.patchBundle(base.replace(patch.EDITS[2][1], "")), /anchor: run file toast/);
+  assert.throws(() => patch.patchBundle(base.replace(patch.EDITS.find(([n]) => n === "run file toast")[1], "")), /anchor: run file toast/);
   assert.throws(() => patch.patchBundle(base + "__codexProgressCancelStop"), /partial/);
   assert.throws(() => patch.revertBundle(base), /anchor/);
   // The connection test's IP() stays unhooked.
