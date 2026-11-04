@@ -1502,6 +1502,11 @@ const REQUIRED_MARKERS = [
     marker: "codex patch rc.7.83: Stop during backend start-up skips the quiescence probe",
   },
   {
+    key: "workerCpuProgress",
+    label: "worker CPU time counts as watchdog progress",
+    marker: "codex patch rc.7.84: worker CPU time counts as watchdog progress",
+  },
+  {
     key: "stataErrorOutcome",
     label: "confirmed Stata errors report their return code",
     marker: "codex patch rc.7.85: confirmed Stata errors report their return code",
