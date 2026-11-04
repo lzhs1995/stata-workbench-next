@@ -615,7 +615,7 @@ function main() {
     for (const [needle, why] of [
       ["__codexForceResetWasBusy=!!s.busy", "取证必须早于 reset 路径首次读写 busy"],
       ["__codexExecution.finishRun", "取证必须早于 finishRun"],
-      ["powershell.exe", "取证必须早于 Windows panic-kill 分支"],
+      ["__codexWindowsKillScopeRun", "取证必须早于 Windows panic-kill 分支"],  // rc.7.82: 作用域 kill helper
       ["s.runId=null", "取证必须早于 runId 清除"],
     ]) {
       assert.ok(capAt > 0 && src.indexOf(needle, capAt) > capAt, why);

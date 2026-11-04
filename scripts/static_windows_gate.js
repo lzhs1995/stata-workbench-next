@@ -4,7 +4,7 @@
  *
  * OLD (obsolete): sips string count == 0 in extension.js
  * NEW:
- *   1) win32 token count must equal expected baseline (default 36)
+ *   1) win32 token count must equal expected baseline (default 41; rc.7.82 adds the pre-dispose scoped kill and recovery-smoke gate guards, and three for the in-bundle cleanup gate that holds readiness when cleanup is not ok)
  *   2) extension.js must not embed /usr/bin/sips executable path
  *   3) PNG_COMPAT production path must be under process.platform === "darwin"
  *   4) scripts/mac helpers must exist for packaging (not executed on Windows)
@@ -17,7 +17,7 @@ const path = require("path");
 
 const root = path.join(__dirname, "..");
 const ext = path.join(root, "dist", "extension.js");
-const expectedWin32 = parseInt(process.env.WIN32_BASELINE || "36", 10);
+const expectedWin32 = parseInt(process.env.WIN32_BASELINE || "41", 10);
 
 function fail(msg) {
   console.error("GATE_FAIL", msg);
@@ -86,14 +86,19 @@ const forceResetWindow = text.slice(forceResetAt, forceResetAt + 9000);
 if (!forceResetWindow.includes('if(process.platform==="win32"&&__codexForceResetWasBusy')) {
   fail("panic PowerShell escalation is not guarded by win32");
 }
-if (!forceResetWindow.includes('if(process.platform==="win32"){let __script=')) {
-  fail("owned-PID PowerShell cleanup is not guarded by win32");
+// rc.7.82: Windows cleanup reuses the verified scoped-tree result; the bare-pid
+// cleanup_mcp_stata_processes.ps1 call is gone from force reset.
+if (!forceResetWindow.includes('if(process.platform==="win32"){/* codex patch rc.7.82: no bare-pid cleanup')) {
+  fail("Windows force-reset cleanup is not the win32-guarded scoped result");
+}
+if (!forceResetWindow.includes('if(process.platform==="win32"&&globalThis.__codexKillScopeGeneration!==__codexThisResetGeneration')) {
+  fail("Windows pre-dispose scoped kill is not guarded by win32");
 }
 if (!forceResetWindow.includes('else if(process.platform==="darwin")')) {
   fail("missing Darwin owned-PID cleanup branch");
 }
-if (!forceResetWindow.includes('"-OwnedPidCsv",__owned.join(",")')) {
-  fail("Windows cleanup does not receive extension-owned PIDs");
+if (forceResetWindow.includes("-OwnedPidCsv") || forceResetWindow.includes("cleanup_mcp_stata_processes")) {
+  fail("Windows force reset still calls the bare-pid cleanup");
 }
 if (!forceResetWindow.includes('__args.push("--pid",String(__pid))')) {
   fail("Darwin cleanup does not receive extension-owned PIDs");

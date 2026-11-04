@@ -3469,5 +3469,8 @@ text = require("./apply_agent_warmup_refusal_patch").patchBundle(text, { finaliz
 // V3 M5: a Stata error that ran to its r(n) line reports Stata's return code
 // (agent STATA_ERROR outcome, Terminal rc) instead of an unconfirmed failure.
 text = require("./apply_stata_error_outcome_patch").patchBundle(text, { finalize: false });
+// F v3: Windows KILL, /panic-kill and a busy force reset end only this window's
+// backend process tree instead of every mcp-stata process and Stata GUI.
+text = require("./apply_windows_kill_scope_patch").patchBundle(text, { finalize: false });
 fs.writeFileSync(target, text, "utf8");
 console.log(baseAlreadyApplied ? "RC7_SHARED_EXECUTION_UPDATED" : "RC7_SHARED_EXECUTION_APPLIED", target);
