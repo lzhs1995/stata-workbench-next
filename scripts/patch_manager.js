@@ -1506,6 +1506,11 @@ const REQUIRED_MARKERS = [
     label: "worker CPU time counts as watchdog progress",
     marker: "codex patch rc.7.84: worker CPU time counts as watchdog progress",
   },
+  {
+    key: "warmWorkerIdentity",
+    label: "warm cache follows the default worker; Terminal restarts a worker that died while starting",
+    marker: "codex patch rc.7.81: warm cache follows the default worker; Terminal restarts a worker that died while starting",
+  },
 ];
 
 const AUXILIARY_MARKERS = [

@@ -3462,5 +3462,8 @@ text = require("./apply_wp1_timing_patch").patchBundle(text, { finalize: false }
 text = require("./apply_stop_during_backend_start_patch").patchBundle(text, { finalize: false });
 // V3-W: worker CPU time counts as watchdog progress for IDLE (V3-M M4 / F-mac P5).
 text = require("./apply_worker_cpu_progress_patch").patchBundle(text, { finalize: false });
+// PLAN-V3 stage 6: the warm cache follows the default worker (pid/created_at);
+// Terminal input restarts a worker that died while starting, once, without force reset.
+text = require("./apply_warm_worker_identity_patch").patchBundle(text, { finalize: false });
 fs.writeFileSync(target, text, "utf8");
 console.log(baseAlreadyApplied ? "RC7_SHARED_EXECUTION_UPDATED" : "RC7_SHARED_EXECUTION_APPLIED", target);
