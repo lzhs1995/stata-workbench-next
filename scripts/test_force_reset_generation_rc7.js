@@ -13,7 +13,8 @@ function windowFrom(marker, length) {
   return bundle.slice(at, at + length);
 }
 
-const reset = windowFrom("globalThis.__codexForceReset=async", 9000);
+// rc.7.82 grew force reset (scoped kill, dispose evidence, cleanup gate); the window covers the whole function.
+const reset = windowFrom("globalThis.__codexForceReset=async", 12000);
 assert.ok(reset.includes("__codexResetGeneration=Number(globalThis.__codexResetGeneration||0)+1"));
 assert.ok(reset.includes("codex patch rc.7.9: force-reset generation fences stale handlers"));
 assert.ok(reset.includes("__codexExecution.finishRun(s,"));

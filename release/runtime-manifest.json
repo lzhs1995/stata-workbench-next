@@ -15,8 +15,8 @@
       "bytes": 43580
     },
     "scripts/static_windows_gate.js": {
-      "sha256": "557ff19c8defa61af73ae84b965f4082deaf347ca811b1a2153b3238e6b88214",
-      "bytes": 6687
+      "sha256": "dfaf4195ecad6bd7914e3b27ee48426600c7c61f7159e36dc6343e0f83d899fb",
+      "bytes": 6673
     },
     "scripts/stata_source_compat_core.js": {
       "sha256": "7682ca890f407f473c88abdf339adaaa40bd90bd6b9dd48835294cf023d68803",
@@ -139,8 +139,8 @@
       "bytes": 11107
     },
     "dist/extension.js": {
-      "sha256": "acd334024b1a76e4b640f78ae1566c08297f47c16a44d8b69994d17bdddb68d7",
-      "bytes": 5653780
+      "sha256": "b077b725f05e89ad8950cf7941d848046ed14190ecb73426fef284b0100bbd2c",
+      "bytes": 5653643
     },
     "scripts/mac/png_compat_transform.js": {
       "sha256": "cdea12886a1d5bb5b4c2b3e38829de1c7e68ed70e7777e8d6e2eb02bb0ce3514",
@@ -343,7 +343,7 @@
       "bytes": 4729
     },
     "tools/verified_workbench.py": {
-      "sha256": "e71ae84ff3582a86551cc9a6ffd4832f94c5e9b35af492b3cfb6fc2bfd2e3a3b",
+      "sha256": "74b7d9e9635c051530d586af577e87494a8c5d9b6bbbfc62ae9953d5065a1af4",
       "bytes": 21973
     },
     "tools/workbench_platform.py": {

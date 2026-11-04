@@ -29,7 +29,7 @@ const EDITS = [
     "/* codex patch rc.7.82: force reset records what dispose actually did */let __codexDispose={attempted:true,settled:false,ok:false,error:null};try{let __dr=await Promise.race([Promise.resolve().then(()=>zg.dispose()).then(()=>\"ok\",__e=>{__codexDispose.error=String(__e?.message||__e);return\"rejected\"}),new Promise(r=>setTimeout(()=>r(\"timeout\"),2500))]);__codexDispose.settled=__dr!==\"timeout\";__codexDispose.ok=__dr===\"ok\";if(__dr===\"timeout\")__codexDispose.error=\"dispose did not finish within 2.5 s\";if(__dr!==\"ok\")try{RI(\"[Codex bridge] force reset dispose failed: \"+__codexDispose.error)}catch{}}catch(e){__codexDispose.error=String(e?.message||e)}"],
   ["force-reset readiness gate",
     "let __needsSmoke=__codexRecoveryWasRequired||!__reconnect.ok||",
-    "/* codex patch rc.7.82: an unresolved cleanup keeps READY closed */let __codexCleanupOpen=!!(process.platform===\"win32\"&&globalThis.__codexUnresolvedCleanup&&globalThis.__codexUnresolvedCleanup.open);let __needsSmoke=__codexCleanupOpen||__codexRecoveryWasRequired||!__reconnect.ok||"],
+    "let __needsSmoke=!!(globalThis.__codexUnresolvedCleanup&&globalThis.__codexUnresolvedCleanup.open)||__codexRecoveryWasRequired||!__reconnect.ok||"],
   ["force-reset state",
     "let __state=__current();__state.cleanup=__cleanup;return __state};",
     "let __state=__current();__state.cleanup=__cleanup;__state.dispose=__codexDispose;__state.unresolvedCleanup=globalThis.__codexUnresolvedCleanup||null;return __state};"],
