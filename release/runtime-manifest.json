@@ -27,8 +27,8 @@
       "bytes": 17618
     },
     "scripts/patch_manager.js": {
-      "sha256": "e6b74af4e0e5ae4158fe85a448090109fe94c36a53ab6b71ffc3ebb1397d63b8",
-      "bytes": 95510
+      "sha256": "c1bf187dd7e0acad2db127829a124df6fdcd85b9a31b4a61346173bd5547331b",
+      "bytes": 95921
     },
     "scripts/mcp_stata_runtime_patch.js": {
       "sha256": "64013014e8598af5c7f70a276cd80a2f5c21d218eaa6fba59f079096c8f75ac9",
@@ -111,8 +111,8 @@
       "bytes": 5178
     },
     "scripts/apply_rc7_shared_execution_patch.js": {
-      "sha256": "f848c4b3e82d6afe5d437c681160c11147a423658a6726f5c64277db167c9837",
-      "bytes": 340259
+      "sha256": "dc11553a95cac239f6437188c9379634738051cb05e4f7d09648559119c91a66",
+      "bytes": 340618
     },
     "scripts/apply_rc64_routes_patch.js": {
       "sha256": "b01e1225f5844b632e24d616957fb9e565541345a10d6f4fbc640a4b034070b2",
@@ -139,8 +139,8 @@
       "bytes": 11107
     },
     "dist/extension.js": {
-      "sha256": "44034f61da00e9f1366ffec0254047e4dbe5bdf28e4f2ab34708ff4f3d3a0bf1",
-      "bytes": 5649238
+      "sha256": "9f8f2f48bfe4678249d6bc1873641d53ef4fc9825e401f5216a3fdc259e9f759",
+      "bytes": 5655088
     },
     "scripts/mac/png_compat_transform.js": {
       "sha256": "cdea12886a1d5bb5b4c2b3e38829de1c7e68ed70e7777e8d6e2eb02bb0ce3514",
@@ -343,7 +343,7 @@
       "bytes": 4729
     },
     "tools/verified_workbench.py": {
-      "sha256": "9f047c6574ebd4cc242d6bcebd02aee699fe9136845af3711a4f4cf98a3bc4f4",
+      "sha256": "10e5c5f911931b974952ef20563fab0d5ba44ee146cf61646c8325265091f4e0",
       "bytes": 21973
     },
     "tools/workbench_platform.py": {
@@ -433,6 +433,10 @@
     "scripts/guard_cancel_restore_core.js": {
       "sha256": "7efc929056497d016467231b82123e0ea902a8a018445fb409f4f24e58b3736a",
       "bytes": 17013
+    },
+    "scripts/stata_timing_patch.js": {
+      "sha256": "8038fcd9cb91f5be6f20c2a451b343a3b99e1eafa5569365499a445c196b2a45",
+      "bytes": 13520
     },
     "scripts/worker_cpu_progress_core.js": {
       "sha256": "84364a6296495b154a8679ad8ee8b983020acbd8e9a0fdb43775d4408b793ed6",
