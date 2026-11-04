@@ -27,8 +27,8 @@
       "bytes": 17618
     },
     "scripts/patch_manager.js": {
-      "sha256": "58250715cbf4cf6125817b8e1b4172d58f3d418857226584b84652bdae8204dd",
-      "bytes": 96176
+      "sha256": "73604303d26b882e1b81a7d4cbfb96df0ed6e608c0f734d0950d96c979d37e4d",
+      "bytes": 96353
     },
     "scripts/mcp_stata_runtime_patch.js": {
       "sha256": "64013014e8598af5c7f70a276cd80a2f5c21d218eaa6fba59f079096c8f75ac9",
@@ -67,8 +67,8 @@
       "bytes": 15512
     },
     "scripts/execution_guard.js": {
-      "sha256": "39b392e29fdee33b24d795df03537fd3f3271c4fec8daee251b7ccc5e3acdb87",
-      "bytes": 35848
+      "sha256": "f8a2ca0d9aedb7c14d9345cf831fe11f6992226b097ebc0a01a71a4f06f4939a",
+      "bytes": 43055
     },
     "scripts/escalation_ladder_gate.js": {
       "sha256": "0b4487f1c80bee598666ed21d87f71132d44b5fc336c22b1dfee10fb30131adc",
@@ -111,8 +111,8 @@
       "bytes": 5178
     },
     "scripts/apply_rc7_shared_execution_patch.js": {
-      "sha256": "fa13caaedb44a9c4fc7b246fd66403f1c45e3eafadfcbc5aa01835d483607624",
-      "bytes": 340691
+      "sha256": "7c026269a744444396ca728150b1168ad38faa8125fa901c20e50f87b07dcaa2",
+      "bytes": 340867
     },
     "scripts/apply_rc64_routes_patch.js": {
       "sha256": "b01e1225f5844b632e24d616957fb9e565541345a10d6f4fbc640a4b034070b2",
@@ -139,8 +139,8 @@
       "bytes": 11107
     },
     "dist/extension.js": {
-      "sha256": "44001688df848fc53ae0e5e8d3e06cc50bce44d1f1b50a57a624607e8851c744",
-      "bytes": 5657693
+      "sha256": "12daf0a81bca2fbd67704762c250fe0a317519d33cd8673167b55b652e055e41",
+      "bytes": 5658463
     },
     "scripts/mac/png_compat_transform.js": {
       "sha256": "cdea12886a1d5bb5b4c2b3e38829de1c7e68ed70e7777e8d6e2eb02bb0ce3514",
@@ -343,7 +343,7 @@
       "bytes": 4729
     },
     "tools/verified_workbench.py": {
-      "sha256": "c61abe9c1e6292dec69723148fe13206de656aa6a0a7ffc644398efe5680729a",
+      "sha256": "77195b8122dd0fc0cce01656efb82a103517fd9cee69cd56afbcb24312daedb4",
       "bytes": 21973
     },
     "tools/workbench_platform.py": {
@@ -437,6 +437,10 @@
     "scripts/stata_timing_patch.js": {
       "sha256": "8038fcd9cb91f5be6f20c2a451b343a3b99e1eafa5569365499a445c196b2a45",
       "bytes": 13520
+    },
+    "scripts/worker_cpu_progress_core.js": {
+      "sha256": "84364a6296495b154a8679ad8ee8b983020acbd8e9a0fdb43775d4408b793ed6",
+      "bytes": 11122
     },
     "scripts/stata_error_outcome_core.js": {
       "sha256": "67eb6f91ace75ea20063121ce20b6f36e5d93f6eb8fc0bb01833fed87d1bd687",
