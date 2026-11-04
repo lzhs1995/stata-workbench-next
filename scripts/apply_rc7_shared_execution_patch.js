@@ -3460,5 +3460,7 @@ text = require("./apply_terminal_warmup_patch").patchBundle(text, { finalize: fa
 text = require("./apply_wp1_timing_patch").patchBundle(text, { finalize: false });
 // V3-S M3: a Stop while the backend is still starting skips the quiescence probe (no dispatch yet).
 text = require("./apply_stop_during_backend_start_patch").patchBundle(text, { finalize: false });
+// V3-W: worker CPU time counts as watchdog progress for IDLE (V3-M M4 / F-mac P5).
+text = require("./apply_worker_cpu_progress_patch").patchBundle(text, { finalize: false });
 fs.writeFileSync(target, text, "utf8");
 console.log(baseAlreadyApplied ? "RC7_SHARED_EXECUTION_UPDATED" : "RC7_SHARED_EXECUTION_APPLIED", target);

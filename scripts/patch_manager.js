@@ -1501,6 +1501,11 @@ const REQUIRED_MARKERS = [
     label: "Stop during backend start-up skips the quiescence probe",
     marker: "codex patch rc.7.83: Stop during backend start-up skips the quiescence probe",
   },
+  {
+    key: "workerCpuProgress",
+    label: "worker CPU time counts as watchdog progress",
+    marker: "codex patch rc.7.84: worker CPU time counts as watchdog progress",
+  },
 ];
 
 const AUXILIARY_MARKERS = [
