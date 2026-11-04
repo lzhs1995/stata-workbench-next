@@ -3456,5 +3456,7 @@ text = require("./apply_guard_attribution_patch").patchBundle(text, { finalize: 
 // F fix6: Terminal input waits for Stata start-up (rc.7.72 warm-up) before its
 // pre-log budget, as agent runs already did (W-P1 entry gap).
 text = require("./apply_terminal_warmup_patch").patchBundle(text, { finalize: false });
+// W-P1 diagnostics: timing lines for the first Terminal command (log-only).
+text = require("./apply_wp1_timing_patch").patchBundle(text, { finalize: false });
 fs.writeFileSync(target, text, "utf8");
 console.log(baseAlreadyApplied ? "RC7_SHARED_EXECUTION_UPDATED" : "RC7_SHARED_EXECUTION_APPLIED", target);

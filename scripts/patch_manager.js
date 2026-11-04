@@ -1491,6 +1491,11 @@ const REQUIRED_MARKERS = [
     label: "Terminal input waits for Stata start-up before its pre-log budget",
     marker: "codex patch rc.7.79: Terminal input waits for Stata start-up before its pre-log budget",
   },
+  {
+    key: "wp1Timing",
+    label: "W-P1 timing lines for the first Terminal command (diagnostic)",
+    marker: "codex patch rc.7.80: W-P1 timing lines for the first Terminal command (diagnostic)",
+  },
 ];
 
 const AUXILIARY_MARKERS = [
