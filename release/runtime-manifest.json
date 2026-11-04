@@ -447,8 +447,8 @@
       "bytes": 7107
     },
     "scripts/stata_task_done_rc_patch.js": {
-      "sha256": "593ecab3adf5a2f6aed8c037a894a84b8e74a16993f5fd32824df09e310c9154",
-      "bytes": 3831
+      "sha256": "b16f0ce965490d1cf8f2a7fb8452bbacca8c1685510a5846106488d195fab5d9",
+      "bytes": 4602
     }
   },
   "acceptanceStatus": "PENDING_LICENSED_MAC_FULL_ACCEPTANCE",

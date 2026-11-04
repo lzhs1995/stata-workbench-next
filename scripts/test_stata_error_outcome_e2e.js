@@ -1,7 +1,10 @@
 "use strict";
-// Offline end-to-end for rc.7.85: the real throw + catch edits and the real
-// bundle __release run on the real lifecycle core, then tools/shared_stata.py
-// stata_error_checks judges the response. No Stata, no VS Code, no bridge.
+// Offline cross-module test for rc.7.85: the real throw + catch edits and the
+// real bundle __release run on the real lifecycle core, then
+// tools/shared_stata.py stata_error_checks judges the response. The task_done
+// result is built by hand, and UI, identity and window observation are stubs:
+// this is not an MCP transport or production end-to-end acceptance test.
+// No Stata, no VS Code, no bridge.
 const assert = require("node:assert/strict");
 const cp = require("node:child_process");
 const fs = require("node:fs");

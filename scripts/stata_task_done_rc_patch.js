@@ -3,10 +3,13 @@
 // rc.7.85 follow-up (V3-M M5): mcp-stata 1.26.1's task_done event carries no
 // return code, so the extension cannot tell "Stata ran and stopped at r(111)"
 // from an unknown outcome. Both background _run paths now record the rc of
-// the CommandResponse they just validated, and _notify_task_done sends it as
-// "rc". Only a validated CommandResponse is a source: a cancelled or failed
-// call (no response) records nothing and task_done carries no "rc", so an
-// old or failed run still reads as unknown to the extension.
+// the CommandResponse they just validated for this task, and _notify_task_done
+// sends it as "rc". The source is that validated model's rc, an int >= 0
+// (Pydantic may have coerced the raw value; the check runs after validation).
+// If the call raised before returning a response (cancelled, worker error),
+// nothing is recorded and task_done carries no "rc", so the run still reads as
+// unknown. An exception after the assignment (result formatting, UI notify)
+// can still send the rc of the response this task already received.
 // Strict: unpatched, patched, partially patched and unknown sources are told
 // apart by exact anchor counts; anything else throws (unsupported-source).
 const MARKER = "Workbench task_done carries this run's Stata rc";
@@ -47,12 +50,24 @@ const EDITS = [
 
 const occurrences = (source, needle) => source.split(needle).length - 1;
 
+// Removes every exact patched block; what remains must hold no anchor or marker.
+// RUN_ORIGINAL is a prefix of RUN_PATCHED, so original counts are only
+// meaningful after the patched blocks are gone.
+function withoutPatchedBlocks(source) {
+  let rest = source;
+  for (const edit of EDITS) rest = rest.split(edit.patched).join("");
+  return rest;
+}
+
 function state(source) {
   const marks = occurrences(source, MARKER);
   const counts = EDITS.map((edit) => ({ edit, original: occurrences(source, edit.original),
     patched: occurrences(source, edit.patched) }));
   if (marks === 0 && counts.every((c) => c.original === c.edit.count && c.patched === 0)) return "unpatched";
-  if (marks === 3 && counts.every((c) => c.patched === c.edit.count)) return "patched";
+  if (marks === 3 && counts.every((c) => c.patched === c.edit.count)) {
+    const rest = withoutPatchedBlocks(source);
+    if (!rest.includes(MARKER) && EDITS.every((edit) => occurrences(rest, edit.original) === 0)) return "patched";
+  }
   return "unsupported";
 }
 
@@ -75,7 +90,7 @@ function revertServer(source) {
   if (state(source) !== "patched") throw new Error("not a task_done rc patched source");
   let next = source;
   for (const edit of [...EDITS].reverse()) next = next.split(edit.patched).join(edit.original);
-  if (next.includes(MARKER)) throw new Error("task_done rc revert left a marker");
+  if (state(next) !== "unpatched") throw new Error("task_done rc revert did not give an unpatched source");
   return next;
 }
 

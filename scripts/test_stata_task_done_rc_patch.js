@@ -39,6 +39,15 @@ ok("partial, duplicated and unknown sources are refused", () => {
   }
   assert.throws(() => rc.revertServer(server), /not a task_done rc patched source/);
 });
+ok("a complete patched source plus an extra original run or notify block is refused (codex R1)", () => {
+  const patched = rc.patchServer(server);
+  for (const extra of [rc.RUN_ORIGINAL, rc.NOTIFY_ORIGINAL]) {
+    const bad = patched + "\n" + extra;
+    assert.equal(rc.state(bad), "unsupported");
+    assert.throws(() => rc.patchServer(bad), /unsupported task_done rc source/);
+    assert.throws(() => rc.revertServer(bad), /not a task_done rc patched source/);
+  }
+});
 
 // Real mcp-stata files, copied (never the live directory). CI has no live
 // runtime; there the synthetic chain in test_mcp_stata_runtime_patch_rc7 runs.
@@ -78,6 +87,21 @@ if (livePkg) {
       fs.rmSync(root, { recursive: true, force: true });
     });
   }
+  ok("full patchRuntime on a temp copy with an extra unpatched run block: unsupported-source, nothing written", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "v3a-rc-bad-"));
+    const pkg = path.join(root, "lib", "python3.11", "site-packages", "mcp_stata");
+    fs.mkdirSync(pkg, { recursive: true });
+    const patchedServer = rc.patchServer(liveBefore["server.py"].toString("utf8").replace(/\r\n/g, "\n"));
+    for (const f of names) fs.writeFileSync(path.join(pkg, f), f === "server.py" ? patchedServer + "\n" + rc.RUN_ORIGINAL : liveBefore[f]);
+    const before = Object.fromEntries(names.map((f) => [f, fs.readFileSync(path.join(pkg, f))]));
+    const r = runtimePatch.patchRuntime({ runtimeRoot: root, pythonCommand: process.execPath,
+      compileSpawnSync: () => ({ status: 0, stdout: "", stderr: "" }) });
+    assert.equal(r.ok, false);
+    assert.equal(r.status, "unsupported-source");
+    assert.equal(r.anchor, "task-done-rc");
+    for (const f of names) assert.deepEqual(fs.readFileSync(path.join(pkg, f)), before[f], f + " not written");
+    fs.rmSync(root, { recursive: true, force: true });
+  });
   ok("the live runtime was not written", () => {
     for (const f of names) assert.deepEqual(fs.readFileSync(path.join(livePkg, f)), liveBefore[f], f);
   });
@@ -85,7 +109,7 @@ if (livePkg) {
 
 // The patched notify and run code, executed by Python with stubs.
 const py = ["python3", "python"].find((exe) => cp.spawnSync(exe, ["-c", "import sys"], { stdio: "ignore" }).status === 0);
-if (py) ok("patched Python sends rc only from a validated response", () => {
+if (py) ok("patched Python sends the validated model's integer rc; nothing when there is no response", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "v3a-rc-py-"));
   const patched = rc.patchServer(server);
   const fn = patched.slice(patched.indexOf("async def _notify_task_done"), patched.indexOf("\nx = 1"));
