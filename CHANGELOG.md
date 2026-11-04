@@ -1,3 +1,57 @@
+## 0.2.0-next.6 — warm-up identity, quiet commands, Stop during start-up (unreleased)
+
+Not released yet; `package.json` still says `0.2.0-next.5`. Entries are in merge
+order. Each pull request was reviewed independently and passed CI on macOS 15
+(Apple Silicon and Intel) and Windows Server 2022 before merging. The live
+results below were taken on each pull request's own head before its review
+rework; the merged `main` has not been retested live.
+
+- **Packaging no longer depends on the maintainer's machine (PR #19).** `npm run package` now runs the full check and builds the VSIX in one step.
+  - The image-corpus test skips when the corpus is missing, has no `.do` files or has no raster exports, and runs on five synthetic `.do` files in the repository with exact counts.
+  - The pre-flight patch test accepts an installed runtime only when it is unpatched, or patched once with exactly one marker, idempotent and compilable. Seven mutated sources are refused.
+- **Per-step timing for the first Terminal command (PR #21, rc.7.80).**
+  - The **Stata Workbench** output channel gets one `[wb-timing] {…}` line per step: entry, warm-up start and end, default-session status changes, tool calls, the matched log path and the first output. With `STATA_WORKBENCH_TIMING_FILE` set, the same lines are appended to that file.
+  - Fields come from a per-event allowlist; errors keep only their class and code. Every insertion is wrapped in `try`. The writes are synchronous, so the lines are a diagnostic with a small I/O cost.
+  - Timing inside mcp-stata is not part of the runtime patch chain. `scripts/stata_timing_patch.js` reads a runtime and instruments only a new disposable copy, never an installed or linked runtime.
+  - The timing located W-P1; see Known issues.
+- **Concurrent `open` calls (PR #23).** `tools/stata_session.py open` used to hold its lock for the whole launch, so a second `open` failed after 10 s (M8).
+  - Inside the lock it now only checks the name, the session limit, the disk space and the port, then takes a per-profile OS lock that it holds through preparation and launch. The global lock wait is 60 s.
+  - Runtime copies run one at a time under their own lock, which re-checks the disk space.
+  - `open` waits up to 60 s for the window's VS Code process and reports `launchState` (`visible`, `accepted-not-visible`, `prepare-only`). If the launch fails, `session.json` is restored.
+  - `close` on a session that is still opening returns `OPENING` (exit 2) instead of `NOT_RUNNING`.
+- **Stop during backend start-up (PR #25, rc.7.83).** Stop pressed while this run's backend was still starting (`WAITING` or `CANCELLED`) ran the quiescence probe, which timed out, escalated and locked the session (M3). The probe is now skipped in that state, because nothing has been sent. Every other case still probes.
+- **Worker CPU time counts as watchdog progress (PR #24, rc.7.84).** Quiet commands such as `bootstrap … nodots` were cancelled 60 s after their last log line (M4, inherited from the stable release).
+  - After the log has been silent for 10 s, the watchdog samples the CPU time of this window's own leaf processes (the Stata worker and its resource tracker). The sample is one `ps` call on macOS and one CIM query on Windows.
+  - A sample counts only if its tree checks out. The root is the registered backend, started no more than 5 s after it was registered, and its parent is this extension host. Every other process links to the root, and none started before its parent. Samples are keyed by pid and start time.
+  - CPU growth of at least max(200 ms, 2 % of one core over the interval) counts as progress, dated at the earlier sample. Long tasks are not sampled.
+  - A failed, unverified or late sample gives no credit, so the guard falls back to the log rule. CPU credit stops once the log has been silent for 30 min. PRE_LOG and the hard budget are unchanged.
+- **The warm-up cache follows the default worker (PR #20, rc.7.81).** mcp-stata 1.26.1 can replace the default worker inside one transport.
+  - A cached run checks `list_sessions` again (5 s limit). A worker that is not `running`, a changed pid or start time, a changed transport, or a failed or timed-out check drops the cache and the run waits again.
+  - After the warm-up reports ready, a second check records the worker. If it does not see the same running worker on the same transport, the run waits once more and is then refused (`PRE_RUN_BACKEND_WARMUP_FAILED`, `workerChanged`, `payloadDispatched=false`). The reset generation is checked after every wait.
+  - A Terminal command whose worker failed while starting restarts it once instead of being refused. It does not use the force-reset path.
+  - An mcp-stata without `list_sessions` is still let through. That is a compatibility fallback, not proof that the worker is ready.
+- **Agent submissions right after a window opens (PR #26, rc.7.86).** The agent client refused before submitting while the backend had not started yet (`BLOCKED_NO_DISPATCH`), while a Terminal command would have waited (M2).
+  - The client now submits once when only the lazy backend start is missing, and the extension runs the same warm-up wait.
+  - The completion check requires that this run started the backend itself (`lastCold.runId`, `CONNECTED`, a registered pid).
+  - Warm-up refusals carry `retryable` and `retryAfterMs`: TIMEOUT and FAILED are retryable after 5000 ms, CANCELLED (a Stop) is not. The client reports them as `REFUSED_NOT_DISPATCHED` and does not resend.
+<!-- PENDING #22: Windows KILL ends only this window's backend tree (rc.7.82). Add the entry after PR #22 merges. -->
+<!-- PENDING #27: Stata errors with a confirmed return code (rc.7.85) and the runtime patch that sends rc. Add the entry after both merge. -->
+
+Live results (isolated profiles, synthetic data, 11-04):
+
+- macOS, `v0.2.0-next.5` (`aba81779`): first command after opening 7/7; Stop during the warm-up wait, timeout and failure refusals as specified; Stop before the backend connected locked the session (fixed by PR #25); an agent submission right after opening was refused (fixed by PR #26); a quiet `bootstrap` run under heavy load was cancelled at 63 s (addressed by PR #24). The Terminal Stop button misses were caused by the test driver clicking through the Welcome page's overlay.
+- Windows, PR #21 head `a1a2832b`: 24/24 first commands, including 10 on fresh profiles; 0 stalls. The older build `3765d82a` with the same timing stalled once in 17 runs.
+- Windows, PR #20 head `40abcbea`: Stop and timeout during the warm-up wait refused before dispatch; one worker restart during start-up, command ran once.
+- macOS, PR #24 head `2ec968a`: idle worker CPU noise 10 ms per 12 s; a frozen worker was still cancelled.
+
+Known issues:
+
+- **W-P1 is bounded, not proven fixed.** In the stall, Stata's start-up inside the worker took 76.6 s (3.4–8.6 s in the other 32 runs), and the old build counted that wait against the command's 120 s first-log budget. With the warm-up wait outside that budget, 24 runs had 0 stalls: below about 12.5 % at 95 % confidence.
+- **Stata: KILL on Windows ends every Stata GUI process on the machine.** <!-- PENDING #22 -->
+- **macOS KILL and force reset identify the backend by pid and command line only**, not by start time or parent.
+- **Stata error return codes.** A command that Stata rejected still reports rc -1 or `EXECUTION_UNCONFIRMED_NO_RETRY`: mcp-stata 1.26.1 sends no return code with `task_done`, and the log parser does not read `{search r(n)…}`. Backend start refusals (`PRE_RUN_BACKEND_START_*`) are not yet part of the `retryable` contract. <!-- PENDING #27 -->
+- **The worker CPU signal is a heuristic.** A run that loops without output can hold the session for up to 30 min of log silence. Unverifiable process trees fall back to the 60 s log rule. A quiet command past 60 s has not yet been tested live.
+
 ## 0.2.0-next.5 — Stop, recovery and Windows fixes
 
 The version has been `0.2.0-next.5` since PR #9. Entries are in merge order.

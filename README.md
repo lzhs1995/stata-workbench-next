@@ -54,7 +54,8 @@ between the two, so a Next test window cannot disturb a research session.
 The Next launcher never picks ports `17485`, `17416`, `17497` or `17507`, so a
 Next session cannot take a port used by stable-release tooling.
 
-Current version: `0.2.0-next.5` (`package.json`). GitHub Releases is the only
+Current version: `0.2.0-next.5` (`package.json`); `main` carries the changes listed under
+`0.2.0-next.6` in the [changelog](CHANGELOG.md), not yet released. GitHub Releases is the only
 distribution channel, and Next builds are published there as pre-releases; Next
 is not published to Open VSX or the Visual Studio Marketplace.
 
@@ -144,18 +145,20 @@ python3 -B tools/stata_session.py open s1 --workspace /absolute/path/to/project
 ```
 
 This creates `~/.stata-workbench-next/profiles/s1/`, picks a free port, writes
-the session's settings and starts one VS Code window. It returns `LAUNCHED`
-right away; it does not wait for the bridge, activate the window or send any
-Stata command. Without `--workspace` the session uses its own empty
+the session's settings and starts one VS Code window. It waits up to 60 s for
+that window's VS Code process to appear and reports it in `launchState`
+(`visible`, `accepted-not-visible` or `prepare-only`); it does not wait for the
+bridge, activate the window or send any Stata command. `LAUNCHED` alone does not
+mean the bridge is ready. Without `--workspace` the session uses its own empty
 `profiles/s1/workspace`.
 
 Stata then loads in the background as the window opens
 (`stataMcp.loadStataOnStartup: true`, written unless the profile already sets
 it). On Windows 11 the connect took 54–66 s, and the Stata backend was up
 97–108 s after `open`. `trueReady` does not wait for the load. A Terminal
-command sent meanwhile first waits until the Stata worker is running; after
-2 s the Terminal shows "Waiting for Stata to finish loading…". See
-[Known limitations](#known-limitations).
+command or an agent submission sent meanwhile first waits until the Stata
+worker is running; after 2 s the Terminal shows "Waiting for Stata to finish
+loading…". See [Known limitations](#known-limitations).
 
 A new workspace opens in VS Code's Restricted Mode, and the extension starts
 only after you click **Trust** once. Pass `--disable-workspace-trust` only for
@@ -193,6 +196,14 @@ request and never retries: a timeout or an unclear answer does not prove that
 Stata did not run, so read the receipt in `.stata-receipts/` before submitting
 again. The receipt contains your code and output; do not commit it.
 
+`REFUSED_NOT_DISPATCHED` means the extension refused the run before sending it
+(for example Stata did not finish loading, or the person pressed Stop during the
+wait). The output carries `reasonCode`, `retryable` and `retryAfterMs`; a
+refusal after Stop is not retryable. A command that Stata ran and rejected with
+an error (for example `r(111)`) still exits 2 as `EXECUTION_UNCONFIRMED_NO_RETRY`;
+the receipt holds Stata's error text.
+<!-- PENDING #27: once PR #27 and its runtime patch are merged, a confirmed Stata error is reported as STATA_ERROR_CONFIRMED with stataRc. Update this paragraph then. -->
+
 `--session` takes a session name or id (or `STATA_WORKBENCH_SESSION`). With one
 live session it may be omitted; with several it is required.
 
@@ -205,7 +216,9 @@ python3 -B tools/stata_session.py close s1
 `close` asks only that session's VS Code window to quit (SIGTERM on macOS,
 `taskkill` without `/F` on Windows) and never force-kills. If VS Code is waiting
 on an unsaved-changes prompt, it returns `CLOSE_PENDING` (exit 2) and leaves the
-window and files as they are. Other sessions keep running.
+window and files as they are. If an `open` of the same session is still in
+progress, it returns `OPENING` (exit 2) and signals nothing. Other sessions keep
+running.
 
 Other agent-client options: `--list-sessions` prints the registry; `--events 0`
 prints the session's event stream (who ran what, Stop, refusals, edit
@@ -226,7 +239,8 @@ proposals) without running code.
 - `tools/stata_session.py` manages up to **5** live sessions. A sixth `open` returns `SESSION_LIMIT` and creates nothing.
 - Each session has its own profile, port (`17601`–`17620`), Stata service runtime, temporary folders, pre-run snapshots and execution lock. Sessions run in parallel: two agents can submit to two sessions at the same moment and neither waits for the other.
 - When several sessions are live, the agent client refuses a submission without `--session` (`MULTIPLE_SESSIONS`, exit 2) and runs nothing.
-- Reopening a session name reuses its port. Settings that a profile already sets explicitly are kept.
+- Reopening a session name reuses its port once that port is free. Right after `close` the old port can still be held by the operating system (TIME_WAIT); the launcher then picks the next free port. Tools find a session by name, so this does not affect them. Settings that a profile already sets explicitly are kept.
+- Several `open` calls can run at the same time. Each reserves its name, port and session slot under a short lock and launches outside it; the runtime copies run one after another so each sees the disk space the previous one used. A second `open` of a name that is still opening is refused.
 
 ### Bridge authentication
 
@@ -248,8 +262,9 @@ proposals) without running code.
 - Before an agent run, the session saves a pre-run checkpoint of the data. Stop puts it back, so the person sees their data as it was before the agent started. A person's own runs have no checkpoint; Stop then verifies that Stata is idle and keeps the data as it is.
 - Every Stop adds 1 to `resetGeneration`. This is how agents detect that the session they used was interrupted.
 - If a checkpoint was expected but could not be restored, the session **locks**: `/status` reports `trueReady: false`, further runs get HTTP 423, the status bar shows **Stata: STALE**, and the Terminal says the session did not restore the pre-run state and is locked.
-- **Stata: KILL** in the status bar unlocks it: after one confirmation it force-resets the session's own backend and runs the verified recovery smoke (a fixed marker command that must return rc 0 with the marker in its log). Confirming accepts the loss of in-memory Stata data. On Windows, KILL also ends every Stata GUI process on the machine (`StataMP-64`, `StataSE-64`, `Stata-64`), not only this session's.
-- The execution watchdog cancels an ordinary run that writes no log for 120 s before its first log line, or for 60 s after it (runs recognised as long tasks get 300 s and 30 min). The pre-run checkpoint is restored, but a watchdog cancel always locks the session until **Stata: KILL**. The lock reason names the stall, for example `EXEC_PRELOG_STALL (IDLE)`, and `/status.lastGuardFailure` records each cancel.
+- **Stata: KILL** in the status bar unlocks it: after one confirmation it force-resets the session's own backend and runs the verified recovery smoke (a fixed marker command that must return rc 0 with the marker in its log). Confirming accepts the loss of in-memory Stata data. On Windows, KILL also ends every Stata GUI process on the machine (`StataMP-64`, `StataSE-64`, `Stata-64`), not only this session's. <!-- PENDING #22: after PR #22 (rc.7.82) merges, replace the Windows sentence with the V3-K-REPORT.md §7 wording: KILL ends only this window's backend tree, matched by parent process and creation time; if ownership cannot be confirmed it ends none of them. -->
+- The execution watchdog cancels an ordinary run that writes no log for 120 s before its first log line, or for 60 s after it (runs recognised as long tasks get 300 s and 30 min). After the first log line, CPU time used by this window's own Stata worker also counts as progress, so a quiet computation such as `bootstrap … nodots` is not cancelled at 60 s while the worker keeps computing. CPU activity is not proof of useful work: a run that loops without output can keep the session busy until its log has been silent for 30 min. Press Stop or **Stata: KILL** to end it earlier. If the worker's CPU time cannot be read and verified, the watchdog uses the log rule alone. The pre-run checkpoint is restored, but a watchdog cancel always locks the session until **Stata: KILL**. The lock reason names the stall, for example `EXEC_PRELOG_STALL (IDLE)`, and `/status.lastGuardFailure` records each cancel.
+- Stop pressed while the backend is still starting, before anything was sent, refuses the command (`PRE_RUN_BACKEND_START_CANCELLED`) and does not lock the session.
 - A timeout after the code was sent is reported as `EXEC_OUTCOME_UNKNOWN` with `payloadMayHaveRun: true`, because the code may still run in Stata.
 
 ## Platform test results
@@ -260,6 +275,11 @@ KILL) were driven through the VS Code DevTools protocol, not by a person at the
 keyboard. Dates are 2026, Taipei time. Builds are `main` commits; `e7e54848`,
 `579b0fe9` and `171138b6` are all version `0.2.0-next.5`, `8d63cb45` is
 `0.2.0-next.4`.
+
+Rows dated 11-04 come from two kinds of build. `aba81779` is the
+`v0.2.0-next.5` release. `a1a2832b` (PR #21), `40abcbea` (PR #20) and
+`2ec968a` (PR #24) are pull-request heads tested before their review rework
+and before merging; the merged `main` has not been retested live yet.
 
 ### macOS (Apple Silicon, macOS 26.5, StataNow, VS Code 1.139.1)
 
@@ -277,6 +297,15 @@ keyboard. Dates are 2026, Taipei time. Builds are `main` commits; `e7e54848`,
 | Stop on an agent run | `579b0fe9`, 11-02 | Pass. No force reset, pre-run state recovered (`RECOVERED_FULL`) |
 | Stop after the pre-run checkpoint was removed | `579b0fe9`, 11-02 | Pass. Session locked (`trueReady: false`, next run 423, status bar STALE) |
 | **Stata: KILL** unlock | `579b0fe9`, 11-02 | Pass. One confirmation, recovery smoke rc 0, next run succeeded |
+| First command after opening, `loadStataOnStartup` `false` (5) and `true` (2) | `aba81779`, 11-04 | Pass, 7/7 HTTP 200 and rc 0, no stall before the first log line. The command waited for Stata to load (11–14 s with `false`, about 7 s with `true`, 61 s on the first cold start), and the Output log showed "Waiting for Stata to finish loading…" then "finished loading after N s" |
+| Command sent while Stata is still loading: Stop, timeout, failed worker | `aba81779`, 11-04 | Pass. Stop during the wait: HTTP 409 `PRE_RUN_BACKEND_WARMUP_CANCELLED`, nothing sent, next command rc 0. Worker frozen: HTTP 504 `PRE_RUN_BACKEND_WARMUP_TIMEOUT` after 336.5 s, session not locked. Worker then killed: HTTP 500 `PRE_RUN_BACKEND_WARMUP_FAILED`; the next command waited 37 s for a new load and returned rc 0 |
+| Stop pressed before the backend finished connecting | `aba81779`, 11-04 | Fail. Nothing had been sent, but soft Stop returned 500 after 35.6 s and the session locked (`soft-stop-did-not-restore-checkpoint`). Fixed in rc.7.83 (PR #25), offline tests only so far |
+| Terminal Stop button on a running command | `aba81779`, 11-04 | First run 0/2: the test driver clicked a point covered by the Welcome page's transparent overlay, so the click never reached the Terminal. With Welcome closed, the mouse click, a click inside the Terminal view and **Stata: Cancel Current Request** each stopped the run, without locking |
+| Person and agent take turns; person submits during an agent run | `aba81779`, 11-04 | Pass. The person's submission got HTTP 409 `bridge busy` naming the agent; both read the same owner, N and coefficient afterwards |
+| **Stata: KILL** with two live sessions | `aba81779`, 11-04 | Pass. Only the locked session's three processes were replaced; the other session's 40 s command finished with rc 0 |
+| Five live sessions, three simultaneous submissions | `aba81779`, 11-04 | Partial. A sixth `open` got `SESSION_LIMIT`. Of three simultaneous submissions two passed; an agent submission sent about 20 s after its window reported ready was refused before dispatch (`BLOCKED_NO_DISPATCH`) because its backend had not started. Fixed in rc.7.86 (PR #26), offline tests only so far |
+| Quiet long command under heavy load (load average 120–140) | `aba81779`, 11-04 | Fail. A `bootstrap … dots(50)` run wrote no new log for 60 s, was cancelled at 63 s as `EXEC_PRELOG_STALL (IDLE)` and the session locked. rc.7.84 (PR #24) adds the worker CPU signal |
+| Worker CPU signal: idle noise and a real hang | `2ec968a`, 11-04 | Pass. An idle worker's CPU time grew 10 ms per 12 s (threshold 200 ms). A worker frozen with SIGSTOP was still cancelled, 69.7 s after it froze; after KILL the next command returned rc 0. The quiet-command check finished inside its first-log budget, so the 60 s idle path with CPU credit was not exercised live |
 
 ### Windows (Windows 11 x64, Stata 18 MP, VS Code 1.144.0)
 
@@ -305,6 +334,9 @@ keyboard. Dates are 2026, Taipei time. Builds are `main` commits; `e7e54848`,
 | KILL notice when the recovery smoke is skipped; probe reading its own log after a late event | `e7e54848`, 11-03 | Partial. The first branch cannot be reached on Windows (KILL always runs the smoke there); the late-event shape did not reproduce in two lazy-load attempts. Both have unit tests only |
 | First Terminal command right after `connect` completed, fresh window | `e5d2cda7`, 11-04 | Pass, 3/3. HTTP 200, rc 0 in 3.05–3.12 s; the second command also passed. Before dispatch the extension checked the worker state (`list_sessions` 4–6 ms; the worker was already running, so the wait message did not appear). The same check on `3765d82a` also passed 2/2, so this retest does not show that the earlier stall is gone |
 | First agent command after opening; 4 agent runs with a soft Stop in the last; Terminal Stop | `e5d2cda7`, 11-04 | Pass. First agent command rc 0 in 11.5 s. Runs 1–3 passed in 14.4–15.7 s; the stopped run was restored (`restored=true`, no force reset) and the data from before the Stop was kept. Terminal Stop stopped the run on the first click, same Stata process |
+| First Terminal command after opening, with per-step timing (`loadStataOnStartup` `true` and `false`, new and reused profiles) | `a1a2832b`, 11-04 | Pass, 24/24 HTTP 200 and rc 0, including 10 runs on fresh profiles. Each first command waited 16–60 s for Stata to load, then the run, its log path and the first output followed within 0.6 s. The older build `3765d82a` with the same timing lines stalled once in 17 runs (HTTP 504 after about 120 s); see [Known limitations](#known-limitations) |
+| Four 8 s commands with a soft Stop in the second; one Stop from the Terminal button | `a1a2832b`, 11-04 | Pass. Stop returned in 1.65 s with the checkpoint restored and no force reset; the other three rounds each logged their start and end lines; the Stata process stayed the same. The Terminal Stop stopped the run on the first click. The first Run click right after the panel took focus did nothing, as in earlier Windows tests |
+| Command sent while Stata is still loading (worker suspended): Stop, timeout, restart | `40abcbea`, 11-04 | Pass. Stop during the wait: refused with `PRE_RUN_BACKEND_WARMUP_CANCELLED`, nothing in the Stata log. Timeout: HTTP 504 `PRE_RUN_BACKEND_WARMUP_TIMEOUT` after 300.1 s, nothing sent. After resuming, the next command returned rc 0 in 46.1 s; its worker had failed while starting, was restarted once and loaded in 43 s, and the command ran once. A visible `PRE_RUN_BACKEND_WARMUP_FAILED` did not occur (a wrong `stataPath` still loaded Stata). The wait message appeared in the Output log; the test input path does not draw the Terminal panel, so the panel text is unverified on Windows |
 
 macOS Intel and Windows Server 2022 run the offline test suite and packaging in
 CI on every pull request (no licensed Stata). Windows 10, Windows on ARM and
@@ -319,23 +351,36 @@ rows marked `3765d82a`). Its three fixes held, but a Terminal command sent right
 after the load stalled once. PR #18 (`1bf02d02`: Terminal commands wait for
 the Stata warm-up before dispatch) was retested live on Windows on its head
 `e5d2cda7` (same source tree; rows dated 11-04); see
-[Known limitations](#known-limitations). macOS has not been retested live since
-`579b0fe9`.
+[Known limitations](#known-limitations). macOS was retested live on the
+`v0.2.0-next.5` release (`aba81779`) on 11-04. PRs #19–#21 and #23–#26 merged
+into `main` after these tests; the merged commit has not been retested live on
+either platform.
 
 ## Known limitations
 
 Fixed on `main` (`e9b22430`, PR #17) and confirmed live on Windows on `3765d82a`, 11-03, except where noted:
 
-- **Windows: the first command after opening a window could lock the session (only partly fixed, see the first open problem below).** With `stataMcp.loadStataOnStartup: false`, Stata loads only when the first command arrives. On Windows that first command stalled in 2 of 3 attempts, returned HTTP 504 after about 120 s and locked the session. The launcher now writes `true` by default, so Stata loads while the window opens (57.7 s on Windows 11). The problem still occurs if a profile sets `false` explicitly (last checked on `3765d82a`); the launcher keeps that value and `open` says so in its `backendLoad` field. To unlock such a session, click **Stata: KILL**; to avoid it, remove the `false` entry from `profiles/<name>/user-data/User/settings.json` before `open`. macOS was not affected in the tests so far.
+- **Windows: the first command after opening a window could lock the session (the remaining stall is covered by the warm-up fix below).** With `stataMcp.loadStataOnStartup: false`, Stata loads only when the first command arrives. On Windows that first command stalled in 2 of 3 attempts, returned HTTP 504 after about 120 s and locked the session. The launcher now writes `true` by default, so Stata loads while the window opens (57.7 s on Windows 11). The problem still occurs if a profile sets `false` explicitly (last checked on `3765d82a`); the launcher keeps that value and `open` says so in its `backendLoad` field. To unlock such a session, click **Stata: KILL**; to avoid it, remove the `false` entry from `profiles/<name>/user-data/User/settings.json` before `open`. macOS was not affected in the tests so far.
 - **Late events from a cancelled command went to the wrong run.** On Windows a command whose cancel was reported as confirmed still ran about 2 s later, and its late log event was given to the run that came next (the quiescence probe). The session was locked, so nothing built on the wrong state, and since PR #15 such a response reports `EXEC_OUTCOME_UNKNOWN` with `payloadMayHaveRun: true` (confirmed live on Windows, `e7e54848`). PR #17 now keeps events with their task: after a run ends without its response, events with an unknown task id are no longer given to the active run but are held or dropped. The holding buffer keeps at most 256 events; if all of them are `log_path` or `task_done` events, a new `task_done` can be dropped.
 - **A watchdog cancel could show an earlier failure's reason.** On the agent path the status after a watchdog cancel repeated the reason and timing of an earlier Terminal failure. Each cancel now writes its own `stallReason` and `elapsedMs`, and the lock reason reads for example `EXEC_PRELOG_STALL (IDLE)`. The `reasonCode` itself is still `EXEC_PRELOG_STALL` for every stall kind, because clients match on it.
 
+Fixed on `main` after `0.2.0-next.5` (PRs #20, #21, #23–#26), with offline tests and CI; the merged commit has not been retested live:
+
+- **Windows: the first Terminal command after Stata loads stalled now and then (W-P1).** Per-step timing (PR #21) located the stall. In the one stalled run out of 33, Stata's own start-up inside the worker took 76.6 s between its pre-flight check and the end of `stata_setup.config` (3.4–8.6 s in the other 32 runs). The command was queued, not lost: the old build counted this wait against the command's 120 s first-log budget and cancelled it 1.7 s before Stata was ready. Since PR #18 a command first waits for Stata to load (up to 300 s by default) outside that budget. Builds with that wait had 0 stalls in 24 runs, 10 of them on fresh profiles. This is a statistical bound (true stall rate below about 12.5 % at 95 % confidence), not proof that the stall cannot occur. A Stata start-up longer than the limit is refused before dispatch (`PRE_RUN_BACKEND_WARMUP_TIMEOUT`) instead of locking the session.
+- **Quiet long commands were cancelled after 60 s** (inherited from the stable release). The watchdog now also counts CPU time of this window's own Stata worker as progress (PR #24, rc.7.84). See the CPU-signal limits below.
+- **Stop before the backend finished connecting locked the session.** It now refuses the command without locking (PR #25, rc.7.83).
+- **Concurrent `open` calls timed out after 10 s.** They now reserve inside a short lock and launch outside it (PR #23).
+- **An agent submission right after a window opened was refused** (`BLOCKED_NO_DISPATCH`) while a Terminal command would have waited. It now waits for the same warm-up; refusals carry `retryable` and `retryAfterMs` (PR #26, rc.7.86).
+- **The warm-up cache could trust a replaced worker.** It now records the worker's pid, start time and transport, checks them again before use, and treats a failed or timed-out check as not ready. A Terminal command whose worker died while starting restarts it once (PR #20, rc.7.81).
+
 Open problems on the current `main`:
 
-- **Windows: the first Terminal command after Stata loads stalled once; the cause is not confirmed.** On `3765d82a` the first Terminal command, sent right after `connect` completed, stalled before any log output, returned HTTP 504 after 163.9 s and locked the session (the next command got 423). The agent path waited until the Stata worker was running before it dispatched; the Terminal path did not. PR #18 makes Terminal commands wait for the same warm-up. On `e5d2cda7` the same check passed 3/3, but `3765d82a` also passed 2/2 on the same day, so the stall is intermittent and the retest does not prove it is gone. Where Windows blocks is still unknown. If a session locks, click **Stata: KILL** and read the receipt before resubmitting.
-- **A command sent while Stata is still loading.** `trueReady` does not wait for the background load. A Terminal command waits until the Stata worker is running. After 2 s the Terminal shows "Waiting for Stata to finish loading…"; Stop cancels the wait. After 300 s, or if the warm-up fails, the command is refused before it is sent (`PRE_RUN_BACKEND_WARMUP_TIMEOUT` or `PRE_RUN_BACKEND_WARMUP_FAILED`, `payloadDispatched=false`). If the worker state cannot be read, the command is sent anyway and the Terminal says the load could not be confirmed. In every live retest the worker was already running when the first command arrived, so the wait message, Stop during the wait and the refusals have offline tests only.
-- **Stata: KILL on Windows ends every Stata GUI process on the machine**, not only this session's. Save work in other Stata windows before confirming it.
-- **Silent long commands.** A command that writes no log output for 60 s (for example a `bootstrap … nodots`) is treated as stalled and cancelled. This rule is inherited from the stable release. Add progress output to long commands.
+- **A command sent while Stata is still loading.** `trueReady` does not wait for the background load. A Terminal command or an agent submission waits until the Stata worker is running. After 2 s the Terminal shows "Waiting for Stata to finish loading…"; Stop cancels the wait. After 300 s, or if the warm-up fails, the command is refused before it is sent (`PRE_RUN_BACKEND_WARMUP_TIMEOUT` or `PRE_RUN_BACKEND_WARMUP_FAILED`, `payloadDispatched=false`). If the worker state cannot be read, the command is sent anyway and the Terminal says the load could not be confirmed. On 11-04 the wait message, Stop during the wait (through `/soft-stop`), the timeout and the failure refusal were confirmed live on macOS; on Windows all of them except the failure refusal, and the wait message only in the Output log.
+- **Stata: KILL on Windows ends every Stata GUI process on the machine**, not only this session's. Save work in other Stata windows before confirming it. <!-- PENDING #22: remove or rewrite after PR #22 (rc.7.82) merges -->
+- **macOS KILL and force reset identify the backend by pid only.** The cleanup ends the registered pid when its command line contains `mcp-stata`; it does not check the process start time or parent. A pid reused by another session's `mcp-stata` within that window could be ended.
+- **The worker CPU signal is a heuristic.** CPU activity is not proof of useful work: a run that loops without output keeps the session until its log has been silent for 30 min. When the process tree cannot be verified (a pid exited during the sample, more than 4 levels or 16 processes, a parent mismatch), the sample gives no credit and the 60 s log rule applies. Same-second pid reuse is below the precision of the start time it checks. The live check so far covered the idle noise and a frozen worker, not a quiet command past 60 s.
+- **Stata error return codes.** A command that Stata ran and rejected (for example `r(111)`) returns HTTP 500 with rc -1 on the Terminal path, and `EXECUTION_UNCONFIRMED_NO_RETRY` to an agent, although the receipt holds Stata's error text. mcp-stata 1.26.1 does not include the return code in its task-done event, and the log parser does not read the SMCL form `{search r(111), local:r(111);}`. <!-- PENDING #27: PR #27 adds a conservative STATA_ERROR_CONFIRMED path that stays inactive until the runtime patch sends rc; update after both merge -->
+- **A reopened session can get a new port.** Right after `close`, the old port can still be in TIME_WAIT; the launcher then picks the next free one. Tools look sessions up by name.
 - **Windows dispatch overhead.** Each agent submission on Windows took about 15 s longer than the Stata work itself (pre-dispatch checks and receipt verification); a short command took 17.4 s end to end. In 20 rounds of an 8 s command the fixed cost was 12–18 s per submission.
 - **Service start can wait for PyPI.** Before starting the Stata service, the extension checks PyPI for the `mcp-stata` version. On a machine where that request times out, the timeout adds to the first start.
 - **Memory.** Each session is a full VS Code plus Stata. On macOS five sessions used 3852–4000 MB RSS in total (718–850 MB each). On a 16.8 GB Windows machine, two idle sessions had working sets of 1.93 and 2.16 GB, and 2.00–2.39 GB each under load. Check free memory before opening a third session on a machine of that size.
@@ -360,8 +405,10 @@ Open problems on the current `main`:
 | `candidate identity mismatch` | The installed VSIX is not the build your clone pins. Check out the commit of the VSIX |
 | HTTP 401 or 403 from the bridge | Requests need the session token, `Host: 127.0.0.1:<port>` and no `Origin`. Use the agent tools, which read the token from the registry |
 | Status bar **Stata: STALE**; runs return HTTP 423 | Click **Stata: KILL** and confirm. It force-resets the session's backend and runs the recovery smoke itself; in-memory data is lost |
-| Windows: first command after opening returns HTTP 504 (`EXEC_PRELOG_STALL` or `EXEC_OUTCOME_UNKNOWN`) and the session locks | Click **Stata: KILL** to unlock; on Windows KILL also ends every other Stata GUI process on the machine. Check the receipt before resubmitting, because the command may still have run. If the profile sets `loadStataOnStartup` to `false`, remove that entry before the next `open`. See [Known limitations](#known-limitations) |
+| Windows: first command after opening returns HTTP 504 (`EXEC_PRELOG_STALL` or `EXEC_OUTCOME_UNKNOWN`) and the session locks | Click **Stata: KILL** to unlock; on Windows KILL also ends every other Stata GUI process on the machine <!-- PENDING #22 -->. Check the receipt before resubmitting, because the command may still have run. If the profile sets `loadStataOnStartup` to `false`, remove that entry before the next `open`. See [Known limitations](#known-limitations) |
 | Terminal shows "Waiting for Stata to finish loading…" | Stata is still starting. Wait, or click Stop to cancel; nothing has been sent yet. After 300 s the command is refused with `PRE_RUN_BACKEND_WARMUP_TIMEOUT`; it was not sent |
+| Agent client returns `REFUSED_NOT_DISPATCHED` | The extension refused the run before sending it. Read `reasonCode`. If `retryable` is true, submit again after `retryAfterMs`; after a Stop it is false |
+| `close` returned `OPENING` | An `open` of that session is still running. Wait until it returns, then `close` again |
 | `close` returned `CLOSE_PENDING` | VS Code is asking about unsaved changes in that window. Answer it, then run `close` again |
 | `No module named 'mcp.server.fastmcp'` | The runtime was installed with MCP 2.x. Reinstall it with the constraints file |
 | A timeout or unclear agent result | Do not resubmit blindly. Read the receipt and `--events` first; a timeout is not proof that Stata did not run |
@@ -390,6 +437,15 @@ Environment variables:
 | `STATA_WORKBENCH_AGENT_NAME` | `agent` | Name shown on the agent's Terminal cards and in the event stream |
 | `STATA_WORKBENCH_RUNTIME_SOURCE` | Machine runtime (see [Install](#install)) | Runtime that `open` copies into a new session |
 | `STATA_WORKBENCH_CODE` | VS Code in its standard location | VS Code to launch |
+| `STATA_WORKBENCH_TIMING_FILE` | — | Diagnostics: a file to which the extension also appends its `[wb-timing]` lines |
+
+The **Stata Workbench** output channel shows one `[wb-timing] {…}` line per
+step of a Terminal command before its first output (entry, warm-up, tool calls,
+log path, first output). The lines carry fixed fields only: times, ids, status
+and error class or code, never code, output or error messages. Writing them is
+synchronous, so they add a small I/O cost. Timing inside mcp-stata is not part
+of the product: `scripts/stata_timing_patch.js` instruments only a new
+disposable copy of a runtime, for manual diagnosis.
 
 ## Development
 
@@ -401,13 +457,13 @@ npm run package
 python3 -B tools/verify_release.py --packaged
 ```
 
-`npm run package` produces `stata-workbench-next-<version>.vsix`. CI runs these
-steps on macOS 15 (Apple Silicon and Intel) and Windows Server 2022 without
-Stata, a GUI or credentials, plus a separate reference source build. Locally,
-`scripts/mac/test_png_compat_unit.js` (a private image corpus) and
-`scripts/test_stata_preflight_timeout_patch.js` (an installed runtime) depend
-on machine-specific files and are known to fail on the maintainer's Mac; they
-pass in CI.
+`npm run package` runs the full check and produces
+`stata-workbench-next-<version>.vsix` in one step. CI runs these steps on
+macOS 15 (Apple Silicon and Intel) and Windows Server 2022 without Stata, a GUI
+or credentials, plus a separate reference source build. The image-corpus test
+skips when the private corpus has no `.do` files and also runs on a small
+synthetic corpus in the repository; the pre-flight patch test accepts an
+installed runtime only when it is unpatched or patched exactly once.
 
 Bundle changes are readable patch scripts in `scripts/` applied to the
 maintained `dist/extension.js`. Each later patch can be reverted and is
