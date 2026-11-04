@@ -25,7 +25,7 @@ except ValueError:
     PORT = 0  # Doctor can report the bad setting before any connection or launch.
 CODE_CLI = host.default_code()
 VERSION = "0.2.0-next.5"
-BUNDLE_SHA256 = "5bd2667082a6d2ee84b375d4038ab65fcaa9fdb6d630f775e6d484aeb60cb02a"
+BUNDLE_SHA256 = "988b628c948637beca291894e7f9ca7556f026d4c6d111ede92549f58bcec0dc"
 PINS = {
     WORK / "dist/extension.js": BUNDLE_SHA256,
 }

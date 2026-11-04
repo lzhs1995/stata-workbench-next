@@ -1,0 +1,15 @@
+. set more off
+. display 3+3
+{res}6
+{com}. #delimit cr
+{txt}delimiter now cr
+{com}. display as text "___VERIFIED_CLIENT_ca51c130e787447da34bff50540ab1fb___"
+{res}{txt}___VERIFIED_CLIENT_ca51c130e787447da34bff50540ab1fb___
+{com}. #delimit cr
+{txt}delimiter now cr
+{com}. display as text "___CODEX_RUN_DONE_run_mw1ossm8_pwud0vvd___"
+{res}{txt}___CODEX_RUN_DONE_run_mw1ossm8_pwud0vvd___
+{com}. 
+{txt}
+{com}. scalar _wb_rc_72d4942fb9414943a2300839 = _rc
+{txt}

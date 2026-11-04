@@ -3466,6 +3466,9 @@ text = require("./apply_worker_cpu_progress_patch").patchBundle(text, { finalize
 // Terminal input restarts a worker that died while starting, once, without force reset.
 text = require("./apply_warm_worker_identity_patch").patchBundle(text, { finalize: false });
 text = require("./apply_agent_warmup_refusal_patch").patchBundle(text, { finalize: false });
+// V3 M5: a Stata error that ran to its r(n) line reports Stata's return code
+// (agent STATA_ERROR outcome, Terminal rc) instead of an unconfirmed failure.
+text = require("./apply_stata_error_outcome_patch").patchBundle(text, { finalize: false });
 // F v3: Windows KILL, /panic-kill and a busy force reset end only this window's
 // backend process tree instead of every mcp-stata process and Stata GUI.
 text = require("./apply_windows_kill_scope_patch").patchBundle(text, { finalize: false });

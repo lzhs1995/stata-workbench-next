@@ -1,0 +1,10 @@
+. set more off
+. display nosuchvar_v3a
+{res}{err}nosuchvar_v3a not found
+{txt}{search r(111), local:r(111);}
+{com}. display as text "___CODEX_RUN_DONE_debug_terminal_1793770744628_p7yag0qsj1b___"
+. 
+{txt}{search r(111), local:r(111);}
+{txt}
+{com}. scalar _wb_rc_bde67e0402e54b2da8451be9 = _rc
+{txt}
