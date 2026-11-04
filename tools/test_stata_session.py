@@ -82,7 +82,8 @@ class Base(unittest.TestCase):
                     else "C:/VSCode/Code.exe",
                     instances=lambda profile: self.running.get(Path(profile).name, []),
                     alive=lambda pid: True, port_free=lambda port: True, sleep=Mock(), disk_free=lambda p: 10**12,
-                    environ={"SystemRoot": "C:\\Windows"}, launch_wait=0, leftovers=lambda dirs: [])
+                    environ={"SystemRoot": "C:\\Windows"}, launch_wait=0, leftovers=lambda dirs: [],
+                    identity=lambda pid: None, signal=Mock())
         args.update(kw)
         return ss.Sessions(**args)
 
@@ -565,8 +566,75 @@ class ListCloseTests(Base):
         r = s.close("p1")
         self.assertEqual((r["verdict"], killed), ("CLOSED", [501]), "only the VS Code instance is signalled")
         self.assertEqual(r["leftoverProcesses"], [{"pid": 25045, "command": "python3.11"}])
-        self.assertIn("nothing was signalled", r["note"])
-        self.assertEqual(seen, [[str(self.root / "ws" / "p1"), str(self.root / "profiles" / "p1" / "mcp-temp")]])
+        self.assertIn("orphanWorkers with ended=true", r["note"])
+        self.assertEqual(seen, [[str(self.root / "ws" / "p1")],
+                                [str(self.root / "ws" / "p1"), str(self.root / "profiles" / "p1" / "mcp-temp")]])
+        self.assertEqual(r["orphanWorkers"], [], "the leftover is not a recorded worker identity: never signalled")
+
+    def orphan_world(self, table, ignore_term=False):
+        """table: pid -> {ppid, lstart, cwd, command}；signal 像系统那样改表。返回 (Sessions, 发出的信号)。"""
+        sent = []
+        def signal_(pid, sig):
+            sent.append((pid, sig))
+            if pid not in table:
+                raise ProcessLookupError(pid)
+            if sig == ss.signal.SIGKILL or not ignore_term:
+                table.pop(pid)
+        clock = iter(range(0, 100000))
+        s = self.sessions(leftovers=lambda dirs: [{"pid": p, "command": "python"} for p in sorted(table)],
+                          identity=lambda pid: ({"pid": pid, **table[pid]} if pid in table else None),
+                          signal=signal_, clock=lambda: next(clock))
+        s.open("p1", runtime_source=self.source, launch=False)
+        self.running["p1"] = [501]
+        def quit_(pid):
+            self.running.pop("p1")
+            for row in table.values():   # 服务端被关、没带走 worker：worker 被 launchd 收养
+                row["ppid"] = 1
+        s.kill = quit_
+        return s, sent
+
+    def test_close_ends_an_exactly_matching_orphaned_worker_term_then_kill(self):
+        ws = str(self.root / "ws" / "p1")
+        spawn = "/py/python3.11 -B -s -c from multiprocessing.spawn import spawn_main; spawn_main(tracker_fd=8)"
+        table = {25045: {"ppid": 24709, "lstart": "Thu Nov 5 02:52:08 2026", "cwd": ws, "command": spawn}}
+        s, sent = self.orphan_world(table)
+        r = s.close("p1")
+        self.assertEqual(r["orphanWorkers"], [{"pid": 25045, "startedAt": "Thu Nov 5 02:52:08 2026", "ended": True, "reason": "orphaned-sigterm"}])
+        self.assertEqual(sent, [(25045, ss.signal.SIGTERM)])
+        table = {25045: {"ppid": 24709, "lstart": "Thu Nov 5 02:52:08 2026", "cwd": ws, "command": spawn}}
+        s, sent = self.orphan_world(table, ignore_term=True)
+        r = s.close("p1")
+        self.assertEqual(sent, [(25045, ss.signal.SIGTERM), (25045, ss.signal.SIGKILL)])
+        self.assertEqual((r["orphanWorkers"][0]["ended"], r["orphanWorkers"][0]["reason"]), (True, "orphaned-sigkill"))
+
+    def test_close_never_signals_a_reused_pid_a_foreign_cwd_or_a_non_worker(self):
+        ws = str(self.root / "ws" / "p1")
+        spawn = "/py/python3.11 -B -s -c from multiprocessing.spawn import spawn_main; spawn_main(tracker_fd=8)"
+        for label, mutate, reason in (
+                ("reused pid", lambda t: t[25045].update(lstart="Thu Nov 5 06:00:00 2026"), "pid-reused"),
+                ("cwd moved out", lambda t: t[25045].update(cwd="/Users/someone/elsewhere"), "cwd-changed"),
+                ("user shell", lambda t: t[25045].update(command="-zsh"), "not-a-worker")):
+            table = {25045: {"ppid": 24709, "lstart": "Thu Nov 5 02:52:08 2026", "cwd": ws, "command": spawn}}
+            s, sent = self.orphan_world(table)
+            orig = s.kill
+            s.kill = lambda pid, orig=orig, mutate=mutate, table=table: (orig(pid), mutate(table))
+            r = s.close("p1")
+            self.assertEqual(sent, [], label + ": never signalled")
+            self.assertEqual([(w["pid"], w["ended"], w["reason"]) for w in r["orphanWorkers"]], [(25045, False, reason)], label)
+        # cwd outside the session from the start: not even recorded, so never signalled
+        table = {25045: {"ppid": 24709, "lstart": "Thu Nov 5 02:52:08 2026", "cwd": "/tmp/other", "command": spawn}}
+        s, sent = self.orphan_world(table)
+        r = s.close("p1")
+        self.assertEqual((sent, r["orphanWorkers"]), ([], []))
+
+    def test_orphan_reason_rules(self):
+        ws = "/h/ws/p1"
+        b = {"pid": 9, "lstart": "L", "cwd": ws, "command": "python -m mcp_stata"}
+        self.assertEqual(ss.orphan_reason(b, {**b, "ppid": 1}, ws), "orphaned")
+        self.assertEqual(ss.orphan_reason(b, {**b, "ppid": 77}, ws), "not-orphaned")
+        self.assertEqual(ss.orphan_reason({**b, "cwd": None}, {**b, "ppid": 1}, ws), "identity-unknown")
+        self.assertEqual(ss.orphan_reason({**b, "cwd": "/h/ws/p10"}, {**b, "cwd": "/h/ws/p10", "ppid": 1}, ws), "cwd-outside-session")
+        self.assertTrue(ss.is_inside(ws, ws + "/sub") and not ss.is_inside(ws, "/h/ws/p10"))
 
     def test_close_leftover_check_failure_keeps_the_verdict(self):
         def boom(dirs):
@@ -577,6 +645,7 @@ class ListCloseTests(Base):
         s.kill = lambda pid: self.running.pop("p1")
         r = s.close("p1")
         self.assertEqual((r["verdict"], r["leftoverProcesses"]), ("CLOSED", None))
+        self.assertEqual(r["orphanWorkers"], [{"pid": None, "startedAt": None, "ended": False, "reason": "identity-unreadable"}])
         self.assertNotIn("note", r)
 
     def test_close_clean_reports_an_empty_leftover_list(self):

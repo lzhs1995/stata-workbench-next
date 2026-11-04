@@ -1531,6 +1531,11 @@ const REQUIRED_MARKERS = [
     label: "/status shows the watchdog's worker CPU counters",
     marker: "codex patch rc.7.88: /status shows the watchdog's worker CPU counters",
   },
+  {
+    key: "orphanWorkerReap",
+    label: "force reset ends this session's orphaned Stata worker",
+    marker: "codex patch rc.7.89: force reset ends this session's orphaned Stata worker",
+  },
 ];
 
 const AUXILIARY_MARKERS = [

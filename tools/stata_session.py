@@ -205,12 +205,41 @@ def public(record):
     return {k: v for k, v in record.items() if k != "token"}
 
 
+# V3-W2：Stata worker 类进程（mcp-stata 服务端、multiprocessing spawn worker、resource_tracker）的命令行特征。
+WORKER_CMD_RE = re.compile(r"multiprocessing\.spawn import spawn_main|multiprocessing\.resource_tracker|-m mcp_stata\b")
+
+
+def is_inside(directory, path):
+    try:
+        rel = os.path.relpath(os.path.realpath(path), os.path.realpath(directory))
+    except ValueError:
+        return False
+    return rel == "." or not (rel == ".." or rel.startswith(".." + os.sep) or os.path.isabs(rel))
+
+
+def orphan_reason(before, now, ws):
+    """记下的身份 before 与此刻 now 比：只有完全一致、已被收养（ppid 1）、cwd 仍在本会话 ws 下才返回 orphaned。"""
+    if not before or not before.get("lstart") or not before.get("cwd"):
+        return "identity-unknown"
+    if now.get("lstart") != before["lstart"]:
+        return "pid-reused"
+    if now.get("cwd") != before["cwd"]:
+        return "cwd-changed"
+    if not is_inside(ws, now["cwd"]):
+        return "cwd-outside-session"
+    if not WORKER_CMD_RE.search(now.get("command") or ""):
+        return "not-a-worker"
+    if now.get("ppid") != 1:
+        return "not-orphaned"
+    return "orphaned"
+
+
 class Sessions:
     """所有外部动作（启动、进程查找、信号、端口探测、磁盘、时钟）都可注入，测试不真开 VS Code。"""
 
     def __init__(self, root=None, platform=None, code=None, run=None, popen=None, instances=None, alive=None,
                  port_free=port_free, kill=None, sleep=time.sleep, clock=time.monotonic, disk_free=None, environ=None,
-                 now=time.time, launch_wait=LAUNCH_VISIBLE_WAIT, leftovers=None):
+                 now=time.time, launch_wait=LAUNCH_VISIBLE_WAIT, leftovers=None, identity=None, signal=None):
         self.root = Path(root) if root else state_root()
         self.platform = platform or sys.platform
         self.environ = dict(os.environ if environ is None else environ)
@@ -226,6 +255,8 @@ class Sessions:
         self.launch_wait = launch_wait
         self.disk_free = disk_free or (lambda p: shutil.disk_usage(p).free)
         self._leftovers = leftovers or self._real_leftovers
+        self._identity = identity or self._real_identity
+        self._signal = signal or (lambda pid, sig: os.kill(pid, sig))
 
     @property
     def profiles(self):
@@ -261,6 +292,86 @@ class Sessions:
                 elif line.startswith("c") and pid is not None:
                     rows[pid]["command"] = line[1:][:40]
         return sorted(rows.values(), key=lambda r: r["pid"])
+
+    def _real_identity(self, pid):
+        """{pid, ppid, lstart, cwd, command} 或 None（进程不在/读不到）。只读。"""
+        env = {**os.environ, "LC_ALL": "C", "LANG": "C"}
+        try:
+            ps = subprocess.run(["ps", "-o", "pid=,ppid=,lstart=,command=", "-p", str(pid)], capture_output=True,
+                                text=True, timeout=10, env=env).stdout.strip()
+            m = re.match(r"^\s*(\d+)\s+(\d+)\s+(\w{3}\s+\w{3}\s+\d+\s+\d\d:\d\d:\d\d\s+\d{4})\s+(.*)$", ps)
+            if not m or int(m.group(1)) != pid:
+                return None
+            out = subprocess.run(["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"], capture_output=True, text=True,
+                                 timeout=10).stdout
+        except (OSError, subprocess.SubprocessError):
+            return None
+        cwd = next((line[1:] for line in out.splitlines() if line.startswith("n")), None)
+        return {"pid": pid, "ppid": int(m.group(2)), "lstart": " ".join(m.group(3).split()), "cwd": cwd,
+                "command": m.group(4)[:200]}
+
+    def worker_identities(self, name):
+        """本会话 ws 下的 Stata worker 类进程（mcp-stata 服务端、spawn_main worker、resource_tracker）的身份。"""
+        ws = self.root / "ws" / name
+        try:
+            rows = self._leftovers([ws])
+        except Exception:  # noqa: BLE001  读不到身份：不发信号，只报告
+            return None
+        if rows is None:
+            return None
+        out = []
+        for row in rows:
+            ident = self._identity(row["pid"])
+            if ident and ident.get("cwd") and is_inside(ws, ident["cwd"]) and WORKER_CMD_RE.search(ident.get("command") or ""):
+                out.append(ident)
+        return out
+
+    def settle(self, captured, limit=6.0):
+        """给服务端最多 limit 秒自己退出（它正常退出时会带走 worker）；记下的进程都退出或都被收养（ppid 1）就提前结束。"""
+        deadline = self.clock() + limit
+        while captured and self.clock() < deadline:
+            now = [self._identity(c["pid"]) for c in captured]
+            if all(n is None or n.get("lstart") != c.get("lstart") or n.get("ppid") == 1 for n, c in zip(now, captured)):
+                break
+            self.sleep(0.5)
+        return captured
+
+    def reap_orphans(self, captured, name, grace=3.0):
+        """V3-W2：关窗后仍在的、身份完全一致（pid+启动时刻+cwd）、ppid=1、cwd 在本会话 ws 下的 worker：先 TERM，宽限后 KILL。
+        返回 [{pid, startedAt, ended, reason}]；已退出的不列出。身份不符一律不发信号。"""
+        ws = self.root / "ws" / name
+        out = []
+        for before in captured or []:
+            now = self._identity(before["pid"])
+            if now is None:
+                continue
+            rec = {"pid": before["pid"], "startedAt": before.get("lstart"), "ended": False}
+            reason = orphan_reason(before, now, ws)
+            if reason != "orphaned":
+                rec["reason"] = reason
+                out.append(rec)
+                continue
+            for sig, label in ((signal.SIGTERM, "orphaned-sigterm"), (signal.SIGKILL, "orphaned-sigkill")):
+                try:
+                    self._signal(before["pid"], sig)
+                except ProcessLookupError:
+                    pass
+                rec["reason"] = label
+                deadline = self.clock() + grace
+                while self.clock() < deadline:
+                    again = self._identity(before["pid"])
+                    if again is None or again.get("lstart") != before.get("lstart"):
+                        rec["ended"] = True
+                        break
+                    self.sleep(0.25)
+                if rec["ended"]:
+                    break
+                again = self._identity(before["pid"])
+                if again is None or orphan_reason(before, again, ws) != "orphaned":
+                    rec["ended"] = again is None or again.get("lstart") != before.get("lstart")
+                    break
+            out.append(rec)
+        return out
 
     def leftovers(self, name):
         """关窗后仍占用本会话工作目录或 mcp-temp 的进程；None = 本平台不查或查不了。只报告，不发信号。"""
@@ -597,6 +708,8 @@ class Sessions:
         if not pids:
             return {"verdict": "NOT_RUNNING", "name": name, "signalled": [], "removedRegistryFiles": self._remove_dead_records(name),
                     "removedTmpFiles": self._remove_orphan_tmp()}
+        # V3-W2：先记下本会话 worker 类进程的身份（关窗前）；Windows 由 rc.7.82 结束整棵树，这里不处理
+        captured = None if self.platform == "win32" else self.worker_identities(name)  # None = 读不到，只报告
         for pid in pids:
             self.kill(pid)
         deadline = self.clock() + wait
@@ -606,11 +719,14 @@ class Sessions:
                 if not any(r.get("sessionName") == name for r in self.records()):
                     result = {"verdict": "CLOSED", "name": name, "signalled": pids, "removedRegistryFiles": removed,
                               "removedTmpFiles": self._remove_orphan_tmp()}
+                    if self.platform != "win32":
+                        result["orphanWorkers"] = (self.reap_orphans(self.settle(captured), name) if captured is not None else
+                                                   [{"pid": None, "startedAt": None, "ended": False, "reason": "identity-unreadable"}])
                     left = self.leftovers(name)
                     result["leftoverProcesses"] = left
                     if left:
-                        result["note"] = ("VS Code closed, but these processes still hold this session's workspace or mcp-temp "
-                                          "(typically an old Stata worker left by a force reset); nothing was signalled")
+                        result["note"] = ("VS Code closed, but these processes still hold this session's workspace or mcp-temp; "
+                                          "only processes listed in orphanWorkers with ended=true were signalled")
                     return result
             self.sleep(0.5)
         return {"verdict": "CLOSE_PENDING", "name": name, "signalled": pids, "removedTmpFiles": self._remove_orphan_tmp(),

@@ -27,8 +27,8 @@
       "bytes": 17618
     },
     "scripts/patch_manager.js": {
-      "sha256": "162db0ff3db6dda8cacacf463930aaddb915385c284e3cf1d661839fb63b04aa",
-      "bytes": 98093
+      "sha256": "4940e1f3639c64a4b04ef5420fc8a2154e6025ed772200647cf96e57db7d1587",
+      "bytes": 98294
     },
     "scripts/mcp_stata_runtime_patch.js": {
       "sha256": "81a6985043039bad22f7be8f9b94dbf271cf0476f79bef64077ec43f61785c5f",
@@ -111,8 +111,8 @@
       "bytes": 5178
     },
     "scripts/apply_rc7_shared_execution_patch.js": {
-      "sha256": "b6ab9169e47e9ae85dd01f46d8786e9a5723601080da93019d837a0d3d9a5e33",
-      "bytes": 341635
+      "sha256": "042b2d7393ba332a576c2f5bbdec77983571f9083d00998c36734691e233d167",
+      "bytes": 341827
     },
     "scripts/apply_rc64_routes_patch.js": {
       "sha256": "b01e1225f5844b632e24d616957fb9e565541345a10d6f4fbc640a4b034070b2",
@@ -139,8 +139,8 @@
       "bytes": 11107
     },
     "dist/extension.js": {
-      "sha256": "59eda7964d29983e97093bb573106e8946f8562755e2a6b73e95c8bd605772b0",
-      "bytes": 5675894
+      "sha256": "ab543ae0554b108b7135e1b39ee892decff9ba1f200212772295c7004984901f",
+      "bytes": 5677289
     },
     "scripts/mac/png_compat_transform.js": {
       "sha256": "cdea12886a1d5bb5b4c2b3e38829de1c7e68ed70e7777e8d6e2eb02bb0ce3514",
@@ -343,7 +343,7 @@
       "bytes": 4729
     },
     "tools/verified_workbench.py": {
-      "sha256": "6220c89858894bd783a12f8eab853adaa0f4aacdc9a46aa1f29ae2430f3a1424",
+      "sha256": "bdda4e720d29aa7cd7cb612f5150b61575f7a1598fd75275c3e97a24a5c181ec",
       "bytes": 21973
     },
     "tools/workbench_platform.py": {
@@ -449,6 +449,10 @@
     "scripts/stata_task_done_rc_patch.js": {
       "sha256": "b16f0ce965490d1cf8f2a7fb8452bbacca8c1685510a5846106488d195fab5d9",
       "bytes": 4602
+    },
+    "scripts/orphan_worker_core.js": {
+      "sha256": "466326ba4323fb3c3c27793dbb0b12e150699148f1b6ff303dcc2720511d002e",
+      "bytes": 8810
     }
   },
   "acceptanceStatus": "PENDING_LICENSED_MAC_FULL_ACCEPTANCE",
