@@ -590,6 +590,9 @@ async function guardProgress(work, opts) {
     : (opts.structuralLong ? idleMs : DEFAULT_CPU_MAX_SILENT_MS);
   const cpuTracker = cpuProbe ? cpuProgressTracker(opts.cpuMinMs, opts.cpuMinShare) : null;
   const cpu = { inflight: null, seq: 0, lastStartAt: null };
+  const cpuLog = (m) => { try { (opts.log || noop)(m); } catch (e) { /* 日志失败不影响判定 */ } };
+  const cpuCounts = () => "cpuSamples=" + state.cpuSamples + " cpuProgress=" + state.cpuProgressCount
+    + " cpuErrors=" + state.cpuSampleErrors;
   state.cpuSamples = 0; state.cpuSampleErrors = 0; state.cpuProgressCount = 0;
   state.lastCpuProgressAt = null;
   const startCpuSample = () => {
@@ -602,7 +605,12 @@ async function guardProgress(work, opts) {
       cpu.inflight = null; state.cpuSamples++;
       if (!sample) state.cpuSampleErrors++;
       const r = cpuTracker.observe(sample, at);
-      if (r.progress) { state.cpuProgressCount++; state.lastCpuProgressAt = at; }
+      if (r.progress) {
+        state.cpuProgressCount++; state.lastCpuProgressAt = at;
+        // 只记数字，不记代码与路径
+        if (state.cpuProgressCount === 1) cpuLog("[exec-guard] worker CPU progress while log silent"
+          + " (cpu +" + Math.round(r.deltaMs) + " ms in " + Math.round(r.wallMs) + " ms); idle window extended");
+      }
     }, () => {
       if (!cpu.inflight || cpu.inflight.seq !== seq) return;
       cpu.inflight = null; state.cpuSampleErrors++; cpuTracker.reset();
@@ -700,6 +708,10 @@ async function guardProgress(work, opts) {
   }
 
   state.elapsedMs = Date.now() - started;
+  if (cpuProbe && state.cpuSamples + state.cpuSampleErrors > 0) {
+    cpuLog("[exec-guard] worker CPU summary " + cpuCounts() + " elapsedMs=" + state.elapsedMs
+      + " done=" + (done ? "yes" : "no"));
+  }
   if (done && workErr == null) {
     state.cause = CAUSE.COMPLETED; state.settlement = SETTLEMENT.NOT_NEEDED;
     state.completedAt = nowIso();

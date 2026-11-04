@@ -36,7 +36,9 @@ async function guardCases(G) {
   const res = {}, jobs = [];
   const add = (name, p) => jobs.push(p.then((v) => { res[name] = v; }));
   // 1 log silent + CPU growing -> not cancelled
-  add("busy", run(G, 700, (t0) => ({ cpuProbe: cpuAt(1, t0) })));
+  const busyLog = [];
+  add("busy", run(G, 700, (t0) => ({ cpuProbe: cpuAt(1, t0), log: (m) => busyLog.push(m) })).then((v) => Object.assign(v, { log: busyLog })));
+  add("hungLog", run(G, 900, (t0) => ({ cpuProbe: cpuAt(0, t0), log: (m) => { if (/worker CPU/.test(m)) throw new Error("log down"); } })));
   // 2 both silent -> IDLE on schedule
   add("hung", run(G, 900, (t0) => ({ cpuProbe: cpuAt(0, t0) })));
   // 3 baseline without cpuProbe
@@ -82,6 +84,10 @@ function assertGuard(G, res) {
   ok(res.cap.ms >= 450 && res.cap.ms < 450 + 150, "cap: cancelled right at maxSilent (" + res.cap.ms + " ms)");
   ok(res.prelog.r.state.stallReason === G.STALL.PRE_LOG && res.prelog.ms < 330, "PRE_LOG unchanged");
   ok(!res.prelog.r.state.cpuSamples, "PRE_LOG: no CPU sampling before the first log line");
+  ok(res.busy.log.some((m) => /worker CPU progress while log silent/.test(m)) &&
+     res.busy.log.some((m) => /worker CPU summary cpuSamples=\d+ cpuProgress=[1-9]/.test(m)), "busy: CPU lines logged");
+  ok(res.busy.log.every((m) => !/\/|\\/.test(m)), "busy: CPU log lines carry no paths");
+  ok(res.hungLog.r.state.stallReason === G.STALL.IDLE && res.hungLog.ms < IDLE + 200, "throwing log does not change the verdict");
   const pub = G.publicSummary(res.busy.r.state);
   ok(pub.cpuProgressCount > 0 && typeof pub.lastCpuProgressAt === "string", "publicSummary has CPU fields");
 }
