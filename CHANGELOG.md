@@ -2,9 +2,10 @@
 
 Not released yet; `package.json` still says `0.2.0-next.5`. Entries are in merge
 order. Each pull request was reviewed independently and passed CI on macOS 15
-(Apple Silicon and Intel) and Windows Server 2022 before merging. The live
+(Apple Silicon and Intel) and Windows Server 2022 before merging. Most live
 results below were taken on each pull request's own head before its review
-rework; the merged `main` has not been retested live.
+rework. macOS was also retested on `main` `b0bc49d` (before #27, #28 and #22);
+Windows has not been retested on the merged `main`.
 
 - **Packaging no longer depends on the maintainer's machine (PR #19).** `npm run package` now runs the full check and builds the VSIX in one step.
   - The image-corpus test skips when the corpus is missing, has no `.do` files or has no raster exports, and runs on five synthetic `.do` files in the repository with exact counts.
@@ -34,7 +35,6 @@ rework; the merged `main` has not been retested live.
   - The client now submits once when only the lazy backend start is missing, and the extension runs the same warm-up wait.
   - The completion check requires that this run started the backend itself (`lastCold.runId`, `CONNECTED`, a registered pid).
   - Warm-up refusals carry `retryable` and `retryAfterMs`: TIMEOUT and FAILED are retryable after 5000 ms, CANCELLED (a Stop) is not. The client reports them as `REFUSED_NOT_DISPATCHED` and does not resend.
-<!-- PENDING #22: Windows KILL ends only this window's backend tree (rc.7.82). Add the entry after PR #22 merges. -->
 - **A conservative check for Stata errors (PR #27, rc.7.85).** A command that Stata ran and rejected was reported as an unknown outcome: rc -1 on the Terminal path, `EXECUTION_UNCONFIRMED_NO_RETRY` to an agent (M5). mcp-stata 1.26.1 writes the error as `{search r(111), local:r(111);}` and sends no return code with `task_done`.
   - `scripts/stata_error_outcome_core.js` confirms an error only if the mcp-stata result is a failure, the run was not cancelled (Stop, watchdog, Break text, rc 1), the run id and log path are bound to this run, the last `r(n)` line is followed only by echoed commands, the completion marker was not printed, and the code is a positive integer equal to mcp-stata's `rc`. Anything else keeps the previous response.
   - A confirmed agent run is released with that rc and answered `500 {outcome:"STATA_ERROR", executed:true, stataRc, payloadMayHaveRun:true}`. The client checks the request, the run, the log and the completed rc again and reports `STATA_ERROR_CONFIRMED` (exit 2, one POST, no retry). A confirmed Terminal run finishes with that rc. Pre-run refusals are never classified.
@@ -43,23 +43,34 @@ rework; the merged `main` has not been retested live.
   - The rc comes from the validated model, so Pydantic may have converted the raw value. A call that raises before it returns a response (cancelled, worker error) records nothing, and `task_done` carries no rc. An exception after that point (result formatting, UI notify) can still send the rc of the response this task already received. A runtime without the patch still reads as unconfirmed (`mcp-rc-missing`).
   - The patch accepts only an exactly unpatched or exactly patched runtime. In the patched state, no original anchor or marker may remain once the exact patched blocks are removed, so an extra unpatched `_run` or notify block is refused. Revert is byte-exact and must give a strictly unpatched source. For anything else `patchRuntime` returns `unsupported-source` and writes nothing.
   - An offline cross-module test runs the real catch edits, the bundle's `__release` and the lifecycle core, then the Python client checks. A real error log with rc 111 gives `STATA_ERROR_CONFIRMED`; a Stop, timeout text, or a runtime without rc gives the old response. The `task_done` result is built by hand and the UI, identity and window observation are stubs, so this is not an MCP transport or production end-to-end test.
+- **Windows KILL ends only this window's backend (PR #22, rc.7.82).** **Stata: KILL**, `POST /panic-kill` and a busy force reset ran `panic_kill_stata_chain.ps1 -IncludeStataGui`, which picked processes by name: every mcp-stata backend on the machine, including other Workbench windows', and every Stata GUI process.
+  - `scripts/windows_kill_scope_core.js` selects only this extension host's backend tree. The root is a registered backend pid whose parent is this host and whose creation time fits its registration (within 1 s); children are followed by parent pid and may not be older than their parent. Each target is passed as pid plus creation time, re-checked before it is ended (children first, root last), and new children of ended processes are scanned once more.
+  - If ownership cannot be confirmed, nothing is ended. Only this window's connection is reset, and the notice says so.
+  - Cleanup that is not confirmed opens a gate: readiness and pending outcomes are kept and `/recovery-smoke` returns HTTP 423 `unresolved-cleanup`. Before each recovery smoke the gate rechecks every entry by pid and creation time against a fresh process list. An entry clears when its pid is gone, or the pid now belongs to another process and no child born during its lifetime is left; entries without a known identity clear only when the pid is gone; a failed listing clears nothing. Evidence from different cleanup rounds is kept separately, so a reused pid cannot clear an older entry.
+  - The notice lists each unresolved pid with its start time and a PowerShell command to check it, warns not to end a pid with an unknown start time, and gives the way out: close this VS Code window and open a new one, which does not prove the processes ended.
+  - The confirmation reads "End this window's Stata Workbench backend? Other VS Code windows and Stata sessions are not affected." The name-based script mode remains for manual use; the extension no longer calls it. macOS is unchanged.
 
-Live results (isolated profiles, synthetic data, 11-04):
+Live results (isolated profiles, synthetic data, 11-04 to 11-05):
 
 - macOS, `v0.2.0-next.5` (`aba81779`): first command after opening 7/7; Stop during the warm-up wait, timeout and failure refusals as specified; Stop before the backend connected locked the session (fixed by PR #25); an agent submission right after opening was refused (fixed by PR #26); a quiet `bootstrap` run under heavy load was cancelled at 63 s (addressed by PR #24). The Terminal Stop button misses were caused by the test driver clicking through the Welcome page's overlay.
 - Windows, PR #21 head `a1a2832b`: 24/24 first commands, including 10 on fresh profiles; 0 stalls. The older build `3765d82a` with the same timing stalled once in 17 runs.
 - Windows, PR #20 head `40abcbea`: Stop and timeout during the warm-up wait refused before dispatch; one worker restart during start-up, command ran once.
 - macOS, PR #24 head `2ec968a`: idle worker CPU noise 10 ms per 12 s; a frozen worker was still cancelled.
+- macOS, `main` `b0bc49d` (load average 150–220): `npm run package` in one step; first Terminal command 6/6 with the wait message in the panel; Stop during the warm-up wait (through `/soft-stop`) and the timeout refused before dispatch; Terminal Stop on agent runs 3/3; an agent submission right after opening ran and matched `lastCold.runId`; Stop before the backend connected did not lock; two concurrent `open` calls launched and a `close` during an open returned `OPENING`; five sessions, a sixth refused, KILL on one left another's run untouched. Two failures: a person's Run File was not stopped by Terminal Stop, and a quiet `bootstrap` run was cancelled at 99 s (Known issues).
 
 Known issues:
 
 - **W-P1 is bounded, not proven fixed.** In the stall, Stata's start-up inside the worker took 76.6 s (3.4–8.6 s in the other 32 runs), and the old build counted that wait against the command's 120 s first-log budget. With the warm-up wait outside that budget, 24 runs had 0 stalls: below about 12.5 % at 95 % confidence.
-- **Stata: KILL on Windows ends every Stata GUI process on the machine.** <!-- PENDING #22 -->
-- **macOS KILL and force reset identify the backend by pid and command line only**, not by start time or parent.
+- **Windows KILL scope has not been tested live with two sessions** (the Windows machine was offline). The evidence is source review, offline tests and CI, plus a dry run on one real Windows window that selected its 4-process backend tree. The root is matched to its registration time within 1 s, identities are compared to the millisecond, the process listing is not atomic, and only direct children are rescanned after the kill.
+- **macOS KILL and force reset identify the backend by pid and command line only**, not by start time or parent (PR #22 changed Windows only).
 - **Stata error return codes have not been tested live.** #27 and #28 are covered by source review and offline tests only. The confirmed path was built on real macOS logs; no Windows log has been collected. The Mac/Windows live check (an error returns `STATA_ERROR_CONFIRMED` with `stataRc` 111, the next command returns rc 0, the session stays usable) is still to do. An error whose text mentions cancel, timeout or stall stays unconfirmed.
 - **The general log parser still reads only `r(n);`**, not `{search r(n)…}`. The rc inferred at release, the Run File finalizer and the watchdog's error check are unchanged.
 - **Backend start refusals (`PRE_RUN_BACKEND_START_*`) are not part of the `retryable` contract yet.**
-- **The worker CPU signal is a heuristic.** A run that loops without output can hold the session for up to 30 min of log silence. Unverifiable process trees fall back to the 60 s log rule. A quiet command past 60 s has not yet been tested live.
+- **The worker CPU signal is a heuristic.** A run that loops without output can hold the session for up to 30 min of log silence. Unverifiable process trees fall back to the 60 s log rule. On the macOS retest of `b0bc49d` a run quiet for 57 s finished and a frozen worker was still cancelled.
+- **A quiet long command can still be cancelled under heavy load.** On the macOS retest (load average about 200), `bootstrap _b, reps(400) nodots` was cancelled after 99 s with no output: after the CPU check had extended the window, two CPU samples failed (`cpuErrors=2`) and the 60 s log rule applied. The session stayed locked (`guard-cancel-needs-smoke`) until **Stata: KILL**. <!-- PENDING T3/W2: V3-W2 is fixing this (D4); update after it merges. -->
+- **Terminal Stop did not stop a person's Run File.** No cancel was sent; the run went on until the watchdog cancelled it at 375 s and the session stayed locked until **Stata: KILL**. Terminal Stop on agent runs worked. That path had no click counter, so a missed click is not ruled out. <!-- PENDING T3/W2: V3-T3 is fixing this (D3); update after it merges. -->
+- **The Terminal Stop button is disabled while a command waits for Stata to load.** `POST /soft-stop` still cancels the wait (`PRE_RUN_BACKEND_WARMUP_CANCELLED`, not sent). <!-- PENDING T3/W2: V3-T3 is fixing this (D1); update after it merges. -->
+- **A person's Terminal Stop on an agent's run reaches the agent as rc 2 `EXECUTION_UNCONFIRMED_NO_RETRY`**, not as a cancel; a command sent within about 2 s gets HTTP 423 `checkpoint restore in progress`, which clears within seconds. <!-- PENDING T3/W2: V3-T3 is fixing this (D2); update after it merges. -->
 
 ## 0.2.0-next.5 — Stop, recovery and Windows fixes
 
