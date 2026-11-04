@@ -27,6 +27,7 @@ const LATER = [
   "./apply_guard_attribution_patch",
   "./apply_terminal_warmup_patch",
   "./apply_warm_worker_identity_patch",
+  "./apply_agent_warmup_refusal_patch",
 ];
 
 function revertLaterPatches(source) {
