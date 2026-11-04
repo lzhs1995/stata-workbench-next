@@ -77,6 +77,9 @@ function harness(source, script = {}) {
     async _callTool(_c, name) {
       if (name === "list_sessions") {
         counts.probes++;
+        if (script.delayCall === counts.probes) await new Promise((r) => schedule(r, script.delayMs ?? 2000, 0));
+        if (script.probeHangs > 0) { script.probeHangs--; return new Promise(() => {}); }
+        if (script.probeFails > 0) { script.probeFails--; throw new Error("list_sessions transport hiccup"); }
         if (script.probeThrows) throw new Error("list_sessions transport hiccup");
         const st = statusNow();
         if (st === "missing") return { sessions: [] };
@@ -202,14 +205,108 @@ const CASES = {
     assert.ok(!h.panel.some((x) => /Waiting for Stata/.test(x.t)));
     assert.equal(h.summary().drops, 0);
   },
-  // A failed identity probe keeps the cache (rc.7.79 behaviour); the run proceeds.
-  async probeFailureKeepsCache(src) {
+  // Review P1: worker replaced (still starting) and the identity probe fails once.
+  // Unknown is not "old worker fine": the run waits for the new one.
+  async replacementStartingProbeError(src) {
+    const h = harness(src, { status: "running" });
+    await h.run("display 1", "debug_terminal_1");
+    h.replace({ readyIn: 30 * S });
+    h.script.probeFails = 1;
+    assert.ok(ok(await h.run("display 2", "debug_terminal_2")));
+    assert.equal(h.dispatches.length, 2);
+    assert.equal(h.dispatches[1].status, "running", "not dispatched into the starting worker");
+    assert.ok(h.dispatches[1].at >= h.t0 + 30 * S);
+    assert.match(String(h.summary().lastDrop.reason), /^probe failed/);
+  },
+  // Same, but the probe hangs: dropped after its own 5 s bound, then waits.
+  async replacementStartingProbeTimeout(src) {
+    const h = harness(src, { status: "running" });
+    await h.run("display 1", "debug_terminal_1");
+    h.replace({ readyIn: 30 * S });
+    h.script.probeHangs = 1;
+    const t = h.now;
+    assert.ok(ok(await h.run("display 2", "debug_terminal_2")));
+    assert.equal(h.dispatches[1].status, "running");
+    assert.match(String(h.summary().lastDrop.reason), /timed out/);
+    assert.ok(h.summary().lastProbe.ok === true && h.now - t < 40 * S);
+  },
+  // Cached worker died and the probe errors: rc.7.72 sees "error", Terminal restarts once.
+  async exitedWorkerProbeError(src) {
+    const h = harness(src, { status: "running" });
+    await h.run("display 1", "debug_terminal_1");
+    h.sess.status = "error";
+    h.script.probeFails = 1;
+    assert.ok(ok(await h.run("display 2", "debug_terminal_2")));
+    assert.equal(h.dispatches.length, 2);
+    assert.equal(h.dispatches[1].status, "running", "never dispatched into the dead worker");
+    assert.equal(h.sess.created, 1);
+    assert.equal(h.counts.forceResets, 0);
+  },
+  // list_sessions keeps failing: refused, nothing dispatched, no force reset.
+  async probeKeepsFailingRefused(src) {
     const h = harness(src, { status: "running" });
     await h.run("display 1", "debug_terminal_1");
     h.script.probeThrows = true;
-    assert.ok(ok(await h.run("display 2", "debug_terminal_2")), "a failed identity probe does not refuse the run");
-    assert.equal(h.dispatches.length, 2);
-    assert.equal(h.summary().drops, 0);
+    const r = await h.run("display 2", "debug_terminal_2");
+    assert.equal(r.value.success, false);
+    assert.equal(refusal(r).reasonCode, "PRE_RUN_BACKEND_WARMUP_FAILED");
+    assert.equal(refusal(r).payloadDispatched, false);
+    assert.equal(h.dispatches.length, 1);
+    assert.equal(h.counts.forceResets, 0);
+    h.script.probeThrows = false;
+    assert.ok(ok(await h.run("display 3", "debug_terminal_3")), "next command works");
+  },
+  // Stop lands while the cache-hit identity probe is in flight: refused, nothing sent.
+  async stopDuringEntryProbe(src) {
+    const h = harness(src, { status: "running" });
+    await h.run("display 1", "debug_terminal_1");
+    h.script.delayCall = h.counts.probes + 1;
+    h.soonStop(1 * S);
+    const r = await h.run("display 2", "debug_terminal_2");
+    assert.equal(r.value.success, false);
+    assert.equal(refusal(r).reasonCode, "PRE_RUN_BACKEND_WARMUP_CANCELLED");
+    assert.equal(refusal(r).payloadDispatched, false);
+    assert.equal(h.dispatches.length, 1);
+    assert.equal(h.counts.forceResets, 0);
+    assert.ok(ok(await h.run("display 3", "debug_terminal_3")), "next command works");
+    // Agent /run-command has no Terminal guard above it: the warm-up itself refuses.
+    const p = h.counts.probes;
+    h.script.delayCall = p + 1;
+    h.soonStop(1 * S);
+    const a = await h.warm("agent_run_2", "run-command");
+    assert.equal(a.error?.__codexPreRunTimeout?.reasonCode, "PRE_RUN_BACKEND_WARMUP_CANCELLED");
+    assert.equal(h.counts.probes - p, 1, "refused at the probe, no new warm-up wait");
+  },
+  // Stop lands during the identity record after READY: refused, nothing sent.
+  async stopDuringRecordProbe(src) {
+    const h = harness(src, { status: "running" });
+    await h.run("display 1", "debug_terminal_1");
+    h.replace({ running: true });
+    h.script.delayCall = h.counts.probes + 3;
+    h.soonStop(1 * S);
+    const r = await h.run("display 2", "debug_terminal_2");
+    assert.equal(r.value.success, false);
+    assert.equal(refusal(r).reasonCode, "PRE_RUN_BACKEND_WARMUP_CANCELLED");
+    assert.equal(refusal(r).payloadDispatched, false);
+    assert.equal(h.dispatches.length, 1);
+    assert.ok(ok(await h.run("display 3", "debug_terminal_3")), "next command works");
+    h.replace({ running: true });
+    h.script.delayCall = h.counts.probes + 3;
+    h.soonStop(1 * S);
+    const a = await h.warm("agent_run_2", "run-command");
+    assert.equal(a.error?.__codexPreRunTimeout?.reasonCode, "PRE_RUN_BACKEND_WARMUP_CANCELLED", "agent path refused by the warm-up itself");
+  },
+  // A second warm-up call in the same run (Terminal, then BeginGraphRun) does not probe again.
+  async oneProbePerRun(src) {
+    const h = harness(src, { status: "running" });
+    await h.run("display 1", "debug_terminal_1");
+    const p = h.counts.probes;
+    await h.warm("debug_terminal_2", "terminal-input");
+    await h.warm("debug_terminal_2", "terminal-input");
+    assert.equal(h.counts.probes - p, 1, "same run reuses its probe");
+    assert.equal(h.summary().skipped, 1);
+    await h.warm("debug_terminal_3", "terminal-input");
+    assert.equal(h.counts.probes - p, 2, "a new run probes again");
   },
   // list_sessions without pid/created_at: status alone decides.
   async noIdentityFields(src) {
@@ -283,8 +380,12 @@ const MUTANTS = [
   ["cache-hit status ignored", 'seen.status !== "running" ? "status "', 'false ? "status "'],
   ["pid not compared", "known.pid !== seen.pid", "false"],
   ["created_at not compared", "known.createdAt !== seen.createdAt", "false"],
-  ["probe failure drops cache", "    if (seen) {\n      const known", "    if (!seen) __codexWarmTransport = null;\n    if (seen) {\n      const known"],
-  ["identity not recorded", '__codexWarmWorker = seen && seen.status === "running" ? { transport: __codexWarmTransport, pid: seen.pid, createdAt: seen.createdAt } : null;', "__codexWarmWorker = null;"],
+  ["probe failure keeps cache", 'const changed = !seen.ok ? "probe failed: " + seen.error', "const changed = !seen.ok ? null"],
+  ["probe not bounded", 'timer = setTimeout(() => reject(new Error("worker identity probe timed out after 5000 ms")), 5000);', "void reject;"],
+  ["Stop during entry probe ignored", 'if (stopped()) throw __codexWarmWorkerCancelled(id, source, "worker identity probe", started);', ""],
+  ["Stop during record probe ignored", 'if (stopped()) throw __codexWarmWorkerCancelled(id, source, "worker identity record", started);', ""],
+  ["probe every call", "__codexWarmWorkerStats.skipped++;\n    return null;", "__codexWarmWorkerStats.skipped++;"],
+  ["identity not recorded", '__codexWarmWorker = seen && seen.ok && seen.status === "running" ? { transport: warmed, pid: seen.pid, createdAt: seen.createdAt } : null;', "__codexWarmWorker = null;"],
   ["no restart", "    __codexWarmWorkerStats.restarts++;\n", "    throw error;\n"],
   ["restart any source", 'source !== "terminal-input" || ', ""],
   ["restart any refusal", '!refusal || refusal.reasonCode !== "PRE_RUN_BACKEND_WARMUP_FAILED"\n      || refusal.lastStatus !== "error" || refusal.recovery !== "STOPPED_FAILED_SESSION"\n      || ', "!refusal || "],
@@ -305,7 +406,7 @@ async function runAll(src) {
   const fixed = await runAll(bundle);
   assert.deepEqual(fixed, [], "patched layer passes every case:\n" + fixed.join("\n"));
   const old = await runAll(before);
-  for (const must of ["rebuiltWorkerWaits", "cachedWorkerCrashed", "deadWorkerRestartedOnce"]) {
+  for (const must of ["rebuiltWorkerWaits", "cachedWorkerCrashed", "deadWorkerRestartedOnce", "replacementStartingProbeError"]) {
     assert.ok(old.some((f) => f.startsWith(must + ":")), "the layer before rc.7.81 fails " + must);
   }
   const caught = [];
