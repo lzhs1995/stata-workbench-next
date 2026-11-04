@@ -135,7 +135,9 @@ function expectGood(out) {
   const dist = fs.readFileSync(path.join(__dirname, "..", "dist", "extension.js"), "utf8");
   assert.ok(dist.includes(patch.MARKER), "dist carries rc.7.87");
   for (const [name, , after] of patch.EDITS) assert.equal(dist.split(after).length - 1, 1, `dist edit ${name}`);
-  assert.equal(patch.EDITS.length, 4, "helper, agent failure stoppedBy, selection toast, run file toast");
+  assert.equal(patch.EDITS.length, 5, "helper, agent failure stoppedBy, selection toast, run file toast, failed card title");
+  assert.ok(dist.includes("run.statusTitle.textContent = success ? 'Stata Output' : 'Stata Output (failed)';"), "D7 failed card title");
+  assert.equal(dist.split("run.statusTitle.textContent = 'Stata Output (failed)'").length - 1, 1, "runFailed title unchanged");
   const base = patch.revertBundle(dist);
   assert.ok(!base.includes("__codexProgressCancelStop"), "revert removes every trace");
   for (const [name, before] of patch.EDITS) assert.equal(base.split(before).length - 1, 1, `base anchor ${name}`);

@@ -54,6 +54,11 @@ const EDITS = [
   ["run file toast",
     "await IP(`Running ${rg.basename(A)}`,async o=>{",
     "await IP(`Running ${rg.basename(A)}`,async o=>{globalThis.__codexProgressCancelStop&&globalThis.__codexProgressCancelStop(o,\"human-file\");"],
+  // D7 (webview script): a person's failing command finished with the plain title
+  // "Stata Output"; the agent's failing card already says "(failed)".
+  ["failed card title",
+    "        if (run.statusTitle) {\n            run.statusTitle.textContent = 'Stata Output';\n        }\n        \n        const cancelBtn = document.getElementById('run-cancel-' + runId);",
+    "        if (run.statusTitle) {\n            run.statusTitle.textContent = success ? 'Stata Output' : 'Stata Output (failed)'; /* codex patch rc.7.87c */\n        }\n        \n        const cancelBtn = document.getElementById('run-cancel-' + runId);"],
 ];
 
 function uniqueAt(source, needle, what) {
@@ -68,7 +73,7 @@ function patchBundle(source, options = {}) {
   if (source.includes(MARKER)) {
     for (const [name, , after] of EDITS) uniqueAt(source, after, name);
   } else {
-    if (source.includes("__codexProgressCancelStop") || source.includes("__codexStoppedBy")) throw new Error("partial progress-cancel patch");
+    if (source.includes("__codexProgressCancelStop") || source.includes("__codexStoppedBy") || source.includes("rc.7.87c")) throw new Error("partial progress-cancel patch");
     for (const [name, before] of EDITS) uniqueAt(source, before, name);
     for (const [, before, after] of EDITS) source = source.replace(before, () => after);
   }
@@ -79,7 +84,7 @@ function patchBundle(source, options = {}) {
 function revertBundle(source) {
   for (const [name, , after] of EDITS) uniqueAt(source, after, name);
   for (const [, before, after] of [...EDITS].reverse()) source = source.replace(after, () => before);
-  if (source.includes("__codexProgressCancelStop") || source.includes("__codexStoppedBy")) throw new Error("progress-cancel marker survived the revert");
+  if (source.includes("__codexProgressCancelStop") || source.includes("__codexStoppedBy") || source.includes("rc.7.87c")) throw new Error("progress-cancel marker survived the revert");
   return fingerprint.finalize(source).text;
 }
 
