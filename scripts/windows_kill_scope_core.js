@@ -123,6 +123,13 @@ function selectSessionTree({ processes, roots, hostPid }) {
     reasons.push(`${uncertainChildren.length} process(es) under this window's backend changed identity while being listed (pid ${uncertainChildren.map((p) => p.pid).join(", ")}); nothing was targeted`);
   }
 
+  // A child under the tree whose creation time cannot be read (no handle, or no
+  // CIM CreationDate) is neither ended nor ignored: it is reported as unknown,
+  // the verifiable rest of the tree is still ended, and the result is not ok.
+  const unknownChildren = procs.filter((p) => !p.identityUncertain && p.createdMs == null && targets.has(p.ppid) && !targets.has(p.pid)
+    && p.pid !== toNumber(hostPid) && !isProtected(p))
+    .map((p) => ({ pid: p.pid, name: p.name, ppid: p.ppid, reason: "creation time could not be read; not ended" }));
+
   const suspectedOrphans = [];
   for (const proc of procs) {
     if (targets.has(proc.pid)) continue;
@@ -148,6 +155,7 @@ function selectSessionTree({ processes, roots, hostPid }) {
     nothingOwned: ordered.length === 0 && !failClosed,
     targets: ordered,
     uncertainChildren,
+    unknownChildren,
     suspectedOrphans,
     census,
   };
@@ -193,6 +201,20 @@ function parseJson(text) {
 function createWindowsKillScope(deps) {
   const base = () => ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", deps.scriptPath];
   const opts = { encoding: "utf8", timeout: 30000, windowsHide: true, maxBuffer: 16 * 1024 * 1024 };
+  function list() {
+    let listing = null;
+    try {
+      listing = parseJson(deps.execFileSync("powershell.exe", [...base(), "-ListProcesses"], opts));
+    } catch (error) {
+      listing = parseJson(error && error.stdout);
+      if (!listing || !Array.isArray(listing.processes)) listing = { error: String((error && error.message) || error) };
+    }
+    return listing && Array.isArray(listing.processes) ? listing : { error: String((listing && listing.error) || "invalid output") };
+  }
+  function recheck(gate) {
+    if (deps.platform !== "win32") return gate;
+    return recheckGate(gate, list());
+  }
   function run(options = {}) {
     const dryRun = !!options.dryRun;
     const source = String(options.source || "unknown");
@@ -212,6 +234,7 @@ function createWindowsKillScope(deps) {
     }
     const selection = selectSessionTree({ processes: listing.processes, roots, hostPid: deps.hostPid });
     const result = { ...selection, source, dryRun, kill: null };
+    if ((selection.unknownChildren || []).length) { result.ok = false; result.unresolved = selection.unknownChildren.slice(); }
     // All-or-nothing: a fail-closed selection ends nothing; its targets stay as diagnostics only.
     if (dryRun || selection.failClosed || !selection.targets.length) return result;
     let kill = null;
@@ -228,13 +251,70 @@ function createWindowsKillScope(deps) {
     result.ended = verdict.killed;
     result.pending = verdict.pending;
     result.failed = verdict.failed;
-    result.unresolved = verdict.unresolved;
+    result.unresolved = verdict.unresolved.concat(selection.unknownChildren || []);
     result.scanOk = verdict.scanOk;
-    result.ok = selection.ok && verdict.complete;
+    result.ok = selection.ok && verdict.complete && !(selection.unknownChildren || []).length;
     try { deps.log && deps.log(`${source}: ended ${verdict.killed.length} of ${selection.targets.length} process(es) in this window's backend tree; pending ${verdict.pending.length}, failed ${verdict.failed.length}, unresolved ${verdict.unresolved.length}`); } catch {}
     return result;
   }
-  return { run };
+  return { run, recheck, list };
+}
+
+// rc.7.82 review 3 R1: a scoped result that is not ok (pending, failed,
+// unresolved, unknown identity, scan failed, fail-closed, or no result at all)
+// opens an "unresolved cleanup" gate. Readiness stays closed while it is open.
+// A new connection or a passing smoke on the new backend does not close it;
+// only a re-check of the original processes does: each item is resolved when
+// its pid is gone, or now carries a different creation time ("identity"/"root"
+// items), and items with no known creation time only when the pid is gone.
+function gateItemsFrom(result, owned) {
+  const r = result || {};
+  const items = [];
+  const add = (x, check, why) => { const pid = toNumber(x && x.pid); if (pid > 1) items.push({ pid, name: (x && x.name) || null, createdMs: toNumber(x && x.createdMs), check, why }); };
+  const created = new Map((r.targets || []).map((t) => [t.pid, t.createdMs]));
+  for (const x of r.pending || []) add({ ...x, createdMs: created.get(toNumber(x.pid)) }, "identity", x.reason || "termination not confirmed");
+  for (const x of r.failed || []) add({ ...x, createdMs: created.get(toNumber(x.pid)) }, "identity", x.reason || "not ended");
+  for (const x of r.unresolved || []) add(x, x.createdMs != null ? "identity" : "absent", x.reason || "left behind");
+  for (const x of r.uncertainChildren || []) add(x, "absent", "changed identity while being listed");
+  for (const x of r.suspectedOrphans || []) add(x, "absent", "left over from an exited backend");
+  for (const x of (r.roots || []).filter((y) => y.status === "unverified")) add(x, "absent", "registered but could not be verified");
+  if (r.scanOk === false || r.ok == null || (r.failClosed && !items.length) || (!r.ok && !items.length)) {
+    for (const root of rootsFromOwned(owned)) items.push({ pid: root.pid, name: null, createdMs: null, startedAtMs: root.startedAtMs, check: "root",
+      why: r.scanOk === false ? "the check for processes started during the kill failed" : "no verified cleanup result" });
+  }
+  const seen = new Set();
+  return items.filter((i) => { const k = i.pid + ":" + i.check; if (seen.has(k)) return false; seen.add(k); return true; });
+}
+
+function openGate(prev, result, owned, meta = {}) {
+  const items = gateItemsFrom(result, owned);
+  const keep = prev && Array.isArray(prev.items) ? prev.items : [];
+  const merged = keep.concat(items.filter((i) => !keep.some((k) => k.pid === i.pid && k.check === i.check)));
+  return { open: merged.length > 0, openedAt: (prev && prev.openedAt) || new Date().toISOString(), source: meta.source || (prev && prev.source) || null,
+    items: merged, lastCheck: prev ? prev.lastCheck || null : null };
+}
+
+function recheckGate(gate, listing) {
+  if (!gate || !gate.open) return gate || null;
+  const at = new Date().toISOString();
+  if (!listing || !Array.isArray(listing.processes)) return { ...gate, lastCheck: { at, ok: false, error: (listing && listing.error) || "listing failed" } };
+  const byPid = new Map(listing.processes.map(normalize).filter((p) => p.pid > 0).map((p) => [p.pid, p]));
+  const left = [], cleared = [];
+  for (const item of gate.items) {
+    const now = byPid.get(item.pid);
+    let gone = !now;
+    if (now && item.check === "identity" && item.createdMs != null && now.createdMs != null && now.createdMs !== item.createdMs) gone = true;
+    if (now && item.check === "root" && item.startedAtMs != null && now.createdMs != null && now.createdMs > item.startedAtMs + ROOT_CLOCK_TOLERANCE_MS) gone = true;
+    (gone ? cleared : left).push({ ...item, seen: now ? { name: now.name, createdMs: now.createdMs } : null });
+  }
+  return { ...gate, open: left.length > 0, items: left, cleared: (gate.cleared || []).concat(cleared), lastCheck: { at, ok: true, left: left.length, cleared: cleared.length } };
+}
+
+function gateMessage(gate) {
+  if (!gate || !gate.open) return null;
+  return "Stata Workbench is not READY: " + gate.items.length + " process(es) of this window's previous backend were not confirmed ended ("
+    + gate.items.map((i) => `pid ${i.pid}${i.name ? " " + i.name : ""}: ${i.why}`).join("; ")
+    + "). It re-checks them before every recovery smoke; only end one in Task Manager if you know it belongs to this window.";
 }
 
 // Text for the warning the KILL command shows when it ended nothing (fail-closed)
@@ -250,18 +330,21 @@ function failClosedMessage(result, options = {}) {
     (r.suspectedOrphans || []).map((x) => fmt(x, "looks left over from this window's exited backend")),
     (r.failed || []).map((x) => fmt(x)),
     (r.pending || []).map((x) => fmt(x)),
-    (r.unresolved || []).map((x) => fmt(x)));
+    (r.unresolved || []).filter((x) => !(r.unknownChildren || []).some((u) => u.pid === x.pid)).map((x) => fmt(x)),
+    (r.unknownChildren || []).map((x) => fmt(x)));
   const why = Array.isArray(r.reasons) && r.reasons.length ? r.reasons.join("; ") : (r.kill && r.kill.error) || (r.scanOk === false ? "the check for processes started during the kill failed" : null);
   const ended = Array.isArray(r.ended) ? r.ended.length : 0;
   const head = r.failClosed
     ? "Stata Workbench could not confirm which processes belong to this window's Stata backend, so it did not target any of them."
     : `Stata Workbench ended ${ended} of ${(r.targets || []).length} process(es) of this window's backend and could not confirm the rest.`;
   return head
-    + (options.disposed ? " It closed its own connection to the backend process this window started." : "")
+    + (options.disposed ? " It closed its own connection to the backend process this window started."
+      : options.disposeAttempted ? " It tried to close its own connection to the backend process this window started, but could not confirm that it closed (" + (options.disposeError || "no answer in time") + ")." : "")
     + " Other VS Code windows and Stata sessions were not touched."
     + (left.length ? " Not ended: " + left.join("; ") + ". Only end one of these in Task Manager if you know it belongs to this window." : "")
     + (why ? " Details: " + why : "");
 }
 
 module.exports = { selectSessionTree, createWindowsKillScope, rootsFromOwned, targetCsv, classifyKill, failClosedMessage, normalize,
+  gateItemsFrom, openGate, recheckGate, gateMessage,
   KILL_CODES, PROTECTED, ROOT_CLOCK_TOLERANCE_MS, IDENTITY_TOLERANCE_MS };

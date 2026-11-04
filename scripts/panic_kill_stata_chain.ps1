@@ -154,8 +154,12 @@ if ($PSBoundParameters.ContainsKey('ScopedTargetCsv')) {
     try { $after = @(Get-CimInstance Win32_Process -ErrorAction Stop) } catch { $scanOk = $false }
     $after | Where-Object { $null -ne $_ } | Where-Object { $endedAt.ContainsKey([int]$_.ParentProcessId) -and -not $requested.ContainsKey([int]$_.ProcessId) } | ForEach-Object {
       $cm = Get-SwnCreated ([int]$_.ProcessId); $win = $endedAt[[int]$_.ParentProcessId]
-      if ($null -ne $cm -and $cm -ge $win[0] -and $cm -le $win[1]) {
-        $unresolved += [pscustomobject]@{ pid = [int]$_.ProcessId; name = [string]$_.Name; ppid = [int]$_.ParentProcessId; reason = "started by an ended backend process after the listing; not ended" }
+      if ($null -eq $cm) { $cm = Get-CimCreated $_ }
+      if ($null -eq $cm) {
+        # No creation time from the handle or the CIM row: it cannot be placed before or after its parent ended. Unknown, not ignored.
+        $unresolved += [pscustomobject]@{ pid = [int]$_.ProcessId; name = [string]$_.Name; ppid = [int]$_.ParentProcessId; createdMs = $null; reason = "child of an ended backend process whose creation time could not be read; not ended" }
+      } elseif ($cm -ge $win[0] -and $cm -le $win[1]) {
+        $unresolved += [pscustomobject]@{ pid = [int]$_.ProcessId; name = [string]$_.Name; ppid = [int]$_.ParentProcessId; createdMs = $cm; reason = "started by an ended backend process after the listing; not ended" }
       }
     }
   }

@@ -10,6 +10,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 const core = require("./windows_kill_scope_core");
+const ps1Early = path.join(__dirname, "panic_kill_stata_chain.ps1");
 const patch = require("./apply_windows_kill_scope_patch");
 
 let pass = 0;
@@ -229,6 +230,33 @@ t("V2-R1 rows whose CIM and handle creation times agree keep the handle time", (
   assert.equal(denied.identityUncertain, false, "no handle (access denied) is not a reuse signal");
 });
 
+// Review 3 R2: a child under the tree whose identity cannot be read is unknown, not ignored.
+for (const [label, patchRow] of [["no handle", { handleCreatedMs: null }], ["no CIM CreationDate", { cimCreatedMs: null }]]) {
+  t("R2 child with " + label + " is reported unknown, not ended, and the result is not ok", () => {
+    const procs = machine().map((p) => ({ ...p, cimCreatedMs: p.createdMs, handleCreatedMs: p.createdMs }))
+      .map((p) => (p.pid === 111 ? { ...p, ...patchRow } : p));
+    for (const p of procs) delete p.createdMs;
+    const calls = [];
+    const r = core.createWindowsKillScope({ execFileSync: fakeExec(procs, calls), scriptPath: "x", platform: "win32", hostPid: 100,
+      ownedPids: () => new Map([[110, { pid: 110, startedAt: new Date(T0 + 50_000).toISOString() }]]) }).run({ dryRun: false });
+    assert.deepEqual(r.unknownChildren.map((x) => x.pid), [111]);
+    assert.equal(r.ok, false);
+    const csv = (calls[1] || [])[(calls[1] || []).indexOf("-ScopedTargetCsv") + 1] || "";
+    assert.ok(!csv.split(",").some((x) => x.startsWith("111:")), "the unknown child is not a target");
+    assert.match(core.failClosedMessage(r), /pid 111 .*creation time could not be read/);
+    const gate = core.openGate(null, r, new Map());
+    assert.ok(gate.open && gate.items.some((i) => i.pid === 111 && i.check === "absent"));
+    assert.equal(core.recheckGate(gate, { processes: procs }).open, true, "still listed: stays unknown");
+    assert.equal(core.recheckGate(gate, { processes: procs.filter((p) => p.pid !== 111 && p.pid !== 110 && p.pid !== 112) }).open, false, "pid gone: independent evidence clears it");
+  });
+}
+
+t("R2 a post-scan row with no readable identity is unresolved (ps1)", () => {
+  const text = fs.readFileSync(ps1Early, "utf8");
+  assert.match(text, /if \(\$null -eq \$cm\) \{ \$cm = Get-CimCreated \$_ \}/);
+  assert.match(text, /creation time could not be read; not ended/);
+});
+
 // V2-R2: the verdict comes from the raw per-target codes.
 for (const [code, kind] of [[0, "killed"], [1, "skipped"], [2, "skipped"], [3, "failed"], [4, "failed"], [5, "pending"], [6, "pending"], [9, "failed"]]) {
   t(`V2-R2 native code ${code} is classified as ${kind}`, () => {
@@ -311,12 +339,12 @@ t("busy force reset no longer escalates to a machine-wide kill", () => {
 t("KILL command: fail-closed resets this window's transport and warns", () => {
   const at = dist.indexOf('registerCommand("stata-workbench.panicKill"');
   const win = dist.slice(at, at + 6000);
-  assert.ok(win.includes("failClosedMessage(__codexKillScope,{disposed:__codexKillDisposed})"), "warning is told whether dispose ran");
-  assert.ok(/__codexForceReset\("panic-kill-command scope unverified"\);__codexKillDisposed=true/.test(win), "disposed only after the reset returned");
+  assert.ok(win.includes("{disposed:!!(__codexKillDispose&&__codexKillDispose.ok),disposeAttempted:"), "the warning uses the reset's dispose evidence");
+  assert.ok(win.includes("__codexKillReset=await globalThis.__codexForceReset(\"panic-kill-command scope unverified\")"), "evidence comes from the reset's return value");
   const i = win.indexOf("__codexKillScope.failClosed");
   assert.ok(i > 0);
   assert.ok(win.indexOf('__codexForceReset("panic-kill-command scope unverified")', i) > i);
-  assert.ok(win.indexOf("failClosedMessage(__codexKillScope,{disposed:__codexKillDisposed})", i) > i);
+  assert.ok(win.indexOf("failClosedMessage(__codexKillScope,{disposed:", i) > i);
   assert.ok(win.indexOf("requestRecovery", i) > i, "recovery is requested after the scoped kill");
   assert.ok(/panic-kill/i.test("panic-kill-command scope unverified"), "the reset reason skips the busy escalation");
 });
@@ -342,6 +370,34 @@ t("helper installs from the packaged core and fails closed when it cannot", () =
   assert.match(r2.reasons[0], /module missing/);
 });
 
+t("R1 the installed wrapper opens the gate on a non-dry, incomplete run (KILL success path has no force reset)", () => {
+  const [, , after] = patch.EDITS.find((e) => e[0] === "owner id helper");
+  const code = after.slice(after.indexOf("/* codex patch rc.7.82"));
+  const pending = { ok: false, mode: "scoped", results: [{ pid: 110, code: 5 }, { pid: 111, code: 0 }, { pid: 112, code: 0 }], unresolved: [], scanOk: true };
+  const ctx = { require: (m) => (m === "child_process" ? { execFileSync: fakeExec(machine(), [], pending) } : require(m)),
+    rg: { join: (...p) => p.join("/") }, yC: { extensionUri: { fsPath: path.join(__dirname, "..") } }, process: { platform: "win32", pid: 100, cwd: () => "." }, RI: () => {}, String };
+  ctx.globalThis = ctx;
+  ctx.__codexOwnedBackendPids = new Map([[110, { pid: 110, startedAt: new Date(T0 + 50_000).toISOString() }]]);
+  vm.runInNewContext(code, ctx);
+  ctx.__codexWindowsKillScopeRun(true, "dry");
+  assert.ok(!ctx.__codexUnresolvedCleanup, "a dry run never opens the gate");
+  ctx.__codexWindowsKillScopeRun(false, "panic-kill command");
+  assert.ok(ctx.__codexUnresolvedCleanup && ctx.__codexUnresolvedCleanup.open, "gate open after the incomplete kill");
+  assert.ok(ctx.__codexUnresolvedCleanup.items.some((i) => i.pid === 110 && i.check === "identity" && i.createdMs === T0 + 5_000));
+});
+
+t("R1 /recovery-smoke re-checks the gate and refuses with 423 before any smoke", () => {
+  const at = dist.indexOf('__req.url==="/recovery-smoke"){');
+  const win = dist.slice(at, at + 1400);
+  const g = win.indexOf("globalThis.__codexUnresolvedCleanupRecheck()");
+  const refuse = win.indexOf('__send(__res,423,{ok:false,error:');
+  const smoke = win.indexOf("let __recovery=__codexControl.ensureRecoveryState");
+  assert.ok(g > 0 && refuse > g && smoke > refuse, [g, refuse, smoke].join(","));
+  assert.ok(win.includes('reasonCode:"unresolved-cleanup"'));
+  assert.ok(win.includes('if(process.platform==="win32"&&globalThis.__codexUnresolvedCleanup&&globalThis.__codexUnresolvedCleanup.open){let __g=globalThis.__codexUnresolvedCleanupRecheck'), "the refusal is guarded by the open gate itself");
+  assert.ok(win.includes("if(__g&&__g.open){__send(__res,423,"), "refuses while the re-checked gate is still open");
+});
+
 t("patch is idempotent and reverts exactly", () => {
   assert.equal(patch.patchBundle(dist), patch.patchBundle(patch.patchBundle(dist)));
   const reverted = patch.revertBundle(dist);
@@ -350,7 +406,7 @@ t("patch is idempotent and reverts exactly", () => {
   assert.equal(patch.patchBundle(reverted), patch.patchBundle(dist));
 });
 
-const ps1 = path.join(__dirname, "panic_kill_stata_chain.ps1");
+const ps1 = ps1Early;
 t("panic script keeps scoped mode ahead of name selection", () => {
   const text = fs.readFileSync(ps1, "utf8");
   const list = text.indexOf("if ($ListProcesses)");

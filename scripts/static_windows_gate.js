@@ -4,7 +4,7 @@
  *
  * OLD (obsolete): sips string count == 0 in extension.js
  * NEW:
- *   1) win32 token count must equal expected baseline (default 37; rc.7.82 adds the pre-dispose scoped kill guard)
+ *   1) win32 token count must equal expected baseline (default 39; rc.7.82 adds the pre-dispose scoped kill, cleanup-gate and recovery-smoke gate guards)
  *   2) extension.js must not embed /usr/bin/sips executable path
  *   3) PNG_COMPAT production path must be under process.platform === "darwin"
  *   4) scripts/mac helpers must exist for packaging (not executed on Windows)
@@ -17,7 +17,7 @@ const path = require("path");
 
 const root = path.join(__dirname, "..");
 const ext = path.join(root, "dist", "extension.js");
-const expectedWin32 = parseInt(process.env.WIN32_BASELINE || "37", 10);
+const expectedWin32 = parseInt(process.env.WIN32_BASELINE || "39", 10);
 
 function fail(msg) {
   console.error("GATE_FAIL", msg);

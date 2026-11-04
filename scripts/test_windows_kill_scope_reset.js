@@ -15,7 +15,7 @@ const patch = require("./apply_windows_kill_scope_patch");
 
 const dist = fs.readFileSync(path.join(__dirname, "..", "dist", "extension.js"), "utf8");
 const START = "globalThis.__codexForceReset=async o=>";
-const END = "let __state=__current();__state.cleanup=__cleanup;return __state};";
+const END = "__state.unresolvedCleanup=globalThis.__codexUnresolvedCleanup||null;return __state};";
 const at = dist.indexOf(START);
 const end = dist.indexOf(END, at);
 assert.ok(at > 0 && end > at && dist.split(END).length === 2, "force reset function located once");
@@ -45,7 +45,7 @@ function table(extra = []) {
   ].concat(extra);
 }
 
-async function runReset({ reason, busy = false, owned, processes, listFails = false, helperMissing = false }) {
+async function runReset({ reason, busy = false, owned, processes, listFails = false, helperMissing = false, killReply = null, dispose = "ok" }) {
   const calls = [];
   const execFileSync = (file, args) => {
     calls.push([file, ...args]);
@@ -53,6 +53,7 @@ async function runReset({ reason, busy = false, owned, processes, listFails = fa
     if (args.includes("-ListProcesses")) return JSON.stringify({ ok: true, mode: "list", processes });
     if (args.includes("-ScopedTargetCsv")) {
       const csv = args[args.indexOf("-ScopedTargetCsv") + 1];
+      if (killReply) return JSON.stringify(killReply);
       return JSON.stringify({ ok: true, mode: "scoped", killed: csv.split(",").map((x) => ({ pid: Number(x.split(":")[0]) })), unresolved: [] });
     }
     return JSON.stringify({ ok: true, raw: "other" });
@@ -70,7 +71,8 @@ async function runReset({ reason, busy = false, owned, processes, listFails = fa
     rg: path, yC: { extensionUri: { fsPath: path.join(__dirname, "..") } }, RI: () => {},
   };
   // The transport client: dispose/cancelAll are recorded so "before dispose" is checked, not assumed.
-  const zgBase = { dispose: async () => { calls.push(["dispose"]); }, cancelAll: async () => { calls.push(["cancelAll"]); } };
+  const zgBase = { dispose: () => { calls.push(["dispose"]); return dispose === "reject" ? Promise.reject(new Error("pipe broken")) : dispose === "hang" ? new Promise(() => {}) : Promise.resolve(); },
+    cancelAll: async () => { calls.push(["cancelAll"]); }, connect: async () => { calls.push(["connect"]); } };
   known.zg = new Proxy(zgBase, { get: (t, k) => (k in t ? t[k] : k === "then" ? undefined : stub()), set: () => true });
   const ctx = new Proxy(known, {
     has: () => true,
@@ -82,11 +84,21 @@ async function runReset({ reason, busy = false, owned, processes, listFails = fa
   ctx.__codexOwnedBackendPids = new Map(owned.map((o) => [o.pid, { pid: o.pid, startedAt: new Date(o.startedAtMs).toISOString() }]));
   ctx.__codexBridgeState = { busy, postRunBusy: false };
   ctx.__codexResetGeneration = 0;
+  const events = [];
+  ctx.__codexRecoveryState = { required: false };
+  ctx.__current = () => ({ busy: false });
+  // Globals the patch reads must start undefined/null, not as the permissive stub.
+  ctx.__codexUnresolvedCleanup = null; ctx.__codexLastKillScope = null; ctx.__codexKillScopeGeneration = null; ctx.__codexSoftStopInFlight = false;
+  ctx.__codexContinuityLost = null;
+  ctx.__codexControl = { ensureRecoveryState: (x) => x || { required: false }, requestRecovery: (st, why) => { events.push(["requestRecovery", why]); return { required: true, reason: why }; } };
+  ctx.__codexGraphMark = (m) => events.push(["graphMark", m.readinessState, m.readinessReason]);
+  ctx.__codexRestoreReadinessRef = { reset: (w) => events.push(["restoreReset", w]) };
+  ctx.__codexPendingOutcomesRef = { clear: (w) => events.push(["pendingClear", w]) };
   vm.runInContext(HELPER, ctx);
   vm.runInContext(FORCE_RESET, ctx);
   let state = null;
   await Promise.race([ctx.__codexForceReset(reason).then((s) => { state = s; }, () => {}), new Promise((r) => setTimeout(r, 1500))]);
-  return { calls, state, ctx };
+  return { calls, state, ctx, events };
 }
 
 const unsafe = (calls) => calls.filter((c) => c.some((a) => /cleanup_mcp_stata_processes\.ps1|-OwnedPidCsv|-IncludeStataGui/.test(String(a)))
@@ -120,12 +132,12 @@ async function t(name, fn) {
   });
   await t("panic-kill reset (KILL fail-closed branch): no list, no kill, no unsafe cleanup", async () => {
     const r = await runReset({ reason: "panic-kill-command scope unverified", owned: foreign, processes: table() });
-    assert.deepEqual(r.calls.filter((c) => c[0] !== "dispose" && c[0] !== "cancelAll"), []);
+    assert.deepEqual(r.calls.filter((c) => !["dispose", "cancelAll", "connect"].includes(c[0])), []);
     assert.ok(r.calls.some((c) => c[0] === "dispose"), "the transport is disposed");
   });
   await t("helper failed to load: nothing runs", async () => {
     const r = await runReset({ reason: "watchdog", busy: true, owned: foreign, processes: table(), helperMissing: true });
-    assert.deepEqual(r.calls.filter((c) => c[0] !== "dispose" && c[0] !== "cancelAll"), []);
+    assert.deepEqual(r.calls.filter((c) => !["dispose", "cancelAll", "connect"].includes(c[0])), []);
   });
   await t("process listing fails: no kill, no unsafe cleanup", async () => {
     const r = await runReset({ reason: "watchdog", owned: [{ pid: 110, startedAtMs: T0 + 50000 }], processes: table(), listFails: true });
@@ -151,6 +163,56 @@ async function t(name, fn) {
     assert.equal(kills(r.calls).length, 1);
     assert.deepEqual(unsafe(r.calls), []);
   });
+  // Review 3 R1: an incomplete scoped cleanup keeps READY closed and is not cleared by reconnect.
+  const ours = [{ pid: 110, startedAtMs: T0 + 50000 }];
+  for (const [label, reply] of [
+    ["termination not confirmed (code 5)", { ok: false, mode: "scoped", results: [{ pid: 110, code: 5 }, { pid: 111, code: 0 }], unresolved: [], scanOk: true }],
+    ["terminate failed (code 4)", { ok: false, mode: "scoped", results: [{ pid: 110, code: 0 }, { pid: 111, code: 4 }], unresolved: [], scanOk: true }],
+    ["unknown child left behind", { ok: false, mode: "scoped", results: [{ pid: 110, code: 0 }, { pid: 111, code: 0 }], unresolved: [{ pid: 120, name: "python.exe", createdMs: null, reason: "x" }], scanOk: true }],
+    ["child scan failed", { ok: false, mode: "scoped", results: [{ pid: 110, code: 0 }, { pid: 111, code: 0 }], unresolved: [], scanOk: false }],
+  ]) {
+    await t("R1 gate: " + label + " keeps READY closed after a successful reconnect", async () => {
+      const r = await runReset({ reason: "watchdog", owned: ours, processes: table(), killReply: reply });
+      assert.ok(r.calls.some((c) => c[0] === "connect"), "the new transport connected");
+      assert.ok(r.ctx.__codexUnresolvedCleanup && r.ctx.__codexUnresolvedCleanup.open, "gate open");
+      const marks = r.events.filter((e) => e[0] === "graphMark");
+      assert.ok(marks.length && marks.every((e) => e[1] !== "ready"), JSON.stringify(marks));
+      assert.ok(!r.events.some((e) => e[0] === "restoreReset" || e[0] === "pendingClear"), "pending outcomes are kept");
+      assert.ok(r.events.some((e) => e[0] === "requestRecovery"), "recovery is required");
+    });
+  }
+  await t("R1 gate: a complete scoped cleanup still reaches READY", async () => {
+    const r = await runReset({ reason: "watchdog", owned: ours, processes: table() });
+    assert.ok(!(r.ctx.__codexUnresolvedCleanup && r.ctx.__codexUnresolvedCleanup.open));
+    assert.ok(r.events.some((e) => e[0] === "graphMark" && e[1] === "ready"));
+  });
+  await t("R1 gate: only a re-check of the original identity clears it", async () => {
+    const reply = { ok: false, mode: "scoped", results: [{ pid: 110, code: 5 }, { pid: 111, code: 0 }], unresolved: [], scanOk: true };
+    const r = await runReset({ reason: "watchdog", owned: ours, processes: table(), killReply: reply });
+    const gate = r.ctx.__codexUnresolvedCleanup;
+    const core = require("./windows_kill_scope_core");
+    const still = core.recheckGate(gate, { processes: table().map((p) => ({ ...p, cimCreatedMs: p.createdMs, handleCreatedMs: p.createdMs })) });
+    assert.equal(still.open, true, "same pid, same creation time: still open");
+    const reused = core.recheckGate(gate, { processes: table().map((p) => (p.pid === 110 ? { ...p, cimCreatedMs: T0 + 99000, handleCreatedMs: T0 + 99000 } : { ...p, cimCreatedMs: p.createdMs, handleCreatedMs: p.createdMs })) });
+    assert.equal(reused.open, false, "pid now another process: cleared");
+    const gone = core.recheckGate(gate, { processes: table().filter((p) => p.pid !== 110) });
+    assert.equal(gone.open, false, "pid gone: cleared");
+    assert.equal(core.recheckGate(gate, { error: "CIM timeout" }).open, true, "a failed listing does not clear it");
+  });
+  // Review 3 R3: dispose evidence.
+  for (const [mode, ok, settled] of [["ok", true, true], ["reject", false, true], ["hang", false, false]]) {
+    await t("R3 dispose " + mode + " is reported as ok=" + ok + " settled=" + settled, async () => {
+      const r = await runReset({ reason: "panic-kill-command scope unverified", owned: ours, processes: table(), dispose: mode });
+      assert.ok(r.state && r.state.dispose, "force reset returns dispose evidence");
+      assert.equal(r.state.dispose.attempted, true);
+      assert.equal(r.state.dispose.ok, ok);
+      assert.equal(r.state.dispose.settled, settled);
+      const core = require("./windows_kill_scope_core");
+      const msg = core.failClosedMessage({ failClosed: true, reasons: ["x"] }, { disposed: r.state.dispose.ok, disposeAttempted: true, disposeError: r.state.dispose.error });
+      if (ok) assert.match(msg, /It closed its own connection/);
+      else { assert.doesNotMatch(msg, /It closed its own connection/); assert.match(msg, /tried to close its own connection/); }
+    });
+  }
   console.log(`windows kill scope reset: ${pass} passed, ${failures.length} failed`);
   process.exit(failures.length ? 1 : 0);
 })();
