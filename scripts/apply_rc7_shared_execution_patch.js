@@ -3458,6 +3458,8 @@ text = require("./apply_guard_attribution_patch").patchBundle(text, { finalize: 
 text = require("./apply_terminal_warmup_patch").patchBundle(text, { finalize: false });
 // W-P1 diagnostics: timing lines for the first Terminal command (log-only).
 text = require("./apply_wp1_timing_patch").patchBundle(text, { finalize: false });
+// V3-S M3: a Stop while the backend is still starting skips the quiescence probe (no dispatch yet).
+text = require("./apply_stop_during_backend_start_patch").patchBundle(text, { finalize: false });
 // PLAN-V3 stage 6: the warm cache follows the default worker (pid/created_at);
 // Terminal input restarts a worker that died while starting, once, without force reset.
 text = require("./apply_warm_worker_identity_patch").patchBundle(text, { finalize: false });

@@ -1497,6 +1497,11 @@ const REQUIRED_MARKERS = [
     marker: "codex patch rc.7.80: W-P1 timing lines for the first Terminal command (diagnostic)",
   },
   {
+    key: "stopDuringBackendStart",
+    label: "Stop during backend start-up skips the quiescence probe",
+    marker: "codex patch rc.7.83: Stop during backend start-up skips the quiescence probe",
+  },
+  {
     key: "warmWorkerIdentity",
     label: "warm cache follows the default worker; Terminal restarts a worker that died while starting",
     marker: "codex patch rc.7.81: warm cache follows the default worker; Terminal restarts a worker that died while starting",

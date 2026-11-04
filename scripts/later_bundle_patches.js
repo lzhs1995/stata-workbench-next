@@ -27,6 +27,7 @@ const LATER = [
   "./apply_guard_attribution_patch",
   "./apply_terminal_warmup_patch",
   "./apply_wp1_timing_patch",
+  "./apply_stop_during_backend_start_patch",
   "./apply_warm_worker_identity_patch",
 ];
 
