@@ -35,7 +35,15 @@ rework; the merged `main` has not been retested live.
   - The completion check requires that this run started the backend itself (`lastCold.runId`, `CONNECTED`, a registered pid).
   - Warm-up refusals carry `retryable` and `retryAfterMs`: TIMEOUT and FAILED are retryable after 5000 ms, CANCELLED (a Stop) is not. The client reports them as `REFUSED_NOT_DISPATCHED` and does not resend.
 <!-- PENDING #22: Windows KILL ends only this window's backend tree (rc.7.82). Add the entry after PR #22 merges. -->
-<!-- PENDING #27: Stata errors with a confirmed return code (rc.7.85) and the runtime patch that sends rc. Add the entry after both merge. -->
+- **A conservative check for Stata errors (PR #27, rc.7.85).** A command that Stata ran and rejected was reported as an unknown outcome: rc -1 on the Terminal path, `EXECUTION_UNCONFIRMED_NO_RETRY` to an agent (M5). mcp-stata 1.26.1 writes the error as `{search r(111), local:r(111);}` and sends no return code with `task_done`.
+  - `scripts/stata_error_outcome_core.js` confirms an error only if the mcp-stata result is a failure, the run was not cancelled (Stop, watchdog, Break text, rc 1), the run id and log path are bound to this run, the last `r(n)` line is followed only by echoed commands, the completion marker was not printed, and the code is a positive integer equal to mcp-stata's `rc`. Anything else keeps the previous response.
+  - A confirmed agent run is released with that rc and answered `500 {outcome:"STATA_ERROR", executed:true, stataRc, payloadMayHaveRun:true}`. The client checks the request, the run, the log and the completed rc again and reports `STATA_ERROR_CONFIRMED` (exit 2, one POST, no retry). A confirmed Terminal run finishes with that rc. Pre-run refusals are never classified.
+  - On its own this path is inactive: without an rc in `task_done`, every real Stata error still reads as unconfirmed.
+<!-- PENDING-REVIEW #28 begin: PR #28 (head e022938) is in Codex re-review after CHANGES (patched-state check). Keep, rewrite or drop this entry after the verdict. -->
+- **mcp-stata sends this run's return code (PR #28).** A runtime patch makes both background `_run` paths keep `result.rc` from the response they just validated, if it is an integer of 0 or more, and adds it to `task_done`. A cancelled or failed call has no response, so it sends no rc and the error stays unconfirmed.
+  - The patch accepts only an exactly unpatched or exactly patched runtime, reverts byte for byte, and refuses anything else as `unsupported-source`.
+  - An offline test runs the real catch edits, the bundle's `__release` and the lifecycle core, then the Python client checks. A real error log with rc 111 gives `STATA_ERROR_CONFIRMED`; a Stop, timeout text, or a runtime without rc gives the old response. The `task_done` event is built by hand, not taken from a live session.
+<!-- PENDING-REVIEW #28 end -->
 
 Live results (isolated profiles, synthetic data, 11-04):
 
@@ -49,7 +57,9 @@ Known issues:
 - **W-P1 is bounded, not proven fixed.** In the stall, Stata's start-up inside the worker took 76.6 s (3.4–8.6 s in the other 32 runs), and the old build counted that wait against the command's 120 s first-log budget. With the warm-up wait outside that budget, 24 runs had 0 stalls: below about 12.5 % at 95 % confidence.
 - **Stata: KILL on Windows ends every Stata GUI process on the machine.** <!-- PENDING #22 -->
 - **macOS KILL and force reset identify the backend by pid and command line only**, not by start time or parent.
-- **Stata error return codes.** A command that Stata rejected still reports rc -1 or `EXECUTION_UNCONFIRMED_NO_RETRY`: mcp-stata 1.26.1 sends no return code with `task_done`, and the log parser does not read `{search r(n)…}`. Backend start refusals (`PRE_RUN_BACKEND_START_*`) are not yet part of the `retryable` contract. <!-- PENDING #27 -->
+- **Stata error return codes have not been tested live.** The confirmed path was built on real macOS logs and tested offline; no Windows log has been collected. An error whose text mentions cancel, timeout or stall stays unconfirmed. <!-- PENDING-REVIEW #28: without PR #28, say that every Stata error still reads as unconfirmed. -->
+- **The general log parser still reads only `r(n);`**, not `{search r(n)…}`. The rc inferred at release, the Run File finalizer and the watchdog's error check are unchanged.
+- **Backend start refusals (`PRE_RUN_BACKEND_START_*`) are not part of the `retryable` contract yet.**
 - **The worker CPU signal is a heuristic.** A run that loops without output can hold the session for up to 30 min of log silence. Unverifiable process trees fall back to the 60 s log rule. A quiet command past 60 s has not yet been tested live.
 
 ## 0.2.0-next.5 — Stop, recovery and Windows fixes

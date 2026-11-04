@@ -199,10 +199,16 @@ again. The receipt contains your code and output; do not commit it.
 `REFUSED_NOT_DISPATCHED` means the extension refused the run before sending it
 (for example Stata did not finish loading, or the person pressed Stop during the
 wait). The output carries `reasonCode`, `retryable` and `retryAfterMs`; a
-refusal after Stop is not retryable. A command that Stata ran and rejected with
-an error (for example `r(111)`) still exits 2 as `EXECUTION_UNCONFIRMED_NO_RETRY`;
-the receipt holds Stata's error text.
-<!-- PENDING #27: once PR #27 and its runtime patch are merged, a confirmed Stata error is reported as STATA_ERROR_CONFIRMED with stataRc. Update this paragraph then. -->
+refusal after Stop is not retryable.
+
+<!-- PENDING-REVIEW #28 begin: the confirmed verdict below needs PR #28 (task_done carries rc). Without #28 the confirmed branch is unreachable and every Stata error exits as EXECUTION_UNCONFIRMED_NO_RETRY. -->
+A command that Stata ran and rejected with an error (for example `r(111)`)
+exits 2 and is not retried. When the extension can confirm the error from this
+run's own log and mcp-stata's return code, the verdict is
+`STATA_ERROR_CONFIRMED` with `stataRc`; otherwise it stays
+`EXECUTION_UNCONFIRMED_NO_RETRY`. Either way the receipt holds Stata's error
+text, and the commands before the error may have changed the data.
+<!-- PENDING-REVIEW #28 end -->
 
 `--session` takes a session name or id (or `STATA_WORKBENCH_SESSION`). With one
 live session it may be omitted; with several it is required.
@@ -364,7 +370,7 @@ Fixed on `main` (`e9b22430`, PR #17) and confirmed live on Windows on `3765d82a`
 - **Late events from a cancelled command went to the wrong run.** On Windows a command whose cancel was reported as confirmed still ran about 2 s later, and its late log event was given to the run that came next (the quiescence probe). The session was locked, so nothing built on the wrong state, and since PR #15 such a response reports `EXEC_OUTCOME_UNKNOWN` with `payloadMayHaveRun: true` (confirmed live on Windows, `e7e54848`). PR #17 now keeps events with their task: after a run ends without its response, events with an unknown task id are no longer given to the active run but are held or dropped. The holding buffer keeps at most 256 events; if all of them are `log_path` or `task_done` events, a new `task_done` can be dropped.
 - **A watchdog cancel could show an earlier failure's reason.** On the agent path the status after a watchdog cancel repeated the reason and timing of an earlier Terminal failure. Each cancel now writes its own `stallReason` and `elapsedMs`, and the lock reason reads for example `EXEC_PRELOG_STALL (IDLE)`. The `reasonCode` itself is still `EXEC_PRELOG_STALL` for every stall kind, because clients match on it.
 
-Fixed on `main` after `0.2.0-next.5` (PRs #20, #21, #23–#26), with offline tests and CI; the merged commit has not been retested live:
+Fixed on `main` after `0.2.0-next.5`, with offline tests and CI; the merged commit has not been retested live:
 
 - **Windows: the first Terminal command after Stata loads stalled now and then (W-P1).** Per-step timing (PR #21) located the stall. In the one stalled run out of 33, Stata's own start-up inside the worker took 76.6 s between its pre-flight check and the end of `stata_setup.config` (3.4–8.6 s in the other 32 runs). The command was queued, not lost: the old build counted this wait against the command's 120 s first-log budget and cancelled it 1.7 s before Stata was ready. Since PR #18 a command first waits for Stata to load (up to 300 s by default) outside that budget. Builds with that wait had 0 stalls in 24 runs, 10 of them on fresh profiles. This is a statistical bound (true stall rate below about 12.5 % at 95 % confidence), not proof that the stall cannot occur. A Stata start-up longer than the limit is refused before dispatch (`PRE_RUN_BACKEND_WARMUP_TIMEOUT`) instead of locking the session.
 - **Quiet long commands were cancelled after 60 s** (inherited from the stable release). The watchdog now also counts CPU time of this window's own Stata worker as progress (PR #24, rc.7.84). See the CPU-signal limits below.
@@ -372,6 +378,7 @@ Fixed on `main` after `0.2.0-next.5` (PRs #20, #21, #23–#26), with offline tes
 - **Concurrent `open` calls timed out after 10 s.** They now reserve inside a short lock and launch outside it (PR #23).
 - **An agent submission right after a window opened was refused** (`BLOCKED_NO_DISPATCH`) while a Terminal command would have waited. It now waits for the same warm-up; refusals carry `retryable` and `retryAfterMs` (PR #26, rc.7.86).
 - **The warm-up cache could trust a replaced worker.** It now records the worker's pid, start time and transport, checks them again before use, and treats a failed or timed-out check as not ready. A Terminal command whose worker died while starting restarts it once (PR #20, rc.7.81).
+- **Stata errors were reported as an unknown outcome.** A confirmed error now returns `STATA_ERROR_CONFIRMED` with Stata's return code to an agent, and that return code instead of -1 on the Terminal path (PR #27, rc.7.85, with the runtime patch in PR #28). <!-- PENDING-REVIEW #28: PR #27 alone confirms nothing; drop this bullet if #28 does not merge. -->
 
 Open problems on the current `main`:
 
@@ -379,7 +386,8 @@ Open problems on the current `main`:
 - **Stata: KILL on Windows ends every Stata GUI process on the machine**, not only this session's. Save work in other Stata windows before confirming it. <!-- PENDING #22: remove or rewrite after PR #22 (rc.7.82) merges -->
 - **macOS KILL and force reset identify the backend by pid only.** The cleanup ends the registered pid when its command line contains `mcp-stata`; it does not check the process start time or parent. A pid reused by another session's `mcp-stata` within that window could be ended.
 - **The worker CPU signal is a heuristic.** CPU activity is not proof of useful work: a run that loops without output keeps the session until its log has been silent for 30 min. When the process tree cannot be verified (a pid exited during the sample, more than 4 levels or 16 processes, a parent mismatch), the sample gives no credit and the 60 s log rule applies. Same-second pid reuse is below the precision of the start time it checks. The live check so far covered the idle noise and a frozen worker, not a quiet command past 60 s.
-- **Stata error return codes.** A command that Stata ran and rejected (for example `r(111)`) returns HTTP 500 with rc -1 on the Terminal path, and `EXECUTION_UNCONFIRMED_NO_RETRY` to an agent, although the receipt holds Stata's error text. mcp-stata 1.26.1 does not include the return code in its task-done event, and the log parser does not read the SMCL form `{search r(111), local:r(111);}`. <!-- PENDING #27: PR #27 adds a conservative STATA_ERROR_CONFIRMED path that stays inactive until the runtime patch sends rc; update after both merge -->
+- **Stata error return codes are confirmed conservatively and not yet tested live.** An error counts as confirmed only if the run was not cancelled (Stop, watchdog, Break, rc 1), the log is this run's own, the last `r(n)` line is followed only by echoed commands, the completion marker was not printed, and the code is a positive integer equal to mcp-stata's rc. Anything else stays rc -1 on the Terminal path and `EXECUTION_UNCONFIRMED_NO_RETRY` to an agent; an error whose text mentions cancel, timeout or stall also stays unconfirmed. The checks were built on real macOS logs; no Windows log has been collected yet. <!-- PENDING-REVIEW #28: without PR #28, mcp-stata 1.26.1 sends no rc with task_done and every Stata error stays unconfirmed; say so here if #28 does not merge. -->
+- **The general log parser reads only the plain `r(n);` form**, not the SMCL form `{search r(111), local:r(111);}` that mcp-stata 1.26.1 writes. Only the new error check reads both. The rc inferred at release, the Run File finalizer and the watchdog's error check still see no rc in such logs when the error is not confirmed.
 - **A reopened session can get a new port.** Right after `close`, the old port can still be in TIME_WAIT; the launcher then picks the next free one. Tools look sessions up by name.
 - **Windows dispatch overhead.** Each agent submission on Windows took about 15 s longer than the Stata work itself (pre-dispatch checks and receipt verification); a short command took 17.4 s end to end. In 20 rounds of an 8 s command the fixed cost was 12–18 s per submission.
 - **Service start can wait for PyPI.** Before starting the Stata service, the extension checks PyPI for the `mcp-stata` version. On a machine where that request times out, the timeout adds to the first start.
@@ -408,6 +416,7 @@ Open problems on the current `main`:
 | Windows: first command after opening returns HTTP 504 (`EXEC_PRELOG_STALL` or `EXEC_OUTCOME_UNKNOWN`) and the session locks | Click **Stata: KILL** to unlock; on Windows KILL also ends every other Stata GUI process on the machine <!-- PENDING #22 -->. Check the receipt before resubmitting, because the command may still have run. If the profile sets `loadStataOnStartup` to `false`, remove that entry before the next `open`. See [Known limitations](#known-limitations) |
 | Terminal shows "Waiting for Stata to finish loading…" | Stata is still starting. Wait, or click Stop to cancel; nothing has been sent yet. After 300 s the command is refused with `PRE_RUN_BACKEND_WARMUP_TIMEOUT`; it was not sent |
 | Agent client returns `REFUSED_NOT_DISPATCHED` | The extension refused the run before sending it. Read `reasonCode`. If `retryable` is true, submit again after `retryAfterMs`; after a Stop it is false |
+| Agent client returns `STATA_ERROR_CONFIRMED` | Stata ran the command and rejected it with `stataRc`. The receipt holds the error text. Fix the code; commands before the error may already have changed the data <!-- PENDING-REVIEW #28 --> |
 | `close` returned `OPENING` | An `open` of that session is still running. Wait until it returns, then `close` again |
 | `close` returned `CLOSE_PENDING` | VS Code is asking about unsaved changes in that window. Answer it, then run `close` again |
 | `No module named 'mcp.server.fastmcp'` | The runtime was installed with MCP 2.x. Reinstall it with the constraints file |
