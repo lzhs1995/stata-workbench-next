@@ -81,6 +81,17 @@ async function guardCases(G) {
   res.orphan = await run(G, 400000, (vc) => ({ cpuProbe: () => { ocpu += 10;
     return core.createOwnedTreeCpuProbe({ platform: "darwin", execFile: fakeExec(otable()).fn,
       getRoot: () => ({ pid: 10, registeredAtMs: OT0 + 2000, hostPid: 5 }) })(); } }));
+  // rc.7.88 D4：CPU 一直在涨，但每 5 次采样里第 2、3 次出错（高负载下的偶发探针错误）
+  let tn = 0;
+  res.transient = await run(G, 200000, (vc) => ({ cpuProbe: (() => { const f = () => { const i = tn++ % 5;
+    return vc.delay(200).then(() => (i === 1 || i === 2) ? null : ({ cpuMs: vc.now(), pids: [7], key: KEY })); };
+    f.lastFailure = null; return new Proxy(f, { get: (t, k) => k === "lastFailure" ? "ps:timeout" : t[k] }); })() }));
+  // 30 s 后冻结，之后的采样全部出错：取消不晚于纯冻结（84 s），出错不能续命
+  let fz = 0;
+  res.freezeErr = await run(G, 400000, (vc) => ({ cpuProbe: () => vc.delay(200).then(() => (fz++ >= 3 ? null : ({ cpuMs: Math.min(vc.now(), 30000), pids: [7], key: KEY }))) }));
+  res.liveDuring = null;
+  res.live = await run(G, 30000, (vc) => ({ cpuProbe: cpuAt(vc, 1), probe: () => { res.liveDuring = res.liveDuring || G.cpuStatus(null, null, true); return { logPath: "/l", logBytes: 10 }; } }));
+  res.liveAfter = G.cpuStatus(G.publicSummary(res.live.r.state), null, true);
   res.prelogCalls = 0;
   res.prelog = await run(G, 400000, (vc) => ({ probe: () => ({}), cpuProbe: () => { res.prelogCalls++; return cpuAt(vc, 1)(); } }));
   return res;
@@ -112,6 +123,16 @@ function assertGuard(G, res) {
   ok(res.cap.r.state.stallReason === IDLE_ && res.cap.ms === 90000, "cap: CPU stops counting at maxSilent (" + res.cap.ms + ")");
   ok(res.long.r.state.stallReason === IDLE_ && res.long.calls === 0, "structural long: no CPU sampling at all");
   ok(res.prelog.r.state.stallReason === G.STALL.PRE_LOG && res.prelog.ms === 120000 && res.prelogCalls === 0, "PRE_LOG unchanged, no sampling");
+  ok(res.transient.r.ok === true && res.transient.ms === 201000, "D4: transient probe errors do not cause a false IDLE cancel (" + res.transient.ms + ")");
+  ok(res.transient.r.state.cpuSampleErrors >= 2 && res.transient.r.state.cpuErrorKinds && res.transient.r.state.cpuErrorKinds["ps:timeout"] >= 2,
+     "D4: errors counted by kind (probe lastFailure)");
+  ok(res.freezeErr.r.state.stallReason === IDLE_ && res.freezeErr.ms <= 84000 && res.freezeErr.ms >= 60000,
+     "D4: frozen worker whose later samples fail is still cancelled, no later than plain freeze (" + res.freezeErr.ms + ")");
+  ok(res.liveDuring && res.liveDuring.live && res.liveDuring.probeInstalled === true && res.liveDuring.live.cpuProbeVersion === null,
+     "D5: cpuStatus shows the running guard");
+  ok(res.liveAfter.live === null && res.liveAfter.lastAgent && res.liveAfter.lastAgent.cpuProgressCount >= 0 &&
+     "cpuErrorKinds" in res.liveAfter.lastAgent && res.liveAfter.lastTerminal === null, "D5: live cleared after the guard, last summary kept");
+  ok(JSON.stringify(res.liveAfter).indexOf("/") < 0, "D5: cpuStatus carries no paths");
   const pub = G.publicSummary(res.busy.r.state);
   ok(pub.cpuProgressCount > 0 && typeof pub.lastCpuProgressAt === "string" && pub.cpuSamplesExpired === 0, "publicSummary has CPU fields");
 }
@@ -196,6 +217,17 @@ async function probeCases() {
   ok(await core.createOwnedTreeCpuProbe({ platform: "darwin", execFile: fakeExec(good).fn, getRoot: () => null })() === null, "no root -> null");
   ok(await core.createOwnedTreeCpuProbe({ platform: "darwin", execFile: () => { throw new Error("spawn"); }, getRoot: () => root })() === null, "execFile throws -> null");
   ok(core.parseUnixRows("10 5 0:01.00 garbage\n") === null, "unparsable ps row -> null");
+  // rc.7.88：null 时留下一个短标签，供守卫按种类计数
+  const lab = async (tbl, o, r = root, ex) => { const p = core.createOwnedTreeCpuProbe({ platform: "darwin", execFile: ex || fakeExec(tbl, o).fn, getRoot: () => r }); const v = await p(); return [v, p.lastFailure]; };
+  let [v0, f0] = await lab(good); ok(v0 && f0 === null, "label: success clears lastFailure");
+  [v0, f0] = await lab(good, { fail: true }); ok(v0 === null && f0 === "pgrep:exit", "label: command failure names the command (" + f0 + ")");
+  [v0, f0] = await lab(good, {}, root, (file, args, o, cb) => cb(Object.assign(new Error("t"), { killed: true, signal: "SIGTERM" }), ""));
+  ok(v0 === null && f0 === "pgrep:timeout", "label: killed by timeout -> <cmd>:timeout");
+  [v0, f0] = await lab(good, { snap: good.filter((r) => r.pid !== 31) }); ok(v0 === null && f0 === "verify", "label: tree check failed -> verify");
+  [v0, f0] = await lab([good[0]]); ok(v0 === null && f0 === "no-children", "label: no worker yet -> no-children");
+  [v0, f0] = await lab(wide); ok(v0 === null && f0 === "truncated", "label: topology too big -> truncated");
+  ok((await lab(good, {}, null))[1] === "no-root", "label: no registered root -> no-root");
+  ok((await lab(good, {}, root, () => { throw new Error("spawn"); }))[1] === "pgrep:spawn", "label: execFile throws -> <cmd>:spawn");
   // codex v2: an old orphan born exactly 1 s before the root, ppid naming the reused root pid
   const orphan = [good[0], { pid: 30, ppid: 10, time: "0:01.00", start: T0 - 1000 }];
   ({ s } = await mac(orphan));
@@ -239,8 +271,11 @@ async function probeCases() {
 }
 
 function patchCases() {
-  const dist = fs.readFileSync(path.join(__dirname, "..", "dist", "extension.js"), "utf8");
-  ok(dist.includes(patch.MARKER), "dist carries the rc.7.84 marker");
+  // rc.7.88: later patches (e.g. /status watchdogCpu) also read globalThis.__codexWorkerCpuProbe,
+  // so revert/replay is checked on the layer rc.7.84 itself sealed.
+  const sealed = fs.readFileSync(path.join(__dirname, "..", "dist", "extension.js"), "utf8");
+  ok(sealed.includes(patch.MARKER), "dist carries the rc.7.84 marker");
+  const dist = require("./later_bundle_patches").revertAfter(sealed, "./apply_worker_cpu_progress_patch");
   for (const [, after] of patch.EDITS) ok(dist.split(after).length === 2, "each edit present once");
   const reverted = patch.revertBundle(dist);
   ok(!reverted.includes("__codexWorkerCpuProbe") && patch.patchBundle(reverted) === dist, "revert/replay byte-exact");
@@ -254,10 +289,14 @@ const GUARD_MUTANTS = [
   ["cap ignored", "&& logIdle < cpuMaxSilentMs\n        && state.lastCpuProgressAt", "\n        && state.lastCpuProgressAt"],
   ["zero delta counts", "return delta >= Math.max(minMs, minShare * wall)", "return delta >= 0"],
   ["key change ignored", "if (!prev || prev.key !== key) return", "if (!prev) return"],
-  ["rejection credits progress", "cpu.inflight = null; state.cpuSampleErrors++; cpuTracker.reset();\n    });", "cpu.inflight = null; state.cpuProgressCount++; state.lastCpuProgressAt = at;\n    });"],
+  ["rejection credits progress", "cpu.inflight = null; cpuErr(\"rejected\");\n    });", "cpu.inflight = null; state.cpuProgressCount++; state.lastCpuProgressAt = at;\n    });"],
+  ["rc.7.88 error resets baseline (old rule)", "if (!sample) { cpuErr(cpuProbe.lastFailure || \"null\"); return; }", "if (!sample) { cpuErr(\"null\"); cpuTracker.reset(); return; }"],
+  ["rc.7.88 error kinds not recorded", "if (!sample) { cpuErr(cpuProbe.lastFailure || \"null\"); return; }", "if (!sample) { state.cpuSampleErrors++; return; }"],
+  ["rc.7.88 null sample observed (credits across a gap with a fake sample)", "if (!sample) { cpuErr(cpuProbe.lastFailure || \"null\"); return; }", "if (!sample) { cpuErr(\"null\"); }"],
+  ["rc.7.88 live never cleared", "  if (LIVE.current === state) LIVE.current = null;\n", ""],
   ["budget skipped while CPU busy", "if (hardBudgetMs != null && el >= hardBudgetMs) {", "if (hardBudgetMs != null && el >= hardBudgetMs && !state.cpuProgressCount) {"],
   ["no-sample keeps baseline", "if (!ok) { base = null; return", "if (!ok) { return"],
-  ["R2 no deadline in fulfilment", "if (clock() > deadline) { state.cpuSampleErrors++;", "if (false) { state.cpuSampleErrors++;"],
+  ["R2 no deadline in fulfilment", "if (clock() > deadline) { cpuErr(\"late\");", "if (false) { cpuErr(\"late\");"],
   // "drop the seq check" is equivalent once both handlers enforce the deadline: a request is only
   // replaced after it timed out, so an older seq always resolves past its own deadline. Kept as
   // defence in depth; covered by the "stale" case together with the deadline check.
@@ -271,7 +310,7 @@ const CORE_MUTANTS = [
   ["R1 child age not checked", "      if (r.startMs < by.get(r.ppid).startMs - slack) return null;\n", ""],
   ["R1 host not checked", "  if (Number(root.hostPid) > 1 && top.ppid !== Number(root.hostPid)) return null;\n", ""],
   ["R1 partial snapshot accepted", "    if (want.size !== by.size - 1 || [...want].some((p) => !by.has(p) || p === top.pid)) return null;\n", ""],
-  ["R1 truncation accepted", "  if (truncated || !found.size) return null;", "  if (!found.size) return null;"],
+  ["R1 truncation accepted", "  if (truncated || !found.size) { why.kind", "  if (!found.size) { why.kind"],
   ["R1 key without identity", "    key: [top.pid + \"@\" + top.startMs, ...leaves.map((r) => r.pid + \"@\" + r.startMs)].join(\",\"),", "    key: leaves.map((r) => r.pid).join(\",\"),"],
 ];
 

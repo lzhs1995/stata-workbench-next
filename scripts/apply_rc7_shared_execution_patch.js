@@ -3472,5 +3472,7 @@ text = require("./apply_stata_error_outcome_patch").patchBundle(text, { finalize
 // F v3: Windows KILL, /panic-kill and a busy force reset end only this window's
 // backend process tree instead of every mcp-stata process and Stata GUI.
 text = require("./apply_windows_kill_scope_patch").patchBundle(text, { finalize: false });
+// V3-W2 D5: /status shows the watchdog's worker CPU counters (read only).
+text = require("./apply_watchdog_cpu_status_patch").patchBundle(text, { finalize: false });
 fs.writeFileSync(target, text, "utf8");
 console.log(baseAlreadyApplied ? "RC7_SHARED_EXECUTION_UPDATED" : "RC7_SHARED_EXECUTION_APPLIED", target);

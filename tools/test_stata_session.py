@@ -82,7 +82,7 @@ class Base(unittest.TestCase):
                     else "C:/VSCode/Code.exe",
                     instances=lambda profile: self.running.get(Path(profile).name, []),
                     alive=lambda pid: True, port_free=lambda port: True, sleep=Mock(), disk_free=lambda p: 10**12,
-                    environ={"SystemRoot": "C:\\Windows"}, launch_wait=0)
+                    environ={"SystemRoot": "C:\\Windows"}, launch_wait=0, leftovers=lambda dirs: [])
         args.update(kw)
         return ss.Sessions(**args)
 
@@ -552,6 +552,44 @@ class ListCloseTests(Base):
         self.assertEqual(s.close("p1")["verdict"], "NOT_RUNNING")
         with self.assertRaisesRegex(ss.SessionError, "SESSION_UNKNOWN"):
             s.close("never")
+
+    def test_close_reports_processes_still_holding_the_session_and_signals_nothing_else(self):
+        # V3-W2：force reset 后旧 Stata worker 被 launchd 收养，关窗后仍占着本会话目录；close 要如实报告
+        seen = []
+        s = self.sessions(leftovers=lambda dirs: (seen.append([str(d) for d in dirs]),
+                                                  [{"pid": 25045, "command": "python3.11"}])[1])
+        s.open("p1", runtime_source=self.source, launch=False)
+        self.running["p1"] = [501]
+        killed = []
+        s.kill = lambda pid: (killed.append(pid), self.running.pop("p1"))
+        r = s.close("p1")
+        self.assertEqual((r["verdict"], killed), ("CLOSED", [501]), "only the VS Code instance is signalled")
+        self.assertEqual(r["leftoverProcesses"], [{"pid": 25045, "command": "python3.11"}])
+        self.assertIn("nothing was signalled", r["note"])
+        self.assertEqual(seen, [[str(self.root / "ws" / "p1"), str(self.root / "profiles" / "p1" / "mcp-temp")]])
+
+    def test_close_leftover_check_failure_keeps_the_verdict(self):
+        def boom(dirs):
+            raise RuntimeError("lsof missing")
+        s = self.sessions(leftovers=boom)
+        s.open("p1", runtime_source=self.source, launch=False)
+        self.running["p1"] = [501]
+        s.kill = lambda pid: self.running.pop("p1")
+        r = s.close("p1")
+        self.assertEqual((r["verdict"], r["leftoverProcesses"]), ("CLOSED", None))
+        self.assertNotIn("note", r)
+
+    def test_close_clean_reports_an_empty_leftover_list(self):
+        s = self.sessions()
+        s.open("p1", runtime_source=self.source, launch=False)
+        self.running["p1"] = [501]
+        s.kill = lambda pid: self.running.pop("p1")
+        r = s.close("p1")
+        self.assertEqual((r["verdict"], r["leftoverProcesses"]), ("CLOSED", []))
+        self.assertNotIn("note", r)
+
+    def test_real_leftover_check_is_unix_only(self):
+        self.assertIsNone(ss.Sessions(root=self.root, platform="win32", code="C:/VSCode/Code.exe")._real_leftovers([self.root]))
 
     def test_close_that_does_not_finish_is_reported_not_forced(self):
         clock = iter(range(0, 1000, 5))

@@ -33,6 +33,7 @@ const LATER = [
   "./apply_agent_warmup_refusal_patch",
   "./apply_stata_error_outcome_patch",
   "./apply_windows_kill_scope_patch",
+  "./apply_watchdog_cpu_status_patch",
 ];
 
 function revertLaterPatches(source) {

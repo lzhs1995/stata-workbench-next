@@ -210,7 +210,7 @@ class Sessions:
 
     def __init__(self, root=None, platform=None, code=None, run=None, popen=None, instances=None, alive=None,
                  port_free=port_free, kill=None, sleep=time.sleep, clock=time.monotonic, disk_free=None, environ=None,
-                 now=time.time, launch_wait=LAUNCH_VISIBLE_WAIT):
+                 now=time.time, launch_wait=LAUNCH_VISIBLE_WAIT, leftovers=None):
         self.root = Path(root) if root else state_root()
         self.platform = platform or sys.platform
         self.environ = dict(os.environ if environ is None else environ)
@@ -225,6 +225,7 @@ class Sessions:
         self.now = now
         self.launch_wait = launch_wait
         self.disk_free = disk_free or (lambda p: shutil.disk_usage(p).free)
+        self._leftovers = leftovers or self._real_leftovers
 
     @property
     def profiles(self):
@@ -237,6 +238,37 @@ class Sessions:
 
     def _real_instances(self, profile):
         return [row["pid"] for row in host.adapter(profile, self.code, 0).code_instances()]
+
+    def _real_leftovers(self, dirs):
+        """V3-W2：还开着这些目录（本会话 ws、mcp-temp）的进程 [{pid, command}]，只读。
+        Stata worker 是 mcp-stata 服务端的 multiprocessing spawn 子进程；force reset/关窗只结束服务端，
+        服务端没走正常退出时 worker 被 launchd 收养（ppid 1）继续跑。只在 Unix 查（lsof +d 不递归）。"""
+        if self.platform == "win32":
+            return None
+        rows = {}
+        for d in dirs:
+            if not Path(d).is_dir():
+                continue
+            try:
+                out = subprocess.run(["lsof", "-Fpc", "+d", str(d)], capture_output=True, text=True, timeout=30).stdout
+            except (OSError, subprocess.SubprocessError):
+                return None
+            pid = None
+            for line in out.splitlines():
+                if line.startswith("p") and line[1:].isdigit():
+                    pid = int(line[1:])
+                    rows.setdefault(pid, {"pid": pid, "command": None})
+                elif line.startswith("c") and pid is not None:
+                    rows[pid]["command"] = line[1:][:40]
+        return sorted(rows.values(), key=lambda r: r["pid"])
+
+    def leftovers(self, name):
+        """关窗后仍占用本会话工作目录或 mcp-temp 的进程；None = 本平台不查或查不了。只报告，不发信号。"""
+        profile = self.profile(name)
+        try:
+            return self._leftovers([self.root / "ws" / name, profile / "mcp-temp"])
+        except Exception:  # noqa: BLE001  诊断失败不影响 close 结论
+            return None
 
     def instances(self, profile):
         """该配置目录（精确的 --user-data-dir）下的 VS Code 主进程 pid。"""
@@ -572,8 +604,14 @@ class Sessions:
             if not self.instances(profile):
                 removed = self._remove_dead_records(name)
                 if not any(r.get("sessionName") == name for r in self.records()):
-                    return {"verdict": "CLOSED", "name": name, "signalled": pids, "removedRegistryFiles": removed,
-                            "removedTmpFiles": self._remove_orphan_tmp()}
+                    result = {"verdict": "CLOSED", "name": name, "signalled": pids, "removedRegistryFiles": removed,
+                              "removedTmpFiles": self._remove_orphan_tmp()}
+                    left = self.leftovers(name)
+                    result["leftoverProcesses"] = left
+                    if left:
+                        result["note"] = ("VS Code closed, but these processes still hold this session's workspace or mcp-temp "
+                                          "(typically an old Stata worker left by a force reset); nothing was signalled")
+                    return result
             self.sleep(0.5)
         return {"verdict": "CLOSE_PENDING", "name": name, "signalled": pids, "removedTmpFiles": self._remove_orphan_tmp(),
                 "note": "normal quit was requested; VS Code may be waiting on an unsaved-changes prompt; nothing was force-killed"}
