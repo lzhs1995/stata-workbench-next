@@ -82,6 +82,13 @@ function harness(source, script = {}) {
         if (script.probeFails > 0) { script.probeFails--; throw new Error("list_sessions transport hiccup"); }
         if (script.probeThrows) throw new Error("list_sessions transport hiccup");
         const st = statusNow();
+        // Review V2-R1: change the worker right after a poll that answered "running",
+        // i.e. just before the next list_sessions (the post-READY record probe).
+        if (st === "running" && script.afterRunning && script.afterRunning.length) {
+          const reply = { sessions: [{ id: "default", status: st, created_at: sess.createdAt, pid: sess.pid }] };
+          script.afterRunning.shift()();
+          return reply;
+        }
         if (st === "missing") return { sessions: [] };
         return { sessions: [script.noIdentity ? { id: "default", status: st } : { id: "default", status: st, created_at: sess.createdAt, pid: sess.pid }] };
       }
@@ -296,6 +303,58 @@ const CASES = {
     const a = await h.warm("agent_run_2", "run-command");
     assert.equal(a.error?.__codexPreRunTimeout?.reasonCode, "PRE_RUN_BACKEND_WARMUP_CANCELLED", "agent path refused by the warm-up itself");
   },
+  // V2-R1: after READY the record probe sees starting / missing / error / a rejection
+  // / a timeout. That READY is dropped; the run waits again (Terminal and agent).
+  async recordProbeStarting(src) { await recordCase(src, (h) => () => h.replace({ readyIn: 30 * S }), (h) => h.now >= h.t0 + 40 * S); },
+  async recordProbeMissing(src) { await recordCase(src, (h) => () => { h.sess.present = false; }, (h) => h.sess.created >= 1); },
+  async recordProbeRejected(src) { await recordCase(src, (h) => () => { h.script.probeFails = 1; h.replace({ readyIn: 30 * S }); }, () => true); },
+  async recordProbeTimeout(src) { await recordCase(src, (h) => () => { h.script.probeHangs = 1; h.replace({ readyIn: 30 * S }); }, () => true); },
+  async recordProbeError(src) {
+    const t = harness(src, { status: "starting", readyAt: 1_800_000_010_000 });
+    t.script.afterRunning = [() => { t.sess.status = "error"; }];
+    assert.ok(ok(await t.run("display 1", "debug_terminal_1")), "Terminal: dead worker stopped, restarted once, then runs");
+    assert.deepEqual(t.dispatches.map((d) => d.status), ["running"]);
+    assert.equal(t.sess.created, 1);
+    assert.equal(t.counts.forceResets, 0);
+    const a = harness(src, { status: "starting", readyAt: 1_800_000_010_000 });
+    a.script.afterRunning = [() => { a.sess.status = "error"; }];
+    const r = await a.warm("agent_run_1", "visible-bridge");
+    assert.equal(r.error?.__codexPreRunTimeout?.reasonCode, "PRE_RUN_BACKEND_WARMUP_FAILED", "agent: refused, not run");
+    assert.equal(r.error.__codexPreRunTimeout.payloadDispatched, false);
+  },
+  // The worker changes after both READYs: refused before dispatch, no force reset.
+  async recordProbeChangesTwice(src) {
+    const h = harness(src, { status: "starting", readyAt: 1_800_000_010_000 });
+    h.script.afterRunning = [() => h.replace({ readyIn: 10 * S }), () => h.replace({ readyIn: 10 * S })];
+    const r = await h.run("display 1", "debug_terminal_1");
+    assert.equal(r.value.success, false);
+    assert.equal(refusal(r).reasonCode, "PRE_RUN_BACKEND_WARMUP_FAILED");
+    assert.equal(refusal(r).payloadDispatched, false);
+    assert.equal(refusal(r).workerChanged, true);
+    assert.equal(h.dispatches.length, 0);
+    assert.equal(h.counts.forceResets, 0);
+    assert.ok(ok(await h.run("display 2", "debug_terminal_2")), "next command works");
+    assert.equal(h.dispatches[0].status, "running");
+  },
+  // Stop during the wait that follows a dropped READY: CANCELLED, nothing sent.
+  async stopDuringRecordRetry(src) {
+    const h = harness(src, { status: "starting", readyAt: 1_800_000_010_000 });
+    h.script.afterRunning = [() => { h.replace({ readyIn: 60 * S }); h.soonStop(5 * S); }];
+    const r = await h.run("display 1", "debug_terminal_1");
+    assert.equal(refusal(r).reasonCode, "PRE_RUN_BACKEND_WARMUP_CANCELLED");
+    assert.equal(refusal(r).payloadDispatched, false);
+    assert.equal(h.dispatches.length, 0);
+  },
+  // Old mcp-stata without list_sessions: nothing to verify, the run proceeds and is never "confirmed".
+  async oldServerNoListSessions(src) {
+    const h = harness(src, { status: "running" });
+    h.zg._availableTools.delete("list_sessions");
+    assert.ok(ok(await h.run("display 1", "debug_terminal_1")));
+    assert.ok(ok(await h.run("display 2", "debug_terminal_2")));
+    assert.equal(h.dispatches.length, 2);
+    assert.equal(h.counts.probes, 0);
+    assert.equal(h.summary().skipped, 0, "never marked confirmed");
+  },
   // A second warm-up call in the same run (Terminal, then BeginGraphRun) does not probe again.
   async oneProbePerRun(src) {
     const h = harness(src, { status: "running" });
@@ -375,6 +434,23 @@ const CASES = {
     assert.ok(h.now - h.t0 < 400 * S, "one 300 s bound, not two");
   },
 };
+// One record-probe scenario on a cold start, through Terminal and through the agent warm-up.
+async function recordCase(src, change, waited) {
+  const t = harness(src, { status: "starting", readyAt: 1_800_000_010_000 });
+  t.script.afterRunning = [change(t)];
+  assert.ok(ok(await t.run("display 1", "debug_terminal_1")), "Terminal run completes");
+  assert.deepEqual(t.dispatches.map((d) => d.status), ["running"], "Terminal dispatched only into a running worker");
+  assert.ok(waited(t), "Terminal waited for the new worker");
+  assert.match(String(t.summary().lastDrop?.reason), /^after READY/);
+  assert.equal(t.counts.forceResets, 0);
+  const a = harness(src, { status: "starting", readyAt: 1_800_000_010_000 });
+  a.script.afterRunning = [change(a)];
+  const r = await a.warm("agent_run_1", "visible-bridge");
+  assert.equal(r.error, undefined, "agent not refused");
+  assert.equal(r.value?.outcome, "READY");
+  assert.equal(a.sess.status, "running", "agent would dispatch into a running worker");
+  assert.equal(a.summary().worker?.pid, a.sess.pid, "the current worker is the one recorded");
+}
 // ---- mutants of the patched layer: each must make at least one case fail ----
 const MUTANTS = [
   ["cache-hit status ignored", 'seen.status !== "running" ? "status "', 'false ? "status "'],
@@ -385,7 +461,9 @@ const MUTANTS = [
   ["Stop during entry probe ignored", 'if (stopped()) throw __codexWarmWorkerCancelled(id, source, "worker identity probe", started);', ""],
   ["Stop during record probe ignored", 'if (stopped()) throw __codexWarmWorkerCancelled(id, source, "worker identity record", started);', ""],
   ["probe every call", "__codexWarmWorkerStats.skipped++;\n    return null;", "__codexWarmWorkerStats.skipped++;"],
-  ["identity not recorded", '__codexWarmWorker = seen && seen.ok && seen.status === "running" ? { transport: warmed, pid: seen.pid, createdAt: seen.createdAt } : null;', "__codexWarmWorker = null;"],
+  ["identity not recorded", "      __codexWarmWorker = { transport: warmed, pid: seen.pid, createdAt: seen.createdAt };\n", "      __codexWarmWorker = null;\n"],
+  ["record miss keeps stale READY", "    __codexWarmWorkerDrop(id, why);\n", "    return result;\n"],
+  ["record miss retried without limit", "    if (attempt > 0) throw __codexWarmWorkerChanged(id, source, why, started, seen && seen.ok ? seen.status : null);\n", ""],
   ["no restart", "    __codexWarmWorkerStats.restarts++;\n", "    throw error;\n"],
   ["restart any source", 'source !== "terminal-input" || ', ""],
   ["restart any refusal", '!refusal || refusal.reasonCode !== "PRE_RUN_BACKEND_WARMUP_FAILED"\n      || refusal.lastStatus !== "error" || refusal.recovery !== "STOPPED_FAILED_SESSION"\n      || ', "!refusal || "],
