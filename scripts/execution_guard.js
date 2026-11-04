@@ -94,6 +94,38 @@ const DEFAULT_PRELOG_LONG_MS = 300000;
 const DEFAULT_IDLE_SHORT_MS = 60000;      // codex 阻塞4：短任务首日志后空闲窗口
 const DEFAULT_IDLE_LONG_MS = 1800000;     // 结构性长任务 30 分钟（长 MI 估计可久无输出）
 const DEFAULT_PROGRESS_POLL_MS = 3000;
+// rc.7.84：worker CPU 进展。阈值 max(200 ms, 2% 核 × 两次采样间隔)：空闲 worker 阻塞在
+// 管道 recv 上约 0；R1-128 挂死样本约 1.4% 核；loadavg 140/15 核时满负荷进程仍约 10% 核。
+const DEFAULT_CPU_SAMPLE_MS = 10000;
+const DEFAULT_CPU_SAMPLE_TIMEOUT_MS = 12000;
+const DEFAULT_CPU_MIN_MS = 200;
+const DEFAULT_CPU_MIN_SHARE = 0.02;
+const DEFAULT_CPU_MAX_SILENT_MS = 1800000;   // 短任务日志空闲上限 = 结构性长任务的 idle 窗口
+
+// 比较相邻两次采样 {cpuMs,pids}。同一 pid 集合、增量非负且 ≥ max(minMs, minShare×间隔) 才算进展；
+// 其余（null、pid 变了、负增量）只重置基线。
+function cpuProgressTracker(minMs, minShare) {
+  minMs = Number.isFinite(minMs) ? minMs : DEFAULT_CPU_MIN_MS;
+  minShare = Number.isFinite(minShare) ? minShare : DEFAULT_CPU_MIN_SHARE;
+  let base = null;
+  return {
+    observe(sample, at) {
+      const ok = sample && Number.isFinite(sample.cpuMs) && sample.cpuMs >= 0 &&
+        Array.isArray(sample.pids) && sample.pids.length > 0 && Number.isFinite(at);
+      if (!ok) { base = null; return { progress: false, reason: "no-sample" }; }
+      const key = sample.pids.map(Number).sort((a, b) => a - b).join(",");
+      const prev = base;
+      base = { key: key, cpuMs: sample.cpuMs, at: at };
+      if (!prev || prev.key !== key) return { progress: false, reason: "baseline" };
+      const delta = sample.cpuMs - prev.cpuMs, wall = at - prev.at;
+      if (delta < 0 || wall <= 0) return { progress: false, reason: delta < 0 ? "negative-delta" : "no-wall" };
+      return delta >= Math.max(minMs, minShare * wall)
+        ? { progress: true, deltaMs: delta, wallMs: wall }
+        : { progress: false, reason: "below-threshold", deltaMs: delta, wallMs: wall };
+    },
+    reset() { base = null; },
+  };
+}
 
 // D0a：允许「排除计分」的控制面换代原因白名单。只有明确的 Stop / force-reset
 // 才可排除；其它任何换代（包括未知原因）一律按缺陷计（codex）。
@@ -549,6 +581,33 @@ async function guardProgress(work, opts) {
   const probe = typeof opts.probe === "function" ? opts.probe : () => ({});
   const owner = opts.ownerRef;
   const started = Date.now();
+  // rc.7.84：worker CPU 时间作为第二个进展信号（只用于 IDLE；PRE_LOG/HARD_BUDGET 不变）。
+  // 采样异步、不 await，不推迟原判挂时刻；任何失败只重置基线，退回只看日志的现状。
+  const cpuProbe = typeof opts.cpuProbe === "function" ? opts.cpuProbe : null;
+  const cpuSampleMs = Number.isFinite(opts.cpuSampleMs) ? opts.cpuSampleMs : DEFAULT_CPU_SAMPLE_MS;
+  const cpuTimeoutMs = Number.isFinite(opts.cpuTimeoutMs) ? opts.cpuTimeoutMs : DEFAULT_CPU_SAMPLE_TIMEOUT_MS;
+  const cpuMaxSilentMs = Number.isFinite(opts.cpuMaxSilentMs) ? opts.cpuMaxSilentMs
+    : (opts.structuralLong ? idleMs : DEFAULT_CPU_MAX_SILENT_MS);
+  const cpuTracker = cpuProbe ? cpuProgressTracker(opts.cpuMinMs, opts.cpuMinShare) : null;
+  const cpu = { inflight: null, seq: 0, lastStartAt: null };
+  state.cpuSamples = 0; state.cpuSampleErrors = 0; state.cpuProgressCount = 0;
+  state.lastCpuProgressAt = null;
+  const startCpuSample = () => {
+    const seq = ++cpu.seq, at = Date.now();
+    cpu.inflight = { seq, at }; cpu.lastStartAt = at;
+    let p;
+    try { p = Promise.resolve(cpuProbe()); } catch (e) { p = Promise.resolve(null); }
+    p.then((sample) => {
+      if (!cpu.inflight || cpu.inflight.seq !== seq || done || state.cause) return;
+      cpu.inflight = null; state.cpuSamples++;
+      if (!sample) state.cpuSampleErrors++;
+      const r = cpuTracker.observe(sample, at);
+      if (r.progress) { state.cpuProgressCount++; state.lastCpuProgressAt = at; }
+    }, () => {
+      if (!cpu.inflight || cpu.inflight.seq !== seq) return;
+      cpu.inflight = null; state.cpuSampleErrors++; cpuTracker.reset();
+    });
+  };
 
   let wp, done = false, value, workErr = null;
   try { wp = Promise.resolve(work()); }
@@ -619,7 +678,21 @@ async function guardProgress(work, opts) {
         state.cause = CAUSE.PROGRESS_STALL; state.stallReason = STALL.PRE_LOG; break;
       }
     } else {
-      if (Date.now() - state.lastProgressAt >= idleMs) {               // 首日志后空闲
+      const now = Date.now(), logIdle = now - state.lastProgressAt;
+      if (cpuProbe) {
+        // 卡住的采样超时作废（迟到结果按 seq 丢弃），基线重置
+        if (cpu.inflight && now - cpu.inflight.at > cpuTimeoutMs) {
+          cpu.inflight = null; state.cpuSampleErrors++; cpuTracker.reset();
+        }
+        if (!cpu.inflight && logIdle >= cpuSampleMs && logIdle < cpuMaxSilentMs &&
+            (cpu.lastStartAt == null || now - cpu.lastStartAt >= cpuSampleMs)) startCpuSample();
+        if (logIdle < cpuSampleMs) cpuTracker.reset();   // 日志在涨：下一段空闲重新取基线
+      }
+      // 日志连续空闲超过 cpuMaxSilentMs 后 CPU 进展不再算数：不会变成永不取消
+      const cpuAt = (state.lastCpuProgressAt != null && logIdle < cpuMaxSilentMs
+        && state.lastCpuProgressAt > state.lastProgressAt) ? state.lastCpuProgressAt : null;
+      const lastAt = cpuAt != null ? cpuAt : state.lastProgressAt;
+      if (now - lastAt >= idleMs) {                                    // 首日志后空闲
         state.cause = CAUSE.PROGRESS_STALL; state.stallReason = STALL.IDLE; break;
       }
     }
@@ -704,6 +777,9 @@ function publicSummary(state) {
     cancelHitLevel: state.cancelHitLevel || null,
     cancelLevels: Array.isArray(state.cancelLevels) ? state.cancelLevels : null,
     hardBudgetHit: !!state.hardBudgetHit, probeRunMismatch: state.probeRunMismatch || 0,
+    cpuSamples: state.cpuSamples || 0, cpuSampleErrors: state.cpuSampleErrors || 0,
+    cpuProgressCount: state.cpuProgressCount || 0,
+    lastCpuProgressAt: state.lastCpuProgressAt ? new Date(state.lastCpuProgressAt).toISOString() : null,
     probeUnidentified: state.probeUnidentified || 0,
     supersedeExpected: !!state.supersedeExpected,
     supersedeEvidence: state.supersedeEvidence || null,
@@ -734,6 +810,8 @@ module.exports = {
   DEFAULT_CANCEL_DEADLINE_MS, DEFAULT_DRAIN_DEADLINE_MS,
   DEFAULT_PRELOG_SHORT_MS, DEFAULT_PRELOG_LONG_MS,
   DEFAULT_IDLE_SHORT_MS, DEFAULT_IDLE_LONG_MS,
+  DEFAULT_CPU_SAMPLE_MS, DEFAULT_CPU_SAMPLE_TIMEOUT_MS, DEFAULT_CPU_MIN_MS, DEFAULT_CPU_MIN_SHARE,
+  DEFAULT_CPU_MAX_SILENT_MS, cpuProgressTracker,
   createState, isCurrent, normalizeCancelReceipt, verifySupersedeEvidence,
   SUPERSEDE_EVIDENCE_MAX_AGE_MS,
   boundedCancel, boundedDrain,

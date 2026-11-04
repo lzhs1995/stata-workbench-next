@@ -1491,6 +1491,11 @@ const REQUIRED_MARKERS = [
     label: "Terminal input waits for Stata start-up before its pre-log budget",
     marker: "codex patch rc.7.79: Terminal input waits for Stata start-up before its pre-log budget",
   },
+  {
+    key: "workerCpuProgress",
+    label: "worker CPU time counts as watchdog progress",
+    marker: "codex patch rc.7.84: worker CPU time counts as watchdog progress",
+  },
 ];
 
 const AUXILIARY_MARKERS = [

@@ -27,8 +27,8 @@
       "bytes": 17618
     },
     "scripts/patch_manager.js": {
-      "sha256": "d0c8b3ed0663a2d09dca597bbe8c7c6c54bae2772ae36efbcf65c32b25b81d4d",
-      "bytes": 95333
+      "sha256": "e6b74af4e0e5ae4158fe85a448090109fe94c36a53ab6b71ffc3ebb1397d63b8",
+      "bytes": 95510
     },
     "scripts/mcp_stata_runtime_patch.js": {
       "sha256": "64013014e8598af5c7f70a276cd80a2f5c21d218eaa6fba59f079096c8f75ac9",
@@ -67,8 +67,8 @@
       "bytes": 15512
     },
     "scripts/execution_guard.js": {
-      "sha256": "39b392e29fdee33b24d795df03537fd3f3271c4fec8daee251b7ccc5e3acdb87",
-      "bytes": 35848
+      "sha256": "7f7b8f95f84fdbfb8ba4f4f8f3479858a72e16224b87b3f8c5f5de79c3185eb7",
+      "bytes": 40692
     },
     "scripts/escalation_ladder_gate.js": {
       "sha256": "0b4487f1c80bee598666ed21d87f71132d44b5fc336c22b1dfee10fb30131adc",
@@ -111,8 +111,8 @@
       "bytes": 5178
     },
     "scripts/apply_rc7_shared_execution_patch.js": {
-      "sha256": "743d1b4729e9498d944cc446c6ea1300b0da987f0f0084773b8c0029cd52024d",
-      "bytes": 340083
+      "sha256": "f848c4b3e82d6afe5d437c681160c11147a423658a6726f5c64277db167c9837",
+      "bytes": 340259
     },
     "scripts/apply_rc64_routes_patch.js": {
       "sha256": "b01e1225f5844b632e24d616957fb9e565541345a10d6f4fbc640a4b034070b2",
@@ -139,8 +139,8 @@
       "bytes": 11107
     },
     "dist/extension.js": {
-      "sha256": "0b8d733710c2e784669e995b94b58091672fea8c42ff717e0daaa1bbb0282e47",
-      "bytes": 5648468
+      "sha256": "e6afb6f032698c8952f16c6da9731fa78d8379519d522225b2f7aba0948eb60b",
+      "bytes": 5649226
     },
     "scripts/mac/png_compat_transform.js": {
       "sha256": "cdea12886a1d5bb5b4c2b3e38829de1c7e68ed70e7777e8d6e2eb02bb0ce3514",
@@ -343,7 +343,7 @@
       "bytes": 4729
     },
     "tools/verified_workbench.py": {
-      "sha256": "a4107f3f8c37e937d45abe67dfa423f19cf2c50b2eb487359fd31150e98f2f50",
+      "sha256": "b5d25411ac5b337f1c67c353e9247d79b3d678d1d822e6046bf13ad17cdbbabe",
       "bytes": 21973
     },
     "tools/workbench_platform.py": {
@@ -433,6 +433,10 @@
     "scripts/guard_cancel_restore_core.js": {
       "sha256": "7efc929056497d016467231b82123e0ea902a8a018445fb409f4f24e58b3736a",
       "bytes": 17013
+    },
+    "scripts/worker_cpu_progress_core.js": {
+      "sha256": "f3df695123bfe2abafa207f02f01053f8921dadb53ca5a30cd0140506e0b0dc0",
+      "bytes": 7622
     }
   },
   "acceptanceStatus": "PENDING_LICENSED_MAC_FULL_ACCEPTANCE",
