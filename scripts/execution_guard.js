@@ -113,7 +113,9 @@ function cpuProgressTracker(minMs, minShare) {
       const ok = sample && Number.isFinite(sample.cpuMs) && sample.cpuMs >= 0 &&
         Array.isArray(sample.pids) && sample.pids.length > 0 && Number.isFinite(at);
       if (!ok) { base = null; return { progress: false, reason: "no-sample" }; }
-      const key = sample.pids.map(Number).sort((a, b) => a - b).join(",");
+      // 有身份键（root+叶子 pid@创建时刻）就用它；同 pid 换了进程也会重置基线
+      const key = typeof sample.key === "string" && sample.key ? sample.key
+        : sample.pids.map(Number).sort((a, b) => a - b).join(",");
       const prev = base;
       base = { key: key, cpuMs: sample.cpuMs, at: at };
       if (!prev || prev.key !== key) return { progress: false, reason: "baseline" };
@@ -580,30 +582,41 @@ async function guardProgress(work, opts) {
   const pollMs = Number.isFinite(opts.pollMs) ? opts.pollMs : DEFAULT_PROGRESS_POLL_MS;
   const probe = typeof opts.probe === "function" ? opts.probe : () => ({});
   const owner = opts.ownerRef;
-  const started = Date.now();
+  // 决策用的时钟可注入（测试用虚拟单调时钟）；默认 Date.now / 真 sleep，生产行为不变
+  const clock = typeof opts.now === "function" ? opts.now : Date.now;
+  const pause = typeof opts.sleep === "function" ? opts.sleep : sleep;
+  const started = clock();
   // rc.7.84：worker CPU 时间作为第二个进展信号（只用于 IDLE；PRE_LOG/HARD_BUDGET 不变）。
-  // 采样异步、不 await，不推迟原判挂时刻；任何失败只重置基线，退回只看日志的现状。
-  const cpuProbe = typeof opts.cpuProbe === "function" ? opts.cpuProbe : null;
+  // 采样不 await（轮询不等探针返回；派生子进程本身仍有事件循环开销）。失败/过期只重置基线，不计进展；
+  // 已记下的 CPU 进展保留，到其后一个 idle 窗口照常判挂。CPU 在涨≠有用进展：死循环最多被延长到日志空闲 30 分钟。
   const cpuSampleMs = Number.isFinite(opts.cpuSampleMs) ? opts.cpuSampleMs : DEFAULT_CPU_SAMPLE_MS;
   const cpuTimeoutMs = Number.isFinite(opts.cpuTimeoutMs) ? opts.cpuTimeoutMs : DEFAULT_CPU_SAMPLE_TIMEOUT_MS;
   const cpuMaxSilentMs = Number.isFinite(opts.cpuMaxSilentMs) ? opts.cpuMaxSilentMs
     : (opts.structuralLong ? idleMs : DEFAULT_CPU_MAX_SILENT_MS);
+  // 上限不超过 idle 窗口（结构性长任务）时 CPU 延长不了任何东西：不采样，省掉探针开销
+  const cpuProbe = typeof opts.cpuProbe === "function" && cpuMaxSilentMs > idleMs ? opts.cpuProbe : null;
   const cpuTracker = cpuProbe ? cpuProgressTracker(opts.cpuMinMs, opts.cpuMinShare) : null;
   const cpu = { inflight: null, seq: 0, lastStartAt: null };
   const cpuLog = (m) => { try { (opts.log || noop)(m); } catch (e) { /* 日志失败不影响判定 */ } };
   const cpuCounts = () => "cpuSamples=" + state.cpuSamples + " cpuProgress=" + state.cpuProgressCount
-    + " cpuErrors=" + state.cpuSampleErrors;
-  state.cpuSamples = 0; state.cpuSampleErrors = 0; state.cpuProgressCount = 0;
+    + " cpuErrors=" + state.cpuSampleErrors + " cpuExpired=" + state.cpuSamplesExpired
+    + " probe=" + (state.cpuProbeVersion || "none");
+  state.cpuSamples = 0; state.cpuSampleErrors = 0; state.cpuProgressCount = 0; state.cpuSamplesExpired = 0;
+  state.cpuProbeVersion = null;
   state.lastCpuProgressAt = null;
   const startCpuSample = () => {
-    const seq = ++cpu.seq, at = Date.now();
+    const seq = ++cpu.seq, at = clock();
     cpu.inflight = { seq, at }; cpu.lastStartAt = at;
     let p;
     try { p = Promise.resolve(cpuProbe()); } catch (e) { p = Promise.resolve(null); }
+    const deadline = at + cpuTimeoutMs;
     p.then((sample) => {
       if (!cpu.inflight || cpu.inflight.seq !== seq || done || state.cause) return;
-      cpu.inflight = null; state.cpuSamples++;
+      cpu.inflight = null;
+      if (clock() > deadline) { state.cpuSampleErrors++; state.cpuSamplesExpired++; cpuTracker.reset(); return; }
+      state.cpuSamples++;
       if (!sample) state.cpuSampleErrors++;
+      if (sample && sample.probe) state.cpuProbeVersion = String(sample.probe).slice(0, 40);
       const r = cpuTracker.observe(sample, at);
       if (r.progress) {
         // 记在较早一次采样的开始：CPU 增长只证明「上一采样时刻之后还在算」，
@@ -616,6 +629,7 @@ async function guardProgress(work, opts) {
       }
     }, () => {
       if (!cpu.inflight || cpu.inflight.seq !== seq) return;
+      if (clock() > deadline) state.cpuSamplesExpired++;
       cpu.inflight = null; state.cpuSampleErrors++; cpuTracker.reset();
     });
   };
@@ -624,7 +638,7 @@ async function guardProgress(work, opts) {
   try { wp = Promise.resolve(work()); }
   catch (e) {
     state.cause = CAUSE.SYNC_THREW; state.error = (e && e.message) || String(e);
-    state.elapsedMs = Date.now() - started; state.completedAt = nowIso();
+    state.elapsedMs = clock() - started; state.completedAt = nowIso();
     return finish(false, state, opts, e);
   }
   wp.then((v) => { done = true; value = v; }, (e) => { done = true; workErr = e; });
@@ -668,14 +682,14 @@ async function guardProgress(work, opts) {
     // codex 阻塞4：probe 定义 {runId,taskId,transportAck,logPath,logBytes}；
     // taskId 动态捕获 → 三级取消的第一层 cancelTask 在生产中才可达。
     if (pr.taskId != null && state.taskId == null) state.taskId = pr.taskId;
-    const el = Date.now() - started;
+    const el = clock() - started;
     if (pr.logPath && state.firstLogAt == null) {
-      state.firstLogAt = Date.now();
-      state.lastProgressAt = Date.now();
+      state.firstLogAt = clock();
+      state.lastProgressAt = clock();
       state.lastLogBytes = pr.logBytes || 0;
     } else if (state.firstLogAt != null && pr.logBytes != null
                && pr.logBytes > (state.lastLogBytes || 0)) {
-      state.lastProgressAt = Date.now();
+      state.lastProgressAt = clock();
       state.lastLogBytes = pr.logBytes;
     }
     // hard budget（codex 阻塞4）：即便有伪日志也不能无限续命
@@ -689,7 +703,7 @@ async function guardProgress(work, opts) {
         state.cause = CAUSE.PROGRESS_STALL; state.stallReason = STALL.PRE_LOG; break;
       }
     } else {
-      const now = Date.now(), logIdle = now - state.lastProgressAt;
+      const now = clock(), logIdle = now - state.lastProgressAt;
       if (cpuProbe) {
         // 卡住的采样超时作废（迟到结果按 seq 丢弃），基线重置
         if (cpu.inflight && now - cpu.inflight.at > cpuTimeoutMs) {
@@ -707,10 +721,10 @@ async function guardProgress(work, opts) {
         state.cause = CAUSE.PROGRESS_STALL; state.stallReason = STALL.IDLE; break;
       }
     }
-    await sleep(pollMs);
+    await pause(pollMs);
   }
 
-  state.elapsedMs = Date.now() - started;
+  state.elapsedMs = clock() - started;
   if (cpuProbe && state.cpuSamples + state.cpuSampleErrors > 0) {
     cpuLog("[exec-guard] worker CPU summary " + cpuCounts() + " elapsedMs=" + state.elapsedMs
       + " done=" + (done ? "yes" : "no"));
@@ -793,7 +807,8 @@ function publicSummary(state) {
     cancelLevels: Array.isArray(state.cancelLevels) ? state.cancelLevels : null,
     hardBudgetHit: !!state.hardBudgetHit, probeRunMismatch: state.probeRunMismatch || 0,
     cpuSamples: state.cpuSamples || 0, cpuSampleErrors: state.cpuSampleErrors || 0,
-    cpuProgressCount: state.cpuProgressCount || 0,
+    cpuProgressCount: state.cpuProgressCount || 0, cpuSamplesExpired: state.cpuSamplesExpired || 0,
+    cpuProbeVersion: state.cpuProbeVersion || null,
     lastCpuProgressAt: state.lastCpuProgressAt ? new Date(state.lastCpuProgressAt).toISOString() : null,
     probeUnidentified: state.probeUnidentified || 0,
     supersedeExpected: !!state.supersedeExpected,

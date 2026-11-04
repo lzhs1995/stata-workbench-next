@@ -14,6 +14,9 @@ const MAX_PIDS = 16;
 // The root must have started near the moment this window registered it;
 // otherwise the pid was reused and its children are not ours.
 const ROOT_START_TOLERANCE_MS = 5000;
+// Unix lstart has 1 s resolution; a child may print one second before its parent.
+const START_SLACK_MS_UNIX = 1000;
+const PROBE_VERSION = "rc.7.84-v2";
 
 // ps time / etime: [[dd-]hh:]mm:ss[.cc]  ->  milliseconds, or null.
 function parseCpuTime(text) {
@@ -27,23 +30,55 @@ function parseCpuTime(text) {
   return Math.round((((days * 24 + hours) * 60 + minutes) * 60 + seconds + frac) * 1000);
 }
 
-// The tracker that compares successive samples lives in execution_guard.js
-// (cpuProgressTracker) so the guard module stays self-contained.
 
-// Of the descendants, count only those that are not an ancestor of another
-// descendant: the worker (and resource_tracker), never the mcp server or a
-// Windows venv launcher, whose own log polling would otherwise look like work.
-function leafCpu(rows, rootPid) {
-  const parents = new Set(rows.map((r) => r.ppid));
-  const leaves = rows.filter((r) => r.pid !== rootPid && !parents.has(r.pid));
-  if (!leaves.length || leaves.some((r) => !Number.isFinite(r.cpuMs))) return null;
-  return { cpuMs: leaves.reduce((a, r) => a + r.cpuMs, 0),
-           pids: leaves.map((r) => r.pid).sort((a, b) => a - b) };
+// One consistent snapshot rows = [{pid, ppid, startMs, cpuMs}] -> verified sample or null.
+// The root must be the registered pid, started no later than its registration
+// (+5 s) and, when hostPid is known, be a direct child of this extension host.
+// Every other row must hang off the root through ppid links inside the same
+// snapshot and must not be older than its parent (pid reuse / stale ppid).
+// Any missing, extra or inconsistent row returns null: no credit, ever.
+function verifyTree(rows, root, opts = {}) {
+  if (!Array.isArray(rows) || opts.truncated) return null;
+  const slack = Number.isFinite(opts.slackMs) ? opts.slackMs : 0;
+  const by = new Map();
+  for (const r of rows) {
+    if (!r || !(r.pid > 1) || !(r.ppid > 0) || !Number.isFinite(r.startMs) || by.has(r.pid)) return null;
+    by.set(r.pid, r);
+  }
+  const top = by.get(Number(root.pid));
+  if (!top) return null;
+  if (Number.isFinite(root.registeredAtMs) && top.startMs > root.registeredAtMs + ROOT_START_TOLERANCE_MS) return null;
+  if (Number(root.hostPid) > 1 && top.ppid !== Number(root.hostPid)) return null;
+  if (Array.isArray(opts.expect)) {
+    const want = new Set(opts.expect.map(Number));
+    if (want.size !== by.size - 1 || [...want].some((p) => !by.has(p) || p === top.pid)) return null;
+  }
+  const ok = new Set([top.pid]);
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const r of by.values()) {
+      if (ok.has(r.pid) || !ok.has(r.ppid)) continue;
+      if (r.startMs < by.get(r.ppid).startMs - slack) return null;
+      ok.add(r.pid); changed = true;
+    }
+  }
+  if (ok.size !== by.size || ok.size < 2) return null;
+  const parents = new Set([...by.values()].map((r) => r.ppid));
+  const leaves = [...by.values()].filter((r) => r.pid !== top.pid && !parents.has(r.pid))
+    .sort((a, b) => a.pid - b.pid);
+  if (!leaves.length || leaves.some((r) => !Number.isFinite(r.cpuMs) || r.cpuMs < 0)) return null;
+  return {
+    cpuMs: leaves.reduce((a, r) => a + r.cpuMs, 0),
+    pids: leaves.map((r) => r.pid),
+    // Baseline key: root and leaf identities (pid + creation time), not bare pids.
+    key: [top.pid + "@" + top.startMs, ...leaves.map((r) => r.pid + "@" + r.startMs)].join(","),
+    probe: PROBE_VERSION,
+  };
 }
 
 // Newest registered backend of this window that is still alive:
-// {pid, registeredAtMs} or null. `owned` is __codexOwnedBackendPids.
-function latestOwnedRoot(owned, isAlive) {
+// {pid, registeredAtMs, hostPid} or null. `owned` is __codexOwnedBackendPids.
+function latestOwnedRoot(owned, isAlive, hostPid) {
   if (!(owned instanceof Map)) return null;
   let best = null;
   for (const [key, entry] of owned) {
@@ -53,16 +88,16 @@ function latestOwnedRoot(owned, isAlive) {
     if (best && at <= best.registeredAtMs) continue;
     let alive = false;
     try { alive = !!isAlive(pid); } catch { alive = false; }
-    if (alive) best = { pid, registeredAtMs: at };
+    if (alive) best = { pid, registeredAtMs: at, hostPid: Number(hostPid) > 1 ? Number(hostPid) : null };
   }
   return best;
 }
 
-function runText(execFile, file, args, timeoutMs, okCodes) {
+function runText(execFile, file, args, timeoutMs, okCodes, env) {
   return new Promise((resolve) => {
     if (!(timeoutMs > 0)) return resolve(null);
     try {
-      execFile(file, args, { timeout: timeoutMs, windowsHide: true, maxBuffer: 1 << 20 },
+      execFile(file, args, { timeout: timeoutMs, windowsHide: true, maxBuffer: 1 << 20, env },
         (err, stdout) => {
           if (err && !(okCodes && okCodes.includes(err.code))) return resolve(null);
           resolve(String(stdout || ""));
@@ -71,71 +106,90 @@ function runText(execFile, file, args, timeoutMs, okCodes) {
   });
 }
 
-function parseRows(text, allowed) {
+// `ps -o pid=,ppid=,time=,lstart=` (LC_ALL=C): "20 10 1:02.50 Wed Nov  4 15:22:23 2026"
+function parseUnixRows(text) {
   const rows = [];
   for (const line of String(text || "").split(/\r?\n/)) {
-    const f = line.trim().split(/\s+/);
-    if (f.length < 3) continue;
-    const pid = Number(f[0]), ppid = Number(f[1]);
-    const cpuMs = /^\d+$/.test(f[2]) ? Number(f[2]) : parseCpuTime(f[2]);
-    if (pid > 1 && ppid > 0 && (!allowed || allowed.has(pid))) rows.push({ pid, ppid, cpuMs });
+    const m = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(\w{3}\s+\w{3}\s+\d+\s+\d\d:\d\d:\d\d\s+\d{4})\s*$/.exec(line);
+    if (!m) { if (line.trim()) return null; continue; }
+    const startMs = Date.parse(m[4].replace(/\s+/g, " "));
+    rows.push({ pid: Number(m[1]), ppid: Number(m[2]), cpuMs: parseCpuTime(m[3]), startMs });
   }
   return rows;
 }
 
-// macOS / Linux: pgrep -P walks only our own tree, then one ps for pid/ppid/time.
+// macOS / Linux: pgrep -P discovers our tree level by level, then ONE ps snapshot
+// of root + every discovered pid is verified by verifyTree (ppid + lstart).
 async function sampleUnix(root, execFile, timeoutMs, now) {
   const deadline = now() + timeoutMs, left = () => deadline - now();
-  const et = await runText(execFile, "ps", ["-o", "etime=", "-p", String(root.pid)], left());
-  const etMs = parseCpuTime(et);
-  if (etMs == null) return null;
-  if (Number.isFinite(root.registeredAtMs) &&
-      now() - etMs > root.registeredAtMs + ROOT_START_TOLERANCE_MS) return null; // pid reused
   const found = new Set();
-  let level = [root.pid];
-  for (let d = 0; d < MAX_DEPTH && level.length && found.size < MAX_PIDS; d++) {
+  let level = [Number(root.pid)], truncated = false;
+  for (let d = 0; level.length; d++) {
     const out = await runText(execFile, "pgrep", ["-P", level.join(",")], left(), [1]);
     if (out == null) return null;
-    level = out.split(/\s+/).map(Number).filter((p) => p > 1 && p !== root.pid && !found.has(p));
-    for (const p of level.slice(0, MAX_PIDS - found.size)) found.add(p);
+    level = out.split(/\s+/).map(Number).filter((p) => p > 1 && p !== Number(root.pid) && !found.has(p));
+    if (!level.length) break;
+    if (d >= MAX_DEPTH || found.size + level.length > MAX_PIDS) { truncated = true; break; }
+    for (const p of level) found.add(p);
   }
-  if (!found.size) return null;
-  const ps = await runText(execFile, "ps", ["-o", "pid=,ppid=,time=", "-p", [...found].join(",")], left(), [1]);
-  if (ps == null) return null;
-  return leafCpu(parseRows(ps, found), root.pid);
+  if (truncated || !found.size) return null;
+  const env = Object.assign({}, process.env, { LC_ALL: "C", LANG: "C" });
+  const ps = await runText(execFile, "ps", ["-o", "pid=,ppid=,time=,lstart=", "-p",
+    [Number(root.pid), ...found].join(",")], left(), [1], env);
+  const rows = ps == null ? null : parseUnixRows(ps);
+  return rows ? verifyTree(rows, root, { expect: [...found], slackMs: START_SLACK_MS_UNIX }) : null;
 }
 
-// Windows: one bounded powershell. Children older than their parent are a stale
-// ParentProcessId and are skipped; CPU = KernelModeTime + UserModeTime.
+// Windows: ONE Win32_Process snapshot (no parent can change between queries),
+// walked from the root inside the script. A child created before its parent is a
+// stale ParentProcessId and is not ours. Prints "T" when the walk was truncated,
+// then "pid ppid createdMs cpuMs" rows (root first). No command lines.
 function windowsScript(root) {
-  const reg = Number.isFinite(root.registeredAtMs) ? Math.round(root.registeredAtMs) : -1;
   return [
     "$ErrorActionPreference='Stop'",
-    `$root=${Number(root.pid)};$reg=${reg};$tol=${ROOT_START_TOLERANCE_MS}`,
-    "$r=Get-CimInstance Win32_Process -Filter \"ProcessId=$root\"",
-    "if(-not $r){exit 3}",
-    "$rc=([DateTimeOffset]$r.CreationDate).ToUnixTimeMilliseconds()",
-    "if($reg -ge 0 -and $rc -gt $reg+$tol){exit 4}",
-    "$level=@(@{p=$root;c=$rc});$n=0",
-    `for($d=0;$d -lt ${MAX_DEPTH} -and $level.Count -gt 0 -and $n -lt ${MAX_PIDS};$d++){$next=@()`,
-    " foreach($q in $level){foreach($c in @(Get-CimInstance Win32_Process -Filter \"ParentProcessId=$($q.p)\")){",
-    "  $cc=([DateTimeOffset]$c.CreationDate).ToUnixTimeMilliseconds();if($cc -lt $q.c){continue}",
-    `  $n++;if($n -gt ${MAX_PIDS}){break}`,
-    "  $ms=[math]::Round(([double]$c.KernelModeTime+[double]$c.UserModeTime)/10000)",
-    "  \"$($c.ProcessId) $($q.p) $ms\";$next+=@{p=$c.ProcessId;c=$cc}}}",
+    `$root=${Number(root.pid)}`,
+    "$all=@(Get-CimInstance Win32_Process)",
+    "$by=@{};$kids=@{}",
+    "foreach($p in $all){$by[[int]$p.ProcessId]=$p;$k=[int]$p.ParentProcessId;if(-not $kids.ContainsKey($k)){$kids[$k]=New-Object System.Collections.ArrayList};[void]$kids[$k].Add($p)}",
+    "if(-not $by.ContainsKey($root)){exit 3}",
+    "function Ms($p){([DateTimeOffset]$p.CreationDate).ToUnixTimeMilliseconds()}",
+    "function Cpu($p){[math]::Round(([double]$p.KernelModeTime+[double]$p.UserModeTime)/10000)}",
+    "$r=$by[$root];$out=@(\"$($r.ProcessId) $($r.ParentProcessId) $(Ms $r) $(Cpu $r)\")",
+    "$level=@($r);$n=0;$trunc=$false",
+    "for($d=0;$level.Count -gt 0;$d++){$next=@()",
+    " foreach($q in $level){if(-not $kids.ContainsKey([int]$q.ProcessId)){continue}",
+    "  foreach($c in $kids[[int]$q.ProcessId]){if([int]$c.ProcessId -eq [int]$q.ProcessId){continue};if((Ms $c) -lt (Ms $q)){continue}",
+    `   if($d -ge ${MAX_DEPTH} -or $n -ge ${MAX_PIDS}){$trunc=$true;continue}`,
+    "   $n++;$out+=\"$($c.ProcessId) $($c.ParentProcessId) $(Ms $c) $(Cpu $c)\";$next+=$c}}",
     " $level=$next}",
+    "if($trunc){'T'}",
+    "$out",
   ].join("\n");
+}
+
+function parseWindowsRows(text) {
+  const rows = [];
+  let truncated = false;
+  for (const line of String(text || "").split(/\r?\n/)) {
+    const t = line.trim();
+    if (!t) continue;
+    if (t === "T") { truncated = true; continue; }
+    const f = t.split(/\s+/);
+    if (f.length !== 4 || !f.every((x) => /^\d+$/.test(x))) return null;
+    rows.push({ pid: Number(f[0]), ppid: Number(f[1]), startMs: Number(f[2]), cpuMs: Number(f[3]) });
+  }
+  return { rows, truncated };
 }
 
 async function sampleWindows(root, execFile, timeoutMs) {
   const encoded = Buffer.from(windowsScript(root), "utf16le").toString("base64");
   const out = await runText(execFile, "powershell.exe",
     ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded], timeoutMs);
-  if (out == null) return null;
-  return leafCpu(parseRows(out, null), root.pid);
+  const parsed = out == null ? null : parseWindowsRows(out);
+  return parsed ? verifyTree(parsed.rows, root, { truncated: parsed.truncated, slackMs: 0 }) : null;
 }
 
-// Returns async () => {cpuMs, pids, rootPid} | null. Never throws.
+// Returns async () => {cpuMs, pids, key, probe, rootPid} | null. Never throws.
 function createOwnedTreeCpuProbe(options = {}) {
   const platform = options.platform || process.platform;
   const execFile = options.execFile || childProcess.execFile;
@@ -155,8 +209,8 @@ function createOwnedTreeCpuProbe(options = {}) {
 }
 
 module.exports = {
-  parseCpuTime, leafCpu, latestOwnedRoot, parseRows,
-  windowsScript, createOwnedTreeCpuProbe,
+  parseCpuTime, verifyTree, latestOwnedRoot, parseUnixRows, parseWindowsRows,
+  windowsScript, createOwnedTreeCpuProbe, PROBE_VERSION,
   DEFAULT_SAMPLE_TIMEOUT_MS, DEFAULT_SAMPLE_TIMEOUT_MS_WIN32, MAX_DEPTH, MAX_PIDS,
-  ROOT_START_TOLERANCE_MS,
+  ROOT_START_TOLERANCE_MS, START_SLACK_MS_UNIX,
 };
