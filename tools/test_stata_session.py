@@ -578,7 +578,7 @@ class ListCloseTests(Base):
             sent.append((pid, sig))
             if pid not in table:
                 raise ProcessLookupError(pid)
-            if sig == ss.signal.SIGKILL or not ignore_term:
+            if sig == ss.SIG_KILL or not ignore_term:
                 table.pop(pid)
         clock = iter(range(0, 100000))
         s = self.sessions(leftovers=lambda dirs: [{"pid": p, "command": "python"} for p in sorted(table)],
@@ -600,11 +600,11 @@ class ListCloseTests(Base):
         s, sent = self.orphan_world(table)
         r = s.close("p1")
         self.assertEqual(r["orphanWorkers"], [{"pid": 25045, "startedAt": "Thu Nov 5 02:52:08 2026", "ended": True, "reason": "orphaned-sigterm"}])
-        self.assertEqual(sent, [(25045, ss.signal.SIGTERM)])
+        self.assertEqual(sent, [(25045, ss.SIG_TERM)])
         table = {25045: {"ppid": 24709, "lstart": "Thu Nov 5 02:52:08 2026", "cwd": ws, "command": spawn}}
         s, sent = self.orphan_world(table, ignore_term=True)
         r = s.close("p1")
-        self.assertEqual(sent, [(25045, ss.signal.SIGTERM), (25045, ss.signal.SIGKILL)])
+        self.assertEqual(sent, [(25045, ss.SIG_TERM), (25045, ss.SIG_KILL)])
         self.assertEqual((r["orphanWorkers"][0]["ended"], r["orphanWorkers"][0]["reason"]), (True, "orphaned-sigkill"))
 
     def test_close_never_signals_a_reused_pid_a_foreign_cwd_or_a_non_worker(self):
@@ -726,7 +726,7 @@ class ListCloseTests(Base):
     def test_real_kill_is_a_normal_quit(self):
         with patch.object(ss.os, "kill") as k:
             self.sessions()._real_kill(321)
-        k.assert_called_once_with(321, ss.signal.SIGTERM)
+        k.assert_called_once_with(321, ss.SIG_TERM)
         with patch.object(ss.subprocess, "run") as run:
             self.sessions(platform="win32")._real_kill(321)
         self.assertEqual(run.call_args.args[0], ["taskkill", "/PID", "321"])

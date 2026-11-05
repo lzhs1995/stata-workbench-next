@@ -15,8 +15,8 @@
       "bytes": 43580
     },
     "scripts/static_windows_gate.js": {
-      "sha256": "b336894535ef43dbaeb89f587fa34fc40f8a5e0e3928624650b44e4af3b54785",
-      "bytes": 6759
+      "sha256": "dd44f06d799611361a40172b84a7ef4c2a6fca50bf00479b295baa4bc4dab3f1",
+      "bytes": 6863
     },
     "scripts/stata_source_compat_core.js": {
       "sha256": "7682ca890f407f473c88abdf339adaaa40bd90bd6b9dd48835294cf023d68803",

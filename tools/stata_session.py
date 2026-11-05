@@ -206,6 +206,9 @@ def public(record):
 
 
 # V3-W2：Stata worker 类进程（mcp-stata 服务端、multiprocessing spawn worker、resource_tracker）的命令行特征。
+# Windows 的 Python 没有 SIGKILL；这条路径只在 Unix 走，常量按平台取
+SIG_TERM = signal.SIGTERM
+SIG_KILL = getattr(signal, "SIGKILL", signal.SIGTERM)
 WORKER_CMD_RE = re.compile(r"multiprocessing\.spawn import spawn_main|multiprocessing\.resource_tracker|-m mcp_stata\b")
 
 
@@ -351,7 +354,7 @@ class Sessions:
                 rec["reason"] = reason
                 out.append(rec)
                 continue
-            for sig, label in ((signal.SIGTERM, "orphaned-sigterm"), (signal.SIGKILL, "orphaned-sigkill")):
+            for sig, label in ((SIG_TERM, "orphaned-sigterm"), (SIG_KILL, "orphaned-sigkill")):
                 try:
                     self._signal(before["pid"], sig)
                 except ProcessLookupError:
