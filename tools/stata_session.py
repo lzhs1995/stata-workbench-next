@@ -13,6 +13,7 @@ visible / accepted-not-visible / prepare-only）、不等 bridge、不激活窗�
 verified_workbench.py --status --session <名字> 核身份。close 只对该配置目录的 VS Code 主进程发普通退出
 （macOS SIGTERM，Windows taskkill 不带 /F），从不强杀。Windows 运行时用整份复制，尚未实机验证。
 """
+import inspect
 import argparse
 from contextlib import ExitStack, contextmanager
 import errno
@@ -205,12 +206,51 @@ def public(record):
     return {k: v for k, v in record.items() if k != "token"}
 
 
+# V3-W2：Stata worker 类进程（mcp-stata 服务端、multiprocessing spawn worker、resource_tracker）的命令行特征。
+# Windows 的 Python 没有 SIGKILL；这条路径只在 Unix 走，常量按平台取
+SIG_TERM = signal.SIGTERM
+SIG_KILL = getattr(signal, "SIGKILL", signal.SIGTERM)
+WORKER_CMD_RE = re.compile(r"multiprocessing\.spawn import spawn_main|multiprocessing\.resource_tracker|-m mcp_stata\b")
+# V3-W3（复审 R5）：close 的残留检查有总时限、候选数上限，每次子进程读取只给剩余预算
+ORPHAN_CLOSE_BUDGET = 8.0
+ORPHAN_STEP_TIMEOUT = 4.0
+ORPHAN_MAX_CANDIDATES = 16
+# V3-W4（复审 B2）：report 阶段给最后一次占用扫描留出的时间
+ORPHAN_FINAL_SCAN_RESERVE = 2.0
+
+
+def is_inside(directory, path):
+    try:
+        rel = os.path.relpath(os.path.realpath(path), os.path.realpath(directory))
+    except ValueError:
+        return False
+    return rel == "." or not (rel == ".." or rel.startswith(".." + os.sep) or os.path.isabs(rel))
+
+
+def orphan_reason(before, now, ws):
+    """记下的身份 before 与此刻 now 比：只有完全一致、已被收养（ppid 1）、cwd 仍在本会话 ws 下才返回 orphaned。
+    V3-W3：close 已改为只报告，这个判定不再用来决定发信号（保留给诊断与测试）。"""
+    if not before or not before.get("lstart") or not before.get("cwd"):
+        return "identity-unknown"
+    if now.get("lstart") != before["lstart"]:
+        return "pid-reused"
+    if now.get("cwd") != before["cwd"]:
+        return "cwd-changed"
+    if not is_inside(ws, now["cwd"]):
+        return "cwd-outside-session"
+    if not WORKER_CMD_RE.search(now.get("command") or ""):
+        return "not-a-worker"
+    if now.get("ppid") != 1:
+        return "not-orphaned"
+    return "orphaned"
+
+
 class Sessions:
     """所有外部动作（启动、进程查找、信号、端口探测、磁盘、时钟）都可注入，测试不真开 VS Code。"""
 
     def __init__(self, root=None, platform=None, code=None, run=None, popen=None, instances=None, alive=None,
                  port_free=port_free, kill=None, sleep=time.sleep, clock=time.monotonic, disk_free=None, environ=None,
-                 now=time.time, launch_wait=LAUNCH_VISIBLE_WAIT):
+                 now=time.time, launch_wait=LAUNCH_VISIBLE_WAIT, leftovers=None, identity=None, signal=None):
         self.root = Path(root) if root else state_root()
         self.platform = platform or sys.platform
         self.environ = dict(os.environ if environ is None else environ)
@@ -225,6 +265,17 @@ class Sessions:
         self.now = now
         self.launch_wait = launch_wait
         self.disk_free = disk_free or (lambda p: shutil.disk_usage(p).free)
+        self._leftovers = leftovers or self._real_leftovers
+        try:
+            self._leftovers_takes_deadline = "deadline" in inspect.signature(self._leftovers).parameters
+        except (TypeError, ValueError):
+            self._leftovers_takes_deadline = False
+        self._identity = identity or self._real_identity
+        try:
+            self._identity_takes_timeout = len(inspect.signature(self._identity).parameters) >= 2
+        except (TypeError, ValueError):
+            self._identity_takes_timeout = False
+        self._signal = signal or (lambda pid, sig: os.kill(pid, sig))
 
     @property
     def profiles(self):
@@ -237,6 +288,193 @@ class Sessions:
 
     def _real_instances(self, profile):
         return [row["pid"] for row in host.adapter(profile, self.code, 0).code_instances()]
+
+    def _real_leftovers(self, dirs, deadline=None):
+        """V3-W2：还开着这些目录（本会话 ws、mcp-temp）的进程 [{pid, command}]，只读。
+        Stata worker 是 mcp-stata 服务端的 multiprocessing spawn 子进程；force reset/关窗只结束服务端，
+        服务端没走正常退出时 worker 被 launchd 收养（ppid 1）继续跑。只在 Unix 查（lsof +d 不递归）。
+        V3-W4（复审 B1/B2）：None = 查不了或没查完。lsof 退出码 0 解析；1 且无输出、无 stderr = 没人占用；
+        其余（含 stderr 警告、超时）都是 None。deadline（self.clock 的绝对时间）给定时，每次 lsof 只用剩余时间，
+        时间用完不再启动新的 lsof。"""
+        if self.platform == "win32":
+            return None
+        rows = {}
+        for d in dirs:
+            if not Path(d).is_dir():
+                continue
+            timeout = 30.0 if deadline is None else min(30.0, deadline - self.clock())
+            if timeout <= 0:
+                return None
+            try:
+                proc = subprocess.run(["lsof", "-Fpc", "+d", str(d)], capture_output=True, text=True, timeout=timeout)
+            except (OSError, subprocess.SubprocessError):
+                return None
+            out = proc.stdout or ""
+            if proc.returncode not in (0, 1) or (proc.stderr or "").strip() or (proc.returncode == 1 and out.strip()):
+                return None
+            pid = None
+            for line in out.splitlines():
+                if line.startswith("p") and line[1:].isdigit():
+                    pid = int(line[1:])
+                    rows.setdefault(pid, {"pid": pid, "command": None})
+                elif line.startswith("c") and pid is not None:
+                    rows[pid]["command"] = line[1:][:40]
+        return sorted(rows.values(), key=lambda r: r["pid"])
+
+    def _real_identity(self, pid, timeout=10.0):
+        """三态（V3-W3，复审 R3）：{"state": "PRESENT", pid, ppid, lstart, cwd, command} / {"state": "ABSENT"} /
+        {"state": "UNKNOWN", "why": ...}。读失败、超时、退出码异常、解析不了都是 UNKNOWN，不当成已退出。只读。"""
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return {"state": "ABSENT"}
+        except PermissionError:
+            pass
+        except OSError:
+            return {"state": "UNKNOWN", "why": "probe"}
+        # V3-W4（复审 B2）：timeout 是 ps 与 lsof 两次读取合起来的预算，每次只给剩余时间
+        end = self.clock() + max(0.0, float(timeout))
+        if end - self.clock() <= 0:
+            return {"state": "UNKNOWN", "why": "budget"}
+        env = {**os.environ, "LC_ALL": "C", "LANG": "C"}
+        try:
+            proc = subprocess.run(["ps", "-o", "pid=,ppid=,lstart=,command=", "-p", str(pid)], capture_output=True,
+                                  text=True, timeout=end - self.clock(), env=env)
+        except (OSError, subprocess.SubprocessError):
+            return {"state": "UNKNOWN", "why": "ps"}
+        line = proc.stdout.strip()
+        m = re.match(r"^\s*(\d+)\s+(\d+)\s+(\w{3}\s+\w{3}\s+\d+\s+\d\d:\d\d:\d\d\s+\d{4})\s+(.*)$", line)
+        if proc.returncode not in (0, 1) or (line and not m):
+            return {"state": "UNKNOWN", "why": "ps:exit" if proc.returncode not in (0, 1) else "ps:parse"}
+        if not m or int(m.group(1)) != pid:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return {"state": "ABSENT"}
+            except OSError:
+                pass
+            return {"state": "UNKNOWN", "why": "ps:missing"}
+        cwd, cwd_why = None, None
+        left = end - self.clock()
+        if left <= 0:
+            cwd_why = "budget"
+        else:
+            try:
+                lp = subprocess.run(["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"], capture_output=True, text=True,
+                                    timeout=left)
+                # V3-W5：只有退出码 0 的 n 行才算读到 cwd；其余退出码即使带了 n 行也是没读完
+                # V3-W6（复审 R1）：退出码 0 但 stderr 有内容（如 partial read 警告）也不采信 stdout
+                if lp.returncode != 0:
+                    cwd_why = "lsof:exit"
+                elif (lp.stderr or "").strip():
+                    cwd_why = "lsof:stderr"
+                else:
+                    cwd = next((line[1:] for line in (lp.stdout or "").splitlines() if line.startswith("n")), None)
+                    if cwd is None:
+                        cwd_why = "lsof:empty"
+            except subprocess.TimeoutExpired:
+                cwd_why = "lsof:timeout"
+            except (OSError, subprocess.SubprocessError):
+                cwd_why = "lsof"
+        ident = {"state": "PRESENT", "pid": pid, "ppid": int(m.group(2)), "lstart": " ".join(m.group(3).split()),
+                 "cwd": cwd, "command": m.group(4)[:200]}
+        if cwd_why:
+            ident["cwdWhy"] = cwd_why
+        return ident
+
+    def identity_now(self, pid, timeout):
+        """注入的 identity 可以只返回旧格式（dict 或 None）：dict 当 PRESENT，None 当 ABSENT（测试用）；异常一律 UNKNOWN。"""
+        try:
+            r = self._identity(pid, timeout) if self._identity_takes_timeout else self._identity(pid)
+        except Exception:  # noqa: BLE001
+            return {"state": "UNKNOWN", "why": "read-threw"}
+        if r is None:
+            return {"state": "ABSENT"}
+        if isinstance(r, dict) and "state" not in r:
+            return {"state": "PRESENT", **r}
+        return r if isinstance(r, dict) else {"state": "UNKNOWN", "why": "read"}
+
+    def worker_identities(self, name, deadline):
+        """关窗前，本会话 ws 下 Stata worker 类进程的身份，只用来报告（V3-W3：close 路径不发信号，见 report_orphans）。
+        返回 (identities, unresolved)；identities 为 None = 整体读不到。候选最多 ORPHAN_MAX_CANDIDATES 个。"""
+        ws = self.root / "ws" / name
+        if deadline - self.clock() <= 0:
+            return None, [{"pid": None, "startedAt": None, "ended": False, "unresolved": True, "reason": "close-timeout:discovery"}]
+        rows = self.scan_holders([ws], deadline)
+        if rows is None:   # 查不了或没查完（V3-W4 复审 B1）：不能当作没有 worker
+            return None, []
+        out, unresolved = [], []
+        for row in rows[:ORPHAN_MAX_CANDIDATES]:
+            left = deadline - self.clock()
+            if left <= 0:
+                unresolved.append({"pid": row["pid"], "startedAt": None, "ended": False, "unresolved": True, "reason": "close-timeout"})
+                continue
+            ident = self.identity_now(row["pid"], min(ORPHAN_STEP_TIMEOUT, left))
+            if ident["state"] == "UNKNOWN":
+                unresolved.append({"pid": row["pid"], "startedAt": None, "ended": False, "unresolved": True,
+                                   "reason": "identity-unknown:" + str(ident.get("why") or "read")})
+            elif ident["state"] == "PRESENT" and WORKER_CMD_RE.search(ident.get("command") or ""):
+                if not ident.get("cwd"):   # V3-W4（复审 B1）：worker 类进程还在、cwd 读不到 -> unresolved，不丢
+                    unresolved.append({"pid": row["pid"], "startedAt": ident.get("lstart"), "ended": False, "unresolved": True,
+                                       "reason": "cwd-unreadable:" + str(ident.get("cwdWhy") or "read")})
+                elif is_inside(ws, ident["cwd"]):
+                    out.append(ident)
+        if len(rows) > ORPHAN_MAX_CANDIDATES:
+            unresolved.append({"pid": None, "startedAt": None, "ended": False, "unresolved": True,
+                               "reason": f"too-many-candidates:{len(rows)}"})
+        return out, unresolved
+    def scan_holders(self, dirs, deadline=None):
+        """占用这些目录的进程；None = 查不了或没查完。注入的 _leftovers 不收 deadline 时照旧调用（测试用）。"""
+        try:
+            if self._leftovers_takes_deadline:
+                return self._leftovers(dirs, deadline=deadline)
+            return self._leftovers(dirs)
+        except Exception:  # noqa: BLE001
+            return None
+
+    def report_orphans(self, captured, deadline, settle=6.0):
+        """V3-W3（复审 R1/R3/R5）：close 路径只报告、不发 TERM/KILL。
+        关窗前记下的身份（pid+lstart+cwd）不能证明进程属于本会话（cwd 和命令行只能缩小范围），所以这里不结束任何进程。
+        先给服务端最多 settle 秒自己退出（正常退出会带走 worker），然后逐个复查：
+        已退出或 pid 已换成别的进程 -> 不列出；还在 -> unresolved（ppid 1 记 orphaned）；读不到 -> unresolved。
+        所有读取共用一个总截止时间，过了截止时间的身份记 close-timeout。"""
+        settle_end = min(deadline - ORPHAN_FINAL_SCAN_RESERVE, self.clock() + settle)
+        last = {}
+        while True:
+            pending = False
+            for c in captured:
+                left = min(settle_end, deadline) - self.clock()
+                if left <= 0:
+                    pending = True
+                    break
+                now = self.identity_now(c["pid"], min(ORPHAN_STEP_TIMEOUT, left))
+                last[c["pid"]] = now
+                if not (now["state"] == "ABSENT" or (now["state"] == "PRESENT" and now.get("lstart") != c.get("lstart"))):
+                    pending = True
+            if not pending or self.clock() >= settle_end:
+                break
+            self.sleep(min(0.5, max(0.0, settle_end - self.clock())))
+        out = []
+        for c in captured:
+            now = last.get(c["pid"])
+            rec = {"pid": c["pid"], "startedAt": c.get("lstart"), "ended": False, "unresolved": True}
+            if now is None:
+                rec["reason"] = "close-timeout"
+            elif now["state"] == "ABSENT" or (now["state"] == "PRESENT" and now.get("lstart") != c.get("lstart")):
+                continue
+            elif now["state"] == "UNKNOWN":
+                rec["reason"] = "identity-unknown:" + str(now.get("why") or "read")
+            else:
+                rec["reason"] = "still-running:orphaned" if now.get("ppid") == 1 else "still-running"
+            out.append(rec)
+        return out
+
+    def leftovers(self, name, deadline=None):
+        """关窗后仍占用本会话工作目录或 mcp-temp 的进程；None = 本平台不查、查不了或没在时限内查完。只报告，不发信号。"""
+        profile = self.profile(name)
+        if deadline is not None and deadline - self.clock() <= 0:
+            return None
+        return self.scan_holders([self.root / "ws" / name, profile / "mcp-temp"], deadline)
 
     def instances(self, profile):
         """该配置目录（精确的 --user-data-dir）下的 VS Code 主进程 pid。"""
@@ -565,6 +803,9 @@ class Sessions:
         if not pids:
             return {"verdict": "NOT_RUNNING", "name": name, "signalled": [], "removedRegistryFiles": self._remove_dead_records(name),
                     "removedTmpFiles": self._remove_orphan_tmp()}
+        # V3-W2：先记下本会话 worker 类进程的身份（关窗前）；Windows 由 rc.7.82 结束整棵树，这里不处理
+        # V3-W3：close 路径只报告不发信号（复审 R1：cwd/命令行不能证明归属）；读取有总时限（R5），读不到的列为 unresolved（R3）
+        captured, unread = (None, []) if self.platform == "win32" else self.worker_identities(name, self.clock() + ORPHAN_CLOSE_BUDGET)
         for pid in pids:
             self.kill(pid)
         deadline = self.clock() + wait
@@ -572,8 +813,25 @@ class Sessions:
             if not self.instances(profile):
                 removed = self._remove_dead_records(name)
                 if not any(r.get("sessionName") == name for r in self.records()):
-                    return {"verdict": "CLOSED", "name": name, "signalled": pids, "removedRegistryFiles": removed,
-                            "removedTmpFiles": self._remove_orphan_tmp()}
+                    result = {"verdict": "CLOSED", "name": name, "signalled": pids, "removedRegistryFiles": removed,
+                              "removedTmpFiles": self._remove_orphan_tmp()}
+                    report_end = self.clock() + ORPHAN_CLOSE_BUDGET
+                    if self.platform != "win32":
+                        workers = (unread + self.report_orphans(captured, report_end) if captured is not None else
+                                   unread or [{"pid": None, "startedAt": None, "ended": False, "unresolved": True, "reason": "identity-unreadable"}])
+                        result["orphanWorkers"] = workers
+                    # V3-W4（复审 B1/B2）：最后一次占用扫描也在 report 的时限内；clean 要等所有观察都做完再定
+                    left = self.leftovers(name, report_end) if self.platform != "win32" else self.leftovers(name)
+                    result["leftoverProcesses"] = left
+                    if self.platform != "win32":
+                        holders = "unknown" if left is None else ("none" if not left else f"present:{len(left)}")
+                        result["orphanCleanup"] = {"mode": "report-only", "signalled": [],
+                                                   "clean": not workers and holders == "none",
+                                                   "unresolved": len(workers), "holders": holders}
+                    if left:
+                        result["note"] = ("VS Code closed, but these processes still hold this session's workspace or mcp-temp; "
+                                          "close only reports them and signals nothing beyond the VS Code instance")
+                    return result
             self.sleep(0.5)
         return {"verdict": "CLOSE_PENDING", "name": name, "signalled": pids, "removedTmpFiles": self._remove_orphan_tmp(),
                 "note": "normal quit was requested; VS Code may be waiting on an unsaved-changes prompt; nothing was force-killed"}

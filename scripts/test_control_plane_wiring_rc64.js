@@ -104,7 +104,19 @@ assert.ok(iRecovery >= 0, "trueReady 缺恢复门禁引用");
 assert.ok(iReadiness >= 0, "trueReady 缺图形就绪判定");
 assert.ok(iRecovery < iReadiness, "恢复门禁必须先于图形就绪判定");
 
-const forceReset = windowFrom("globalThis.__codexForceReset=async", 7000);
+// rc.7.89 在 force reset 开头插入孤儿 worker 记录（约 1.3 KB），darwin 分支被挤出固定 7000 窗口。
+// 与上面 trueReady 同法：按大括号配平取整个 force reset 函数体，不依赖魔数窗口。
+const forceReset = (function () {
+  const head = "globalThis.__codexForceReset=async o=>";
+  const at = text.indexOf(head);
+  assert.ok(at >= 0, `missing wiring anchor: ${head}`);
+  let depth = 0, i = text.indexOf("{", at + head.length);
+  for (; i < text.length; i++) {
+    if (text[i] === "{") depth++;
+    else if (text[i] === "}") { depth--; if (depth === 0) { i++; break; } }
+  }
+  return text.slice(at, i);
+})();
 assert.ok(forceReset.includes('process.platform==="win32"'));
 assert.ok(forceReset.includes('process.platform==="darwin"'));
 assert.ok(forceReset.includes("__codexOwnedBackendPids"));

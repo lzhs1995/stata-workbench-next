@@ -12,7 +12,7 @@ import tempfile
 import threading
 import time
 import unittest
-from contextlib import redirect_stdout
+from contextlib import contextmanager, redirect_stdout
 from unittest.mock import Mock, patch
 
 import stata_session as ss
@@ -82,9 +82,10 @@ class Base(unittest.TestCase):
                     else "C:/VSCode/Code.exe",
                     instances=lambda profile: self.running.get(Path(profile).name, []),
                     alive=lambda pid: True, port_free=lambda port: True, sleep=Mock(), disk_free=lambda p: 10**12,
-                    environ={"SystemRoot": "C:\\Windows"}, launch_wait=0)
+                    environ={"SystemRoot": "C:\\Windows"}, launch_wait=0, leftovers=lambda dirs: [],
+                    identity=lambda pid: None, signal=Mock())
         args.update(kw)
-        return ss.Sessions(**args)
+        return getattr(self, "mod", ss).Sessions(**args)
 
 
 class OpenTests(Base):
@@ -553,6 +554,198 @@ class ListCloseTests(Base):
         with self.assertRaisesRegex(ss.SessionError, "SESSION_UNKNOWN"):
             s.close("never")
 
+    def test_close_reports_processes_still_holding_the_session_and_signals_nothing_else(self):
+        # V3-W2：force reset 后旧 Stata worker 被 launchd 收养，关窗后仍占着本会话目录；close 要如实报告
+        seen = []
+        s = self.sessions(leftovers=lambda dirs: (seen.append([str(d) for d in dirs]),
+                                                  [{"pid": 25045, "command": "python3.11"}])[1])
+        s.open("p1", runtime_source=self.source, launch=False)
+        self.running["p1"] = [501]
+        killed = []
+        s.kill = lambda pid: (killed.append(pid), self.running.pop("p1"))
+        r = s.close("p1")
+        self.assertEqual((r["verdict"], killed), ("CLOSED", [501]), "only the VS Code instance is signalled")
+        self.assertEqual(r["leftoverProcesses"], [{"pid": 25045, "command": "python3.11"}])
+        self.assertIn("signals nothing beyond the VS Code instance", r["note"])
+        self.assertEqual(seen, [[str(self.root / "ws" / "p1")],
+                                [str(self.root / "ws" / "p1"), str(self.root / "profiles" / "p1" / "mcp-temp")]])
+        self.assertEqual(r["orphanWorkers"], [], "the leftover is not a recorded worker identity: never signalled")
+
+    def orphan_world(self, table, ignore_term=False):
+        """table: pid -> {ppid, lstart, cwd, command}；signal 像系统那样改表。返回 (Sessions, 发出的信号)。"""
+        sent = []
+        def signal_(pid, sig):
+            sent.append((pid, sig))
+            if pid not in table:
+                raise ProcessLookupError(pid)
+            if sig == 9 or not ignore_term:
+                table.pop(pid)
+        clock = iter(range(0, 100000))
+        # lsof +d 的替身：只列 cwd 在这些目录里的进程（V3-W4：clean 也看最后一次占用扫描）
+        s = self.sessions(leftovers=lambda dirs: [{"pid": p, "command": "python"} for p in sorted(table)
+                                                  if any(ss.is_inside(str(d), table[p].get("cwd") or "/") for d in dirs)],
+                          identity=lambda pid: ({"pid": pid, **table[pid]} if pid in table else None),
+                          signal=signal_, clock=lambda: next(clock))
+        s.open("p1", runtime_source=self.source, launch=False)
+        self.running["p1"] = [501]
+        def quit_(pid):
+            self.running.pop("p1")
+            for row in table.values():   # 服务端被关、没带走 worker：worker 被 launchd 收养
+                row["ppid"] = 1
+        s.kill = quit_
+        return s, sent
+
+    # V3-W3（复审 R1/R3/R5）：close 只报告、不发信号；三态读取；总时限
+    def test_close_reports_an_orphaned_worker_and_signals_nothing(self):
+        ws = str(self.root / "ws" / "p1")
+        spawn = "/py/python3.11 -B -s -c from multiprocessing.spawn import spawn_main; spawn_main(tracker_fd=8)"
+        table = {25045: {"ppid": 24709, "lstart": "Thu Nov 5 02:52:08 2026", "cwd": ws, "command": spawn}}
+        s, sent = self.orphan_world(table)
+        r = s.close("p1")
+        self.assertEqual(sent, [], "close never signals a worker (ownership is not provable from cwd/command)")
+        self.assertEqual(r["orphanWorkers"], [{"pid": 25045, "startedAt": "Thu Nov 5 02:52:08 2026", "ended": False,
+                                               "unresolved": True, "reason": "still-running:orphaned"}])
+        self.assertEqual(r["orphanCleanup"], {"mode": "report-only", "signalled": [], "clean": False, "unresolved": 1,
+                                              "holders": "present:1"})
+
+    def test_close_never_signals_an_unrelated_python_worker_in_the_same_cwd_or_another_sessions_worker(self):
+        ws = str(self.root / "ws" / "p1")
+        spawn = "/py/python3.11 -c from multiprocessing.spawn import spawn_main; spawn_main(...)"
+        # 用户自己的 Python spawn 进程、另一个会话的 worker，cwd 都在本会话 ws 下、ppid 1：都只报告
+        table = {999: {"ppid": 1, "lstart": "Thu Nov 5 01:00:00 2026", "cwd": ws, "command": spawn},
+                 31000: {"ppid": 1, "lstart": "Thu Nov 5 01:30:00 2026", "cwd": ws, "command": "/py/python3 -m mcp_stata"}}
+        s, sent = self.orphan_world(table)
+        r = s.close("p1")
+        self.assertEqual(sent, [])
+        self.assertEqual(sorted((w["pid"], w["ended"], w["unresolved"]) for w in r["orphanWorkers"]), [(999, False, True), (31000, False, True)])
+        self.assertFalse(r["orphanCleanup"]["clean"])
+
+    def test_close_reports_gone_or_replaced_workers_as_clean(self):
+        ws = str(self.root / "ws" / "p1")
+        spawn = "/py/python3.11 -c from multiprocessing.spawn import spawn_main; spawn_main(...)"
+        for label, after in (("exited", lambda t: t.pop(25045)),
+                             ("pid replaced", lambda t: t[25045].update(lstart="Thu Nov 5 06:00:00 2026", cwd="/elsewhere"))):
+            table = {25045: {"ppid": 24709, "lstart": "Thu Nov 5 02:52:08 2026", "cwd": ws, "command": spawn}}
+            s, sent = self.orphan_world(table)
+            orig = s.kill
+            s.kill = lambda pid, orig=orig, after=after, table=table: (orig(pid), after(table))
+            r = s.close("p1")
+            self.assertEqual((sent, r["orphanWorkers"], r["orphanCleanup"]["clean"]), ([], [], True), label)
+
+    def test_close_read_failures_are_unresolved_not_clean(self):
+        ws = str(self.root / "ws" / "p1")
+        spawn = "/py/python3.11 -c from multiprocessing.spawn import spawn_main; spawn_main(...)"
+        base = {"ppid": 24709, "lstart": "Thu Nov 5 02:52:08 2026", "cwd": ws, "command": spawn}
+        # 关窗前能读、关窗后读失败（超时/退出码/异常）：unresolved，不能当已退出
+        for label, failing in (("timeout", {"state": "UNKNOWN", "why": "ps:timeout"}), ("nonzero exit", {"state": "UNKNOWN", "why": "ps:exit"}),
+                               ("raised", RuntimeError("ps vanished"))):
+            table = {25045: dict(base)}
+            calls = []
+            def ident(pid, timeout, table=table, failing=failing, calls=calls):
+                calls.append(pid)
+                if len(calls) > 1:
+                    if isinstance(failing, Exception):
+                        raise failing
+                    return failing
+                return {"state": "PRESENT", "pid": pid, **table[pid]}
+            s, sent = self.orphan_world(table)
+            s._identity, s._identity_takes_timeout = ident, True
+            r = s.close("p1")
+            self.assertEqual(sent, [], label)
+            self.assertEqual(len(r["orphanWorkers"]), 1, label)
+            w = r["orphanWorkers"][0]
+            self.assertTrue(w["unresolved"] and not w["ended"] and w["reason"].startswith("identity-unknown"), (label, w))
+            self.assertFalse(r["orphanCleanup"]["clean"], label)
+        # 关窗前就读不到：capture 记 unresolved 行
+        table = {25045: dict(base)}
+        s, sent = self.orphan_world(table)
+        s._identity, s._identity_takes_timeout = (lambda pid, timeout: {"state": "UNKNOWN", "why": "probe"}), True
+        r = s.close("p1")
+        self.assertEqual([(w["pid"], w["unresolved"], w["reason"]) for w in r["orphanWorkers"]], [(25045, True, "identity-unknown:probe")])
+
+    def test_close_orphan_check_has_an_overall_time_limit(self):
+        ws = str(self.root / "ws" / "p1")
+        spawn = "/py/python3.11 -c from multiprocessing.spawn import spawn_main; spawn_main(...)"
+        table = {p: {"ppid": 24709, "lstart": "Thu Nov 5 02:52:08 2026", "cwd": ws, "command": spawn} for p in range(25000, 25040)}
+        t = [0.0]
+        s, sent = self.orphan_world(table)
+        s.clock = lambda: t[0]
+        s.sleep = lambda sec: t.__setitem__(0, t[0] + sec)
+        budgets = []
+        def slow(pid, timeout):
+            budgets.append(timeout)
+            t[0] += min(timeout, 20.0)   # 每次读取都用满给它的预算（最多 20 s）
+            return {"state": "PRESENT", "pid": pid, **table[pid]} if pid in table else {"state": "ABSENT"}
+        s._identity, s._identity_takes_timeout = slow, True
+        start = t[0]
+        r = s.close("p1", wait=1)
+        self.assertEqual(sent, [])
+        self.assertTrue(all(b <= ss.ORPHAN_STEP_TIMEOUT for b in budgets), "each read gets at most the step budget")
+        self.assertLessEqual(t[0] - start, 2 * ss.ORPHAN_CLOSE_BUDGET + 1 + 1, "capture + report each bounded; close wait 1 s")
+        reasons = [w["reason"] for w in r["orphanWorkers"]]
+        self.assertTrue(any(x == "close-timeout" for x in reasons) and any(x.startswith("too-many-candidates") for x in reasons), reasons)
+        self.assertFalse(r["orphanCleanup"]["clean"])
+        self.assertLessEqual(len(set(p for p in budgets)), ss.ORPHAN_MAX_CANDIDATES + 1)
+
+    def test_report_orphans_is_bounded_by_its_deadline(self):
+        t = [0.0]
+        s = self.sessions(clock=lambda: t[0], sleep=lambda sec: t.__setitem__(0, t[0] + sec))
+        reads = []
+        def slow(pid, timeout):
+            reads.append(pid)
+            t[0] += timeout
+            return {"state": "PRESENT", "pid": pid, "ppid": 1, "lstart": "L"}
+        s._identity, s._identity_takes_timeout = slow, True
+        captured = [{"pid": p, "lstart": "L"} for p in range(30)]
+        out = s.report_orphans(captured, t[0] + 8.0, settle=6.0)
+        self.assertLessEqual(t[0], 8.0 + 1e-9, "settle + report never pass the deadline")
+        self.assertLess(len(reads), 30)
+        self.assertEqual(len(out), 30)
+        self.assertTrue(all(w["unresolved"] and not w["ended"] for w in out))
+
+    def test_capture_reads_at_most_the_candidate_cap(self):
+        t = [0.0]
+        s = self.sessions(clock=lambda: t[0], leftovers=lambda dirs: [{"pid": p, "command": "python"} for p in range(100)])
+        reads = []
+        s._identity, s._identity_takes_timeout = (lambda pid, timeout: reads.append(pid) or {"state": "ABSENT"}), True
+        ids, unread = s.worker_identities("p1", 1e9)
+        self.assertEqual(len(reads), ss.ORPHAN_MAX_CANDIDATES)
+        self.assertTrue(any(w["reason"].startswith("too-many-candidates") for w in unread))
+
+    def test_orphan_reason_rules(self):
+        ws = "/h/ws/p1"
+        b = {"pid": 9, "lstart": "L", "cwd": ws, "command": "python -m mcp_stata"}
+        self.assertEqual(ss.orphan_reason(b, {**b, "ppid": 1}, ws), "orphaned")
+        self.assertEqual(ss.orphan_reason(b, {**b, "ppid": 77}, ws), "not-orphaned")
+        self.assertEqual(ss.orphan_reason({**b, "cwd": None}, {**b, "ppid": 1}, ws), "identity-unknown")
+        self.assertEqual(ss.orphan_reason({**b, "cwd": "/h/ws/p10"}, {**b, "cwd": "/h/ws/p10", "ppid": 1}, ws), "cwd-outside-session")
+        self.assertTrue(ss.is_inside(ws, ws + "/sub") and not ss.is_inside(ws, "/h/ws/p10"))
+
+    def test_close_leftover_check_failure_keeps_the_verdict(self):
+        def boom(dirs):
+            raise RuntimeError("lsof missing")
+        s = self.sessions(leftovers=boom)
+        s.open("p1", runtime_source=self.source, launch=False)
+        self.running["p1"] = [501]
+        s.kill = lambda pid: self.running.pop("p1")
+        r = s.close("p1")
+        self.assertEqual((r["verdict"], r["leftoverProcesses"]), ("CLOSED", None))
+        self.assertEqual(r["orphanWorkers"], [{"pid": None, "startedAt": None, "ended": False, "unresolved": True, "reason": "identity-unreadable"}])
+        self.assertFalse(r["orphanCleanup"]["clean"])
+        self.assertNotIn("note", r)
+
+    def test_close_clean_reports_an_empty_leftover_list(self):
+        s = self.sessions()
+        s.open("p1", runtime_source=self.source, launch=False)
+        self.running["p1"] = [501]
+        s.kill = lambda pid: self.running.pop("p1")
+        r = s.close("p1")
+        self.assertEqual((r["verdict"], r["leftoverProcesses"]), ("CLOSED", []))
+        self.assertNotIn("note", r)
+
+    def test_real_leftover_check_is_unix_only(self):
+        self.assertIsNone(ss.Sessions(root=self.root, platform="win32", code="C:/VSCode/Code.exe")._real_leftovers([self.root]))
+
     def test_close_that_does_not_finish_is_reported_not_forced(self):
         clock = iter(range(0, 1000, 5))
         s = self.sessions(clock=lambda: next(clock))
@@ -637,6 +830,305 @@ class ListCloseTests(Base):
         s.clock = lambda: next(clock)
         with redirect_stdout(io.StringIO()):
             self.assertEqual(ss.main(["close", "p1", "--wait", "1"], sessions=s), 2)
+
+
+SPAWN_CMD = "/py/python3.11 -B -s -c from multiprocessing.spawn import spawn_main; spawn_main(tracker_fd=8)"
+LSTART = "Thu Nov  5 02:52:08 2026"
+
+
+class RealAdapterCloseTests(Base):
+    """V3-W5（复审 B1/B2）：走真实的 _real_leftovers / _real_identity，只替换 subprocess.run、os.kill 和时钟。
+    mod 可换成变异过的模块（MutantTests 用），所以这里一律写 self.mod，不写 ss。"""
+    mod = ss
+
+    def world(self, name, procs, cost=None, override=None, on_quit=None):
+        """procs: pid -> {ppid, cwd, command}；假 lsof/ps 照这张表回答。
+        cost(kind, timeout, phase) = 这次调用耗的模拟秒数（默认 0）；耗时 >= timeout 时抛 TimeoutExpired（像真的超时）。
+        override: kind -> CompletedProcess 字段 dict 或异常，kind 为 dir / ps / cwd。
+        返回 (Sessions, calls, t, patched)；calls 里是 (kind, 开始时刻, timeout, phase)，patched() 套住要替换的调用。"""
+        t, calls, state = [0.0], [], {"phase": "capture"}
+        override = {} if override is None else override
+        def kind_of(argv):
+            return "ps" if argv[0] == "ps" else ("dir" if "+d" in argv else "cwd")
+        def answer(kind, argv):
+            if kind == "dir":
+                d = argv[argv.index("+d") + 1]
+                rows = [p for p in sorted(procs) if procs[p].get("cwd") and self.mod.is_inside(d, procs[p]["cwd"])]
+                out = "".join(f"p{p}\ncpython3.11\n" for p in rows)
+                return (0 if rows else 1), out
+            pid = int(argv[argv.index("-p") + 1])
+            if pid not in procs:
+                return 1, ""
+            if kind == "ps":
+                return 0, f"{pid:>6} {procs[pid]['ppid']:>6} {LSTART} {procs[pid]['command']}\n"
+            return 0, f"p{pid}\nfcwd\nn{procs[pid]['cwd']}\n"
+        def run(argv, **kw):
+            kind, timeout = kind_of(argv), kw.get("timeout")
+            calls.append((kind, t[0], timeout, state["phase"]))
+            spent = (cost or (lambda k, to, ph: 0.0))(kind, timeout, state["phase"])
+            if timeout is not None and spent >= timeout:
+                t[0] += timeout
+                raise subprocess.TimeoutExpired(argv, timeout)
+            t[0] += spent
+            o = override.get(kind)
+            if isinstance(o, BaseException):
+                raise o
+            rc, out = answer(kind, argv)
+            res = {"returncode": rc, "stdout": out, "stderr": ""}
+            res.update(o or {})
+            return subprocess.CompletedProcess(argv, res["returncode"], res["stdout"], res["stderr"])
+        def kill(pid, sig):
+            if pid not in procs:
+                raise ProcessLookupError(pid)
+        s = self.sessions(leftovers=None, identity=None, clock=lambda: t[0], sleep=lambda sec: t.__setitem__(0, t[0] + sec))
+        s.open(name, runtime_source=self.source, launch=False)
+        (self.root / "ws" / name).mkdir(parents=True, exist_ok=True)
+        self.running[name] = [501]
+        def quit_(pid):
+            self.running.pop(name)
+            state["phase"] = "report"
+            calls.append(("quit", t[0], None, "report"))
+            for row in procs.values():   # 服务端被关、没带走 worker：worker 被 launchd 收养
+                row["ppid"] = 1
+            if on_quit:
+                on_quit(procs, override)
+        s.kill = quit_
+        patched = lambda: _patched(run, kill, self.mod)
+        return s, calls, t, patched
+
+    def worker(self, name):
+        return {999: {"ppid": 24709, "cwd": str(self.root / "ws" / name), "command": SPAWN_CMD}}
+
+    def test_real_close_keeps_a_live_worker_with_unreadable_cwd_unresolved(self):
+        # Codex 复审 B1 的复现：pid 999 是 worker、cwd 读不到（lsof 超时/退出码/空/异常）。以前 clean=true
+        cases = (("timeout", None, "lsof:timeout"),
+                 ("exit 2", {"returncode": 2, "stdout": ""}, "lsof:exit"),
+                 ("exit 1 with a stale n line", {"returncode": 1}, "lsof:exit"),
+                 ("exit 0 without n", {"stdout": "p999\nfcwd\n"}, "lsof:empty"),
+                 ("exit 0 with a stderr warning", {"stderr": "lsof: WARNING: partial read\n"}, "lsof:stderr"),
+                 ("raised", OSError("lsof missing"), "lsof"))
+        for i, (label, o, why) in enumerate(cases):
+            name = f"c{i}"
+            procs = self.worker(name)
+            cost = (lambda k, to, ph: to if (k == "cwd" and ph == "capture") else 0.0) if o is None else None
+            s, calls, t, patched = self.world(name, procs, cost=cost, override={} if o is None else {"cwd": o})
+            with patched():
+                r = s.close(name)
+            self.assertEqual(r["verdict"], "CLOSED", label)
+            self.assertEqual(r["orphanWorkers"], [{"pid": 999, "startedAt": "Thu Nov 5 02:52:08 2026", "ended": False,
+                                                   "unresolved": True, "reason": "cwd-unreadable:" + why}], label)
+            self.assertEqual(r["orphanCleanup"], {"mode": "report-only", "signalled": [], "clean": False, "unresolved": 1,
+                                                  "holders": "present:1"}, label)
+            self.assertEqual([p["pid"] for p in r["leftoverProcesses"]], [999], label)
+
+    def test_real_close_partial_cwd_read_is_unresolved_even_when_the_worker_leaves_the_ws(self):
+        # Codex 第 4 轮 R1 的复现：cwd lsof 带回一行 n/outside/session，但 rc 0 带 stderr 警告或 rc 2，都是没读完。
+        # 关窗时 worker 把 cwd 挪出 ws，最后一次目录扫描为空；worker 仍在（999 in procs），所以不能报 clean
+        outside = str(self.root / "outside" / "session")
+        cases = (("exit 0 + stderr warning", {"returncode": 0, "stderr": "lsof: WARNING: partial read\n"}, "lsof:stderr"),
+                 ("exit 2 control", {"returncode": 2, "stderr": ""}, "lsof:exit"))
+        for i, (label, o, why) in enumerate(cases):
+            name = f"r{i}"
+            procs = self.worker(name)
+            def move_out(procs, ov):
+                procs[999]["cwd"] = outside
+            s, calls, t, patched = self.world(name, procs, override={"cwd": {**o, "stdout": f"p999\nfcwd\nn{outside}\n"}},
+                                              on_quit=move_out)
+            with patched():
+                r = s.close(name)
+            self.assertIn(999, procs, label + ": the worker is still alive")
+            self.assertEqual(r["verdict"], "CLOSED", label)
+            self.assertEqual(r["orphanWorkers"], [{"pid": 999, "startedAt": "Thu Nov 5 02:52:08 2026", "ended": False,
+                                                   "unresolved": True, "reason": "cwd-unreadable:" + why}], label)
+            self.assertEqual(r["leftoverProcesses"], [], label + ": the final scan is empty")
+            self.assertEqual(r["orphanCleanup"], {"mode": "report-only", "signalled": [], "clean": False, "unresolved": 1,
+                                                  "holders": "none"}, label)
+
+    def test_real_close_discovery_failure_is_unknown_not_clean(self):
+        # 复审 B1：lsof 退出码 2、空输出曾被当成「没人占用」
+        cases = (("exit 2 empty", {"returncode": 2, "stdout": ""}), ("stderr warning", {"stderr": "lsof: WARNING: can't stat()\n"}),
+                 ("exit 1 with output", {"returncode": 1}), ("raised", OSError("no lsof")))
+        for i, (label, o) in enumerate(cases):
+            name = f"d{i}"
+            s, calls, t, patched = self.world(name, self.worker(name), override={"dir": o})
+            with patched():
+                r = s.close(name)
+            self.assertEqual(r["orphanWorkers"], [{"pid": None, "startedAt": None, "ended": False, "unresolved": True,
+                                                   "reason": "identity-unreadable"}], label)
+            self.assertIsNone(r["leftoverProcesses"], label)
+            self.assertEqual((r["orphanCleanup"]["clean"], r["orphanCleanup"]["holders"]), (False, "unknown"), label)
+            self.assertFalse([c for c in calls if c[0] in ("ps", "cwd")], "nothing is read about candidates nobody listed")
+
+    def test_real_leftovers_is_three_state(self):
+        name = "l1"
+        procs = self.worker(name)
+        ws = self.root / "ws" / name
+        cases = (("held", {}, [{"pid": 999, "command": "python3.11"}]),
+                 ("nobody", {"returncode": 1, "stdout": ""}, []),
+                 ("exit 1 with output", {"returncode": 1}, None),
+                 ("exit 2", {"returncode": 2, "stdout": ""}, None),
+                 ("stderr only", {"stderr": "lsof: WARNING\n"}, None),
+                 ("raised", OSError("x"), None))
+        override = {}
+        s, calls, t, patched = self.world(name, procs, override=override)
+        with patched():
+            for label, o, want in cases:
+                override["dir"] = o
+                self.assertEqual(s._real_leftovers([ws]), want, label)
+            override.clear()
+            calls.clear()
+            self.assertEqual(s._real_leftovers([self.root / "ws" / "missing"]), [], "a missing directory is not a lookup")
+            self.assertIsNone(s._real_leftovers([ws], deadline=t[0]), "no budget left: nothing starts, result unknown")
+            self.assertEqual(calls, [], "neither call started lsof")
+
+    def test_real_close_clean_needs_a_successful_final_scan(self):
+        gone = lambda procs, ov: procs.pop(999)
+        name = "f0"
+        s, calls, t, patched = self.world(name, self.worker(name), on_quit=gone)
+        with patched():
+            r = s.close(name)
+        self.assertEqual((r["orphanWorkers"], r["leftoverProcesses"]), ([], []), "positive control")
+        self.assertEqual(r["orphanCleanup"], {"mode": "report-only", "signalled": [], "clean": True, "unresolved": 0, "holders": "none"})
+        cases = (("final scan exit 2", lambda procs, ov: (gone(procs, ov), ov.__setitem__("dir", {"returncode": 2, "stdout": ""})), None),
+                 ("final scan timed out", gone, lambda k, to, ph: to if (k == "dir" and ph == "report") else 0.0))
+        for i, (label, on_quit, cost) in enumerate(cases):
+            name = f"f{i + 1}"
+            s, calls, t, patched = self.world(name, self.worker(name), cost=cost, on_quit=on_quit)
+            with patched():
+                r = s.close(name)
+            self.assertEqual((r["orphanWorkers"], r["leftoverProcesses"]), ([], None), label)
+            self.assertEqual((r["orphanCleanup"]["clean"], r["orphanCleanup"]["holders"]), (False, "unknown"), label)
+            quit_at = next(c[1] for c in calls if c[0] == "quit")
+            self.assertLessEqual(t[0] - quit_at, self.mod.ORPHAN_CLOSE_BUDGET + 1e-9, label + ": final scan inside the report budget")
+
+    def test_real_discovery_stays_inside_its_deadline(self):
+        # Codex 复现：worker_identities('s1', deadline=8) 以前跑满 lsof 固定的 30 s
+        name = "w1"
+        s, calls, t, patched = self.world(name, self.worker(name), cost=lambda k, to, ph: to)
+        with patched():
+            start = t[0]
+            self.assertEqual(s.worker_identities(name, start + 8), (None, []))
+            self.assertLessEqual(t[0] - start, 8 + 1e-9)
+            self.assertEqual([(c[0], c[2]) for c in calls], [("dir", 8.0)])
+            calls.clear()
+            self.assertEqual(s.worker_identities(name, t[0]), (None, [{"pid": None, "startedAt": None, "ended": False,
+                                                                       "unresolved": True, "reason": "close-timeout:discovery"}]))
+            self.assertEqual(calls, [], "past the deadline nothing starts")
+
+    def test_real_identity_splits_one_budget_between_ps_and_lsof(self):
+        # Codex 复现：_real_identity(999, timeout=4) 以前给 ps 和 lsof 各 4 s，共 8 s
+        name = "i1"
+        plan = {}
+        s, calls, t, patched = self.world(name, self.worker(name), cost=lambda k, to, ph: plan.get(k, lambda x: 0.0)(to))
+        with patched():
+            plan.update(ps=lambda to: to)
+            start = t[0]
+            r = s._real_identity(999, timeout=4)
+            self.assertEqual((r["state"], r["why"]), ("UNKNOWN", "ps"))
+            self.assertEqual([(c[0], c[2]) for c in calls], [("ps", 4.0)])
+            self.assertLessEqual(t[0] - start, 4 + 1e-9)
+            calls.clear()
+            plan.update(ps=lambda to: 1.5, cwd=lambda to: to)
+            start = t[0]
+            r = s._real_identity(999, timeout=4)
+            self.assertEqual((r["state"], r["cwd"], r["cwdWhy"]), ("PRESENT", None, "lsof:timeout"))
+            self.assertEqual([(c[0], c[2]) for c in calls], [("ps", 4.0), ("cwd", 2.5)], "lsof gets only what ps left")
+            self.assertLessEqual(t[0] - start, 4 + 1e-9)
+
+    def test_real_close_path_stays_inside_both_budgets(self):
+        # 40 个 worker；关窗前读取便宜，关窗后每次读取都用满给它的时间：两段各自不超过 ORPHAN_CLOSE_BUDGET
+        name = "b1"
+        ws = str(self.root / "ws" / name)
+        procs = {p: {"ppid": 24709, "cwd": ws, "command": SPAWN_CMD} for p in range(25000, 25040)}
+        cost = lambda k, to, ph: 0.01 if ph == "capture" else to
+        s, calls, t, patched = self.world(name, procs, cost=cost)
+        with patched():
+            start = t[0]
+            r = s.close(name, wait=1)
+        budget = self.mod.ORPHAN_CLOSE_BUDGET
+        quit_at = next(c[1] for c in calls if c[0] == "quit")
+        for kind, at, timeout, phase in calls:
+            if kind == "quit":
+                continue
+            end = start + budget if phase == "capture" else quit_at + budget
+            self.assertLess(at, end, (kind, at, phase, "nothing starts at or past its phase deadline"))
+            self.assertLessEqual(at + timeout, end + 1e-9, (kind, at, timeout, phase))
+        self.assertLessEqual(quit_at - start, budget + 1e-9)
+        self.assertLessEqual(t[0] - quit_at, budget + 1e-9)
+        reasons = sorted({w["reason"] for w in r["orphanWorkers"]})
+        self.assertEqual(reasons, ["close-timeout", "identity-unknown:ps", "too-many-candidates:40"], reasons)
+        self.assertEqual((r["orphanCleanup"]["clean"], r["orphanCleanup"]["holders"]), (False, "unknown"))
+
+    def test_real_identity_ps_failures_are_unknown(self):
+        name = "p1"
+        override = {}
+        s, calls, t, patched = self.world(name, self.worker(name), override=override)
+        cases = (("exit 2", {"returncode": 2, "stdout": ""}, "ps:exit"), ("garbage", {"stdout": "999 what\n"}, "ps:parse"),
+                 ("raised", OSError("no ps"), "ps"), ("not listed, still alive", {"returncode": 1, "stdout": ""}, "ps:missing"))
+        with patched():
+            for label, o, why in cases:
+                override["ps"] = o
+                r = s._real_identity(999, timeout=4)
+                self.assertEqual((r["state"], r.get("why")), ("UNKNOWN", why), label)
+            override.clear()
+            self.assertEqual(s._real_identity(4242, timeout=4), {"state": "ABSENT"})
+            with patch.object(self.mod.os, "kill", side_effect=OSError(errno.EINVAL, "bad")):
+                self.assertEqual(s._real_identity(999, timeout=4), {"state": "UNKNOWN", "why": "probe"})
+
+
+@contextmanager
+def _patched(run, kill, mod):
+    with patch.object(mod.subprocess, "run", side_effect=run), patch.object(mod.os, "kill", side_effect=kill):
+        yield
+
+
+def load_variant(source, name):
+    """把改过的 stata_session 源码装成一个独立模块（不动已导入的 ss）。"""
+    import types
+    module = types.ModuleType(name)
+    module.__file__ = ss.__file__
+    exec(compile(source, ss.__file__, "exec"), module.__dict__)
+    return module
+
+# V3-W5：每个新守卫都要有一个测试在它被拿掉时失败（旧, 新）。源码里旧串必须恰好出现一次。
+CLOSE_GUARD_MUTANTS = (
+    ("leftovers: rc/stderr ignored",
+     'if proc.returncode not in (0, 1) or (proc.stderr or "").strip() or (proc.returncode == 1 and out.strip()):',
+     "if False:"),
+    ("leftovers: stderr ignored", 'or (proc.stderr or "").strip() or (proc.returncode == 1', "or (proc.returncode == 1"),
+    ("leftovers: exit 1 with output accepted", " or (proc.returncode == 1 and out.strip()):", ":"),
+    ("leftovers: fixed 30 s timeout", "timeout = 30.0 if deadline is None else min(30.0, deadline - self.clock())",
+     "timeout = 30.0"),
+    ("leftovers: starts with no budget left", "            if timeout <= 0:\n                return None\n", ""),
+    ("capture: live worker without cwd dropped", "if not ident.get(\"cwd\"):   # V3-W4", "if not ident.get(\"cwd\"):\n                    continue  # V3-W4"),
+    ("capture: unreadable discovery read as empty", "        if rows is None:   # 查不了", "        if rows is None:\n            rows = []\n        if False:   # 查不了"),
+    ("capture: no early deadline check", "        if deadline - self.clock() <= 0:\n            return None, [", "        if False:\n            return None, ["),
+    ("close: clean ignores the final scan", 'not workers and holders == "none"', "not workers"),
+    ("close: final scan outside the report budget", "self.leftovers(name, report_end) if", "self.leftovers(name) if"),
+    ("identity: lsof gets the whole budget", "timeout=left)", "timeout=float(timeout))"),
+    ("identity: cwd accepted on any exit code", "if lp.returncode != 0:", "if lp.returncode not in (0, 1):"),
+    ("identity: cwd stderr ignored", '                elif (lp.stderr or "").strip():\n                    cwd_why = "lsof:stderr"\n', ""),
+    ("identity: ps exit code ignored without output", "if proc.returncode not in (0, 1) or (line and not m):", "if line and not m:"),
+)
+
+
+class CloseGuardMutantTests(unittest.TestCase):
+    def test_every_close_guard_is_needed(self):
+        source = Path(ss.__file__).read_text(encoding="utf-8")
+        names = sorted(n for n in dir(RealAdapterCloseTests) if n.startswith("test_"))
+        def failures(mod):
+            Variant = type("Variant", (RealAdapterCloseTests,), {"mod": mod})
+            suite = unittest.TestSuite(Variant(n) for n in names)
+            result = unittest.TestResult()
+            suite.run(result)
+            return len(result.failures) + len(result.errors)
+        self.assertEqual(failures(load_variant(source, "stata_session_unmutated")), 0, "the unmutated copy passes")
+        survived = []
+        for label, old, new in CLOSE_GUARD_MUTANTS:
+            self.assertEqual(source.count(old), 1, label)
+            if failures(load_variant(source.replace(old, new), "stata_session_mutant")) == 0:
+                survived.append(label)
+        self.assertEqual(survived, [], "every mutant is caught")
 
 
 class HelperTests(unittest.TestCase):
