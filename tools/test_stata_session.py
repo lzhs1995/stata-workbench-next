@@ -578,7 +578,7 @@ class ListCloseTests(Base):
             sent.append((pid, sig))
             if pid not in table:
                 raise ProcessLookupError(pid)
-            if sig == ss.SIG_KILL or not ignore_term:
+            if sig == 9 or not ignore_term:
                 table.pop(pid)
         clock = iter(range(0, 100000))
         s = self.sessions(leftovers=lambda dirs: [{"pid": p, "command": "python"} for p in sorted(table)],
@@ -593,6 +593,9 @@ class ListCloseTests(Base):
         s.kill = quit_
         return s, sent
 
+    # 这条路径只在 Unix 走；Windows 的 Python 没有 SIGKILL（SIG_KILL 回落成 SIGTERM），测试固定两个不同的值
+    @patch.object(ss, "SIG_TERM", 15)
+    @patch.object(ss, "SIG_KILL", 9)
     def test_close_ends_an_exactly_matching_orphaned_worker_term_then_kill(self):
         ws = str(self.root / "ws" / "p1")
         spawn = "/py/python3.11 -B -s -c from multiprocessing.spawn import spawn_main; spawn_main(tracker_fd=8)"
@@ -600,13 +603,15 @@ class ListCloseTests(Base):
         s, sent = self.orphan_world(table)
         r = s.close("p1")
         self.assertEqual(r["orphanWorkers"], [{"pid": 25045, "startedAt": "Thu Nov 5 02:52:08 2026", "ended": True, "reason": "orphaned-sigterm"}])
-        self.assertEqual(sent, [(25045, ss.SIG_TERM)])
+        self.assertEqual(sent, [(25045, 15)])
         table = {25045: {"ppid": 24709, "lstart": "Thu Nov 5 02:52:08 2026", "cwd": ws, "command": spawn}}
         s, sent = self.orphan_world(table, ignore_term=True)
         r = s.close("p1")
-        self.assertEqual(sent, [(25045, ss.SIG_TERM), (25045, ss.SIG_KILL)])
+        self.assertEqual(sent, [(25045, 15), (25045, 9)])
         self.assertEqual((r["orphanWorkers"][0]["ended"], r["orphanWorkers"][0]["reason"]), (True, "orphaned-sigkill"))
 
+    @patch.object(ss, "SIG_TERM", 15)
+    @patch.object(ss, "SIG_KILL", 9)
     def test_close_never_signals_a_reused_pid_a_foreign_cwd_or_a_non_worker(self):
         ws = str(self.root / "ws" / "p1")
         spawn = "/py/python3.11 -B -s -c from multiprocessing.spawn import spawn_main; spawn_main(tracker_fd=8)"
