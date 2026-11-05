@@ -3475,5 +3475,9 @@ text = require("./apply_windows_kill_scope_patch").patchBundle(text, { finalize:
 // rc.7.87: the "Running <name> [Cancel]" progress toast of a person's Run File /
 // Run Selection covers the Terminal Stop button; its Cancel now goes through Terminal Stop.
 text = require("./apply_progress_cancel_stop_patch").patchBundle(text, { finalize: false });
+// V3-W2 D5: /status shows the watchdog's worker CPU counters (read only).
+text = require("./apply_watchdog_cpu_status_patch").patchBundle(text, { finalize: false });
+// V3-W2: a macOS/Linux force reset ends this session's orphaned Stata worker (exact identity only).
+text = require("./apply_orphan_worker_reap_patch").patchBundle(text, { finalize: false });
 fs.writeFileSync(target, text, "utf8");
 console.log(baseAlreadyApplied ? "RC7_SHARED_EXECUTION_UPDATED" : "RC7_SHARED_EXECUTION_APPLIED", target);

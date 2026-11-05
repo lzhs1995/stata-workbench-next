@@ -20,7 +20,7 @@ const ROOT_START_TOLERANCE_MS = 5000;
 // needed; a clock that went backwards is rejected too. Same-second pid reuse is
 // still beyond lstart precision: this narrows pid reuse, it does not rule it out.
 const START_SLACK_MS_UNIX = 0;
-const PROBE_VERSION = "rc.7.84-v2";
+const PROBE_VERSION = "rc.7.88-v3";
 
 // ps time / etime: [[dd-]hh:]mm:ss[.cc]  ->  milliseconds, or null.
 function parseCpuTime(text) {
@@ -101,16 +101,20 @@ function latestOwnedRoot(owned, isAlive, hostPid) {
   return best;
 }
 
-function runText(execFile, file, args, timeoutMs, okCodes, env) {
+// rc.7.88：失败时在 why.kind 留一个短标签（命令名 + 超时/退出/启动失败），不含路径与输出
+function runText(execFile, file, args, timeoutMs, okCodes, env, why) {
+  const fail = (kind) => { if (why) why.kind = file + ":" + kind; return null; };
   return new Promise((resolve) => {
-    if (!(timeoutMs > 0)) return resolve(null);
+    if (!(timeoutMs > 0)) return resolve(fail("budget"));
     try {
       execFile(file, args, { timeout: timeoutMs, windowsHide: true, maxBuffer: 1 << 20, env },
         (err, stdout) => {
-          if (err && !(okCodes && okCodes.includes(err.code))) return resolve(null);
+          if (err && !(okCodes && okCodes.includes(err.code))) {
+            return resolve(fail(err.killed || err.signal ? "timeout" : (typeof err.code === "string" ? "spawn" : "exit")));
+          }
           resolve(String(stdout || ""));
         });
-    } catch { resolve(null); }
+    } catch { resolve(fail("spawn")); }
   });
 }
 
@@ -128,24 +132,27 @@ function parseUnixRows(text) {
 
 // macOS / Linux: pgrep -P discovers our tree level by level, then ONE ps snapshot
 // of root + every discovered pid is verified by verifyTree (ppid + lstart).
-async function sampleUnix(root, execFile, timeoutMs, now) {
+async function sampleUnix(root, execFile, timeoutMs, now, why = {}) {
   const deadline = now() + timeoutMs, left = () => deadline - now();
   const found = new Set();
   let level = [Number(root.pid)], truncated = false;
   for (let d = 0; level.length; d++) {
-    const out = await runText(execFile, "pgrep", ["-P", level.join(",")], left(), [1]);
+    const out = await runText(execFile, "pgrep", ["-P", level.join(",")], left(), [1], undefined, why);
     if (out == null) return null;
     level = out.split(/\s+/).map(Number).filter((p) => p > 1 && p !== Number(root.pid) && !found.has(p));
     if (!level.length) break;
     if (d >= MAX_DEPTH || found.size + level.length > MAX_PIDS) { truncated = true; break; }
     for (const p of level) found.add(p);
   }
-  if (truncated || !found.size) return null;
+  if (truncated || !found.size) { why.kind = truncated ? "truncated" : "no-children"; return null; }
   const env = Object.assign({}, process.env, { LC_ALL: "C", LANG: "C" });
   const ps = await runText(execFile, "ps", ["-o", "pid=,ppid=,time=,lstart=", "-p",
-    [Number(root.pid), ...found].join(",")], left(), [1], env);
+    [Number(root.pid), ...found].join(",")], left(), [1], env, why);
   const rows = ps == null ? null : parseUnixRows(ps);
-  return rows ? verifyTree(rows, root, { expect: [...found], slackMs: START_SLACK_MS_UNIX }) : null;
+  if (ps != null && !rows) why.kind = "ps:parse";
+  const v = rows ? verifyTree(rows, root, { expect: [...found], slackMs: START_SLACK_MS_UNIX }) : null;
+  if (rows && !v) why.kind = "verify";
+  return v;
 }
 
 // Windows: ONE Win32_Process snapshot (no parent can change between queries),
@@ -189,15 +196,20 @@ function parseWindowsRows(text) {
   return { rows, truncated };
 }
 
-async function sampleWindows(root, execFile, timeoutMs) {
+async function sampleWindows(root, execFile, timeoutMs, why = {}) {
   const encoded = Buffer.from(windowsScript(root), "utf16le").toString("base64");
   const out = await runText(execFile, "powershell.exe",
-    ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded], timeoutMs);
+    ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded], timeoutMs, null, undefined, why);
   const parsed = out == null ? null : parseWindowsRows(out);
-  return parsed ? verifyTree(parsed.rows, root, { truncated: parsed.truncated, slackMs: 0 }) : null;
+  if (out != null && !parsed) why.kind = "ps:parse";
+  const v = parsed ? verifyTree(parsed.rows, root, { truncated: parsed.truncated, slackMs: 0 }) : null;
+  if (parsed && !v) why.kind = parsed.truncated ? "truncated" : "verify";
+  return v;
 }
 
 // Returns async () => {cpuMs, pids, key, probe, rootPid} | null. Never throws.
+// rc.7.88: after a null, sampleOwnedTreeCpu.lastFailure holds one short label
+// (no-root / <cmd>:timeout|exit|spawn|budget / truncated / no-children / ps:parse / verify / threw).
 function createOwnedTreeCpuProbe(options = {}) {
   const platform = options.platform || process.platform;
   const execFile = options.execFile || childProcess.execFile;
@@ -205,15 +217,19 @@ function createOwnedTreeCpuProbe(options = {}) {
   const timeoutMs = Number.isFinite(options.timeoutMs) ? options.timeoutMs
     : (platform === "win32" ? DEFAULT_SAMPLE_TIMEOUT_MS_WIN32 : DEFAULT_SAMPLE_TIMEOUT_MS);
   const getRoot = typeof options.getRoot === "function" ? options.getRoot : () => null;
-  return async function sampleOwnedTreeCpu() {
+  const sampleOwnedTreeCpu = async function sampleOwnedTreeCpu() {
+    const why = { kind: null };
     try {
       const root = getRoot();
-      if (!root || !(Number(root.pid) > 1)) return null;
-      const sample = platform === "win32" ? await sampleWindows(root, execFile, timeoutMs)
-        : await sampleUnix(root, execFile, timeoutMs, now);
+      if (!root || !(Number(root.pid) > 1)) { sampleOwnedTreeCpu.lastFailure = "no-root"; return null; }
+      const sample = platform === "win32" ? await sampleWindows(root, execFile, timeoutMs, why)
+        : await sampleUnix(root, execFile, timeoutMs, now, why);
+      sampleOwnedTreeCpu.lastFailure = sample ? null : (why.kind || "unknown");
       return sample ? Object.assign(sample, { rootPid: Number(root.pid) }) : null;
-    } catch { return null; }
+    } catch { sampleOwnedTreeCpu.lastFailure = "threw"; return null; }
   };
+  sampleOwnedTreeCpu.lastFailure = null;
+  return sampleOwnedTreeCpu;
 }
 
 module.exports = {
