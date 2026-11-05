@@ -293,9 +293,10 @@ class Sessions:
         """V3-W2：还开着这些目录（本会话 ws、mcp-temp）的进程 [{pid, command}]，只读。
         Stata worker 是 mcp-stata 服务端的 multiprocessing spawn 子进程；force reset/关窗只结束服务端，
         服务端没走正常退出时 worker 被 launchd 收养（ppid 1）继续跑。只在 Unix 查（lsof +d 不递归）。
-        V3-W4（复审 B1/B2）：None = 查不了或没查完。lsof 退出码 0 解析；1 且无输出、无 stderr = 没人占用；
-        其余（含 stderr 警告、超时）都是 None。deadline（self.clock 的绝对时间）给定时，每次 lsof 只用剩余时间，
-        时间用完不再启动新的 lsof。"""
+        V3-W4（复审 B1/B2）：None = 查不了或没查完。deadline（self.clock 的绝对时间）给定时，每次 lsof 只用剩余时间，
+        时间用完不再启动新的 lsof。
+        V3-W7：+d 下目录里每个文件都是查找项，有一个文件没人打开 lsof 就退出 1，占用行照常输出（实测见 V3-W7-REPORT）。
+        所以退出码 0 或 1 且 stderr 为空都解析（1 可以有行也可以没有）；stderr 非空、其他退出码、超时、异常都是 None。"""
         if self.platform == "win32":
             return None
         rows = {}
@@ -310,7 +311,7 @@ class Sessions:
             except (OSError, subprocess.SubprocessError):
                 return None
             out = proc.stdout or ""
-            if proc.returncode not in (0, 1) or (proc.stderr or "").strip() or (proc.returncode == 1 and out.strip()):
+            if proc.returncode not in (0, 1) or (proc.stderr or "").strip():   # V3-W7：rc 1 带行是正常结果
                 return None
             pid = None
             for line in out.splitlines():
