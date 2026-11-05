@@ -175,7 +175,7 @@ Stop）。输出里带 `reasonCode`、`retryable` 和 `retryAfterMs`；因 Stop 
 Stata 已经执行、但报了错的命令（比如 `r(111)`），退出码 2，不会重试。扩展能用本次运行自己的日志和
 mcp-stata 的返回码确认这个报错时，verdict 是 `STATA_ERROR_CONFIRMED`，带 `stataRc`；确认不了就仍是
 `EXECUTION_UNCONFIRMED_NO_RETRY`。两种情况下 Stata 的报错文字都在回执里，报错之前的命令可能已经改了数据。
-这条路径目前只做过离线验证，见[已知限制](#已知限制)。
+这条路径只在 macOS 的 `b82203d` 上做过实机验证，见[已知限制](#已知限制)。
 
 `--session` 接受会话名或会话 id（也可以设 `STATA_WORKBENCH_SESSION`）。只有一个活会话时可以省略，
 有多个时必须给。
@@ -232,7 +232,7 @@ agent 客户端的其他选项：`--list-sessions` 打印注册表；`--events 0
 - 每次 agent 运行之前，会话先给数据存一份运行前检查点。Stop 会把它放回去，人看到的是 agent 开始之前的数据。人自己的运行没有检查点，这时 Stop 会先确认 Stata 已经空闲，数据保持原样。
 - 每次 Stop 都让 `resetGeneration` 加 1，agent 靠它判断自己用过的会话是否被打断过。
 - 应该有检查点但没能恢复时，会话会**锁住**：`/status` 报 `trueReady: false`，之后的运行返回 HTTP 423，状态栏显示 **Stata: STALE**，Terminal 提示没有恢复运行前状态、会话已锁定。
-- 点状态栏的 **Stata: KILL** 解锁：确认一次后，它强制重置本会话自己的后端，再跑经过核验的恢复 smoke（一条固定的 marker 命令，必须 rc 0 且日志里有 marker）。确认即表示接受丢失 Stata 内存里的数据。在 Windows 上，KILL 只结束本窗口的 Stata Workbench 后端（按父进程和创建时间认定的 python/mcp-stata 进程树），不影响其它 VS Code 窗口和你自己打开的 Stata。认不准是不是本窗口的、或确认不了已经结束的进程，它不去结束：会话保持未就绪，提示里列出这些进程的 pid 和启动时间，并给出核对用的 PowerShell 命令；出路是关掉这个 VS Code 窗口、另开一个。关窗不能证明这些进程已经结束。macOS 上 KILL 照旧结束登记的后端 pid。
+- 点状态栏的 **Stata: KILL** 解锁：确认一次后，它强制重置本会话自己的后端，再跑经过核验的恢复 smoke（一条固定的 marker 命令，必须 rc 0 且日志里有 marker）。确认即表示接受丢失 Stata 内存里的数据。在 Windows 上，KILL 只结束本窗口的 Stata Workbench 后端（按父进程和创建时间认定的 python/mcp-stata 进程树），不影响其它 VS Code 窗口和你自己打开的 Stata。认不准是不是本窗口的进程，它不作为结束对象。已经请求结束、但结果或残留检查没能确认时，会话保持未就绪：提示里列出这些进程的 pid 和启动时间，并给出核对用的 PowerShell 命令；出路是关掉这个 VS Code 窗口、另开一个。关窗不能证明这些进程已经结束。macOS 上 KILL 照旧结束登记的后端 pid。
 - 执行看门狗会取消没有日志进展的普通运行：第一行日志出现前 120 s 没动静，或出现后 60 s 没动静（识别为长任务的运行分别是 300 s 和 30 分钟）。第一行日志之后，本窗口自己的 Stata worker 用掉的 CPU 时间也算进展，所以像 `bootstrap … nodots` 这样不输出、但 worker 一直在算的命令不会在 60 s 时被取消。CPU 在跑不等于在做有用的事：一直空转、不输出的运行，最多能占着会话到日志连续 30 分钟没动静为止，想提前结束就按 Stop 或 **Stata: KILL**。读不到或核实不了 worker 的 CPU 时间时，看门狗只按日志规则判断。运行前检查点会被恢复，但看门狗取消之后会话一律锁住，要点 **Stata: KILL** 才能继续。锁定原因会写明是哪种停顿，例如 `EXEC_PRELOG_STALL (IDLE)`；每次取消都记进 `/status.lastGuardFailure`。
 - 后端还在启动、什么都还没发出时按 Stop，命令会被拒绝（`PRE_RUN_BACKEND_START_CANCELLED`），会话不会被锁。
 - 代码已经发出之后才超时的，回包报 `EXEC_OUTCOME_UNKNOWN` 并带 `payloadMayHaveRun: true`，因为代码在 Stata 里可能还会执行。
@@ -244,7 +244,8 @@ agent 客户端的其他选项：`--list-sessions` 打印注册表；`--events 0
 构建指 `main` 的提交：`e7e54848`、`579b0fe9` 和 `171138b6` 都是 `0.2.0-next.5`，`8d63cb45` 是 `0.2.0-next.4`。
 
 11-04 的各行来自两类构建。`aba81779` 是 `v0.2.0-next.5` 发布版。`a1a2832b`（PR #21）、`40abcbea`（PR #20）
-和 `2ec968a`（PR #24）是 PR 的 head，在复审返工和合并之前测的；合并后的 `main` 还没有实机复测。
+和 `2ec968a`（PR #24）是 PR 的 head，在复审返工和合并之前测的。之后 macOS 在 `main` `b0bc49d` 上做了实机复测，
+Stata 报错返回码另在 `b82203d` 上测过；Windows 还没有在合并后的 `main` 上复测。
 
 ### macOS（Apple Silicon，macOS 26.5，StataNow，VS Code 1.139.1）
 
@@ -264,13 +265,15 @@ agent 客户端的其他选项：`--list-sessions` 打印注册表；`--events 0
 | **Stata: KILL** 解锁 | `579b0fe9`，11-02 | 通过。确认一次，恢复 smoke rc 0，下一次运行成功 |
 | 开窗后第一条命令，`loadStataOnStartup` 为 `false`（5 次）和 `true`（2 次） | `aba81779`，11-04 | 通过，7/7 HTTP 200、rc 0，没有在首条日志前卡住。命令先等 Stata 加载完（`false` 11–14 s，`true` 约 7 s，第一次冷启动 61 s），Output 日志先写「Waiting for Stata to finish loading…」，再写「finished loading after N s」 |
 | Stata 还在加载时交的命令：按 Stop、超时、worker 失败 | `aba81779`，11-04 | 通过。等待中按 Stop：HTTP 409 `PRE_RUN_BACKEND_WARMUP_CANCELLED`，什么都没发出，下一条 rc 0。worker 被冻结：336.5 s 后 HTTP 504 `PRE_RUN_BACKEND_WARMUP_TIMEOUT`，会话没锁。随后结束该 worker：HTTP 500 `PRE_RUN_BACKEND_WARMUP_FAILED`；下一条命令等了 37 s 重新加载，返回 rc 0 |
-| 后端 connect 完成之前按 Stop | `aba81779`，11-04 | 失败。什么都没发出，但软 Stop 35.6 s 后返回 500，会话被锁（`soft-stop-did-not-restore-checkpoint`）。rc.7.83（PR #25）已修，目前只有离线测试 |
+| 后端 connect 完成之前按 Stop | `aba81779`，11-04 | 失败。什么都没发出，但软 Stop 35.6 s 后返回 500，会话被锁（`soft-stop-did-not-restore-checkpoint`）。在这个构建上失败。rc.7.83（PR #25）已修；在 `main` `b0bc49d` 上实机通过（connect 前按 Stop，命令被拒、会话没锁，下一条命令 rc 0） |
 | 命令运行时点 Terminal 的 Stop 按钮 | `aba81779`，11-04 | 第一轮 0/2：测试驱动点的位置被 Welcome 页的透明遮罩盖住，点击没有到达 Terminal。关掉 Welcome 之后，鼠标点击、在 Terminal 视图内点击、**Stata: Cancel Current Request** 各一次都停下了运行，会话没锁 |
 | 人和 agent 轮流跑；agent 运行中人插话 | `aba81779`，11-04 | 通过。人的提交得到 HTTP 409 `bridge busy`，写明正在运行的 agent；之后双方读到同一个 owner、N 和系数 |
 | 两个活会话时点 **Stata: KILL** | `aba81779`，11-04 | 通过。只有被锁会话的 3 个进程被换掉；另一个会话正在跑的 40 s 命令照常 rc 0 完成 |
-| 5 个活会话，3 个同时提交 | `aba81779`，11-04 | 部分通过。第 6 个 `open` 得到 `SESSION_LIMIT`。3 个同时提交里 2 个通过；一个在窗口报就绪约 20 s 后交的 agent 提交，因为后端还没起来，在派发前被拒（`BLOCKED_NO_DISPATCH`）。rc.7.86（PR #26）已修，目前只有离线测试 |
+| 5 个活会话，3 个同时提交 | `aba81779`，11-04 | 部分通过。第 6 个 `open` 得到 `SESSION_LIMIT`。3 个同时提交里 2 个通过；一个在窗口报就绪约 20 s 后交的 agent 提交，因为后端还没起来，在派发前被拒（`BLOCKED_NO_DISPATCH`）。在这个构建上失败。rc.7.86（PR #26）已修；在 `main` `b0bc49d` 上实机通过（开窗后立即交的 agent 命令 rc 0，与 `lastCold.runId` 一致） |
 | 高负载下（load average 120–140）不输出的长命令 | `aba81779`，11-04 | 失败。一条 `bootstrap … dots(50)` 60 s 没有新日志，63 s 时被当作 `EXEC_PRELOG_STALL (IDLE)` 取消，会话被锁。rc.7.84（PR #24）加了 worker CPU 信号 |
 | worker CPU 信号：空闲噪声和真卡死 | `2ec968a`，11-04 | 通过。空闲 worker 的 CPU 时间每 12 s 增长 10 ms（阈值 200 ms）。用 SIGSTOP 冻结的 worker 照样被取消，冻结后 69.7 s；KILL 之后下一条命令 rc 0。不输出的长命令那一项在首条日志预算内就结束了，所以「60 s 空闲且有 CPU 进展」那条路径还没有实机测到 |
+| agent 交的命令 Stata 报错（`display nosuchvar`） | `b82203d`，11-05 | 通过。`STATA_ERROR_CONFIRMED`，`stataRc` 111，各项报错检查都为真；Terminal 卡片显示 RC 111。下一条 agent 命令 rc 0，会话保持就绪 |
+| 人在 Terminal 里输入的命令 Stata 报错 | `b82203d`，11-05 | 通过。运行以失败结束、rc 111，面板显示 `RC 111` 和 `r(111);`。下一条输入的命令 rc 0，之后 agent 命令 rc 0 |
 
 ### Windows（Windows 11 x64，Stata 18 MP，VS Code 1.144.0）
 
@@ -329,12 +332,12 @@ Windows 还没有在合并后的 `main` 上复测。
 - **同时跑的几个 `open` 会在 10 s 后互相超时。** 现在都在短锁里预留、锁外启动（PR #23）。
 - **刚开窗时 agent 的提交会被拒**（`BLOCKED_NO_DISPATCH`），而 Terminal 命令会等。现在 agent 也等同一个 warm-up；拒绝结果带 `retryable` 和 `retryAfterMs`（PR #26，rc.7.86）。
 - **warm-up 缓存可能信任一个已被换掉的 worker。** 现在缓存记下 worker 的 pid、启动时刻和 transport，用之前再核一次；核对失败或超时就当作没就绪。worker 在启动中挂掉时，Terminal 命令会把它重启一次（PR #20，rc.7.81）。
-- **Stata 报错被报成结果不明。** 确认了的报错现在给 agent 返回 `STATA_ERROR_CONFIRMED` 和 Stata 的返回码（`stataRc`），Terminal 路径也报这个返回码，不再是 -1（PR #27，rc.7.85；PR #28 让 mcp-stata 发出返回码）。目前只有源码审查和离线测试，见下面的限制。
+- **Stata 报错被报成结果不明。** 确认了的报错现在给 agent 返回 `STATA_ERROR_CONFIRMED` 和 Stata 的返回码（`stataRc`），Terminal 路径也报这个返回码，不再是 -1（PR #27，rc.7.85；PR #28 让 mcp-stata 发出返回码）。已在 macOS 的 `b82203d` 上实机验证，Windows 还没有，见下面的限制。
 - **Windows 上的 Stata: KILL 曾经结束本机所有 Stata 图形界面进程和所有 mcp-stata 后端**，不只是本会话的；忙时的强制重置也一样。现在只结束本窗口已确认的后端进程树（PR #22，rc.7.82）。目前只有源码审查、离线测试和 CI，见下面的限制。
 
 当前 `main` 上还没解决的问题：
 
-- **Stata 还在加载时交的命令。** `trueReady` 不等后台加载。Terminal 命令和 agent 的提交都会先等 Stata worker 进入 running；等过 2 s，Terminal 显示「Waiting for Stata to finish loading…」，用 `POST /soft-stop` 可以取消等待（这期间 Terminal 的 Stop 按钮是禁用的，见下面）。等满 300 s 或 warm-up 失败时，命令在发出之前就被拒绝（`PRE_RUN_BACKEND_WARMUP_TIMEOUT` 或 `PRE_RUN_BACKEND_WARMUP_FAILED`，`payloadDispatched=false`）。读不到 worker 状态时照常发送，Terminal 会写明无法确认加载已完成。11-04 在 macOS 上实机确认了等待提示、等待中 Stop（经 `/soft-stop`）、超时和失败拒绝；Windows 上确认了除失败拒绝以外的几项，等待提示只在 Output 日志里核过。
+- **Stata 还在加载时交的命令。** `trueReady` 不等后台加载。Terminal 命令和 agent 的提交都会先等 Stata worker 进入 running；等过 2 s，Terminal 显示「Waiting for Stata to finish loading…」，用 `POST /soft-stop` 可以取消等待（这期间 Terminal 的 Stop 按钮是禁用的，见下面）。等满 300 s 或 warm-up 失败时，命令在发出之前就被拒绝（`PRE_RUN_BACKEND_WARMUP_TIMEOUT` 或 `PRE_RUN_BACKEND_WARMUP_FAILED`，`payloadDispatched=false`）。只有不提供 `list_sessions` 的旧版 mcp-stata 才不经这项检查直接放行（这是兼容做法，不能证明 Stata 已就绪）。有 `list_sessions` 但连续失败或超时时，warm-up 以 `FAILED` 结束，命令被拒绝；warm-up 刚结束时 worker 变了或确认不了，命令会再等一次，仍不行就拒绝。11-04 在 macOS 上实机确认了等待提示、等待中 Stop（经 `/soft-stop`）、超时和失败拒绝；Windows 上确认了除失败拒绝以外的几项，等待提示只在 Output 日志里核过。
 - **Windows 上 KILL 的范围还没有用两个会话实机测过。** 证据是源码审查、离线测试和 CI；当时 Windows 机器离线。在一个真实 Windows 窗口上 dry run，选中了该窗口完整的后端进程树（4 个进程），没有后端的窗口一个都没选；但两个窗口都有活后端、真的点 KILL，还没试过。还没在实机上证明的是：对窗口 A 点 KILL，只结束 A 的后端，窗口 B 的 pid 不变、下一条命令照常执行。根进程按登记时刻（1 s 以内）认定，不是按记下的创建时间；身份比到毫秒；进程列表不是原子快照；结束之后只再扫一遍直接子进程。清理失败或读不到进程身份时，会话保持未就绪，`/recovery-smoke` 返回 HTTP 423 `unresolved-cleanup`。
 - **macOS 的 KILL 和强制重置只按 pid 认后端**（PR #22 只改了 Windows）。 清理时，登记的 pid 的命令行里含 `mcp-stata` 就结束它，不核对进程启动时刻和父进程。如果这个 pid 正好被别的会话的 `mcp-stata` 复用，有可能被误结束。
 - **worker CPU 信号是一种近似。** CPU 在跑不等于在做有用的事：一直空转、不输出的运行，最多能占着会话到日志连续 30 分钟没动静为止。核实不了进程树时（采样期间有 pid 退出、超过 4 层或 16 个进程、父进程对不上），这次采样不算进展，照 60 s 日志规则判断。同一秒内的 pid 复用超出它所核对的启动时刻的精度。11-04 在 macOS 上复测 `main`（`b0bc49d`）：一条 57 s 不输出的运行以 rc 0 完成，被冻结的 worker 仍被取消；高负载下一条更长的不输出运行被取消了（见下一条）。
@@ -342,7 +345,7 @@ Windows 还没有在合并后的 `main` 上复测。
 - **Terminal Stop 停不了人自己的 Run File。** 同一次复测里，人用 Run File 跑一个长 do 文件时，点了可用状态的 Terminal Stop 按钮，没有发出取消。运行一直到 375 s 被看门狗取消，会话一直锁到点 **Stata: KILL**。Terminal Stop 停 agent 的运行是好的（3 次 3 次）。这条路径上没有点击计数，所以不能排除点击没被收到。<!-- PENDING T3/W2: V3-T3 正在修（D3），合并后更新。 -->
 - **命令等 Stata 加载期间，Terminal 的 Stop 按钮是禁用的。** 人没法在面板上取消这段等待。agent 的 `POST /soft-stop` 仍能取消：命令以 `PRE_RUN_BACKEND_WARMUP_CANCELLED` 被拒绝，没有发出。<!-- PENDING T3/W2: V3-T3 正在修（D1），合并后更新。 -->
 - **人用 Terminal Stop 停掉 agent 的运行，agent 拿不到「已取消」的结论。** agent 拿到的是 rc 2 `EXECUTION_UNCONFIRMED_NO_RETRY`。Stop 之后约 2 s 内发的命令会得到 HTTP 423 `checkpoint restore in progress`，几秒内就会消失。重新提交之前，先看 `/status` 的 `resetGeneration` 和回执。<!-- PENDING T3/W2: V3-T3 正在修（D2），合并后更新。 -->
-- **Stata 报错的返回码按保守条件确认，还没有实机测过。** 只有同时满足这些条件才算确认：这次运行没被取消（Stop、watchdog、Break、rc 1），日志是这次运行自己的，最后一行 `r(n)` 后面只有回显的命令，完成 marker 没有打印出来，返回码是正整数且等于 mcp-stata 给的 rc。mcp-stata 只有打了运行时补丁（PR #28）才在 `task_done` 里带这个 rc，取自本次运行已经拿到的响应；没打补丁的运行时不带 rc，报错一律确认不了。其他情况 Terminal 路径仍是 rc -1，agent 仍拿到 `EXECUTION_UNCONFIRMED_NO_RETRY`；报错文字里提到 cancel、timeout 或 stall 的也不确认。目前的证据只有源码审查和离线测试。跨模块测试里的 `task_done` 结果是手工构造的，界面部分是桩，所以它不是 MCP 传输测试，也不是端到端测试。这些检查是按 macOS 上的真实日志写的，还没有采到 Windows 的日志。Mac/Windows 的实机验收（报错返回 `STATA_ERROR_CONFIRMED`、`stataRc` 111，下一条命令 rc 0，会话还能继续用）还没做。
+- **Stata 报错的返回码按保守条件确认，只在 macOS 上实机测过。** 只有同时满足这些条件才算确认：这次运行没被取消（Stop、watchdog、Break、rc 1），日志是这次运行自己的，最后一行 `r(n)` 后面只有回显的命令，完成 marker 没有打印出来，返回码是正整数且等于 mcp-stata 给的 rc。mcp-stata 只有打了运行时补丁（PR #28）才在 `task_done` 里带这个 rc，取自本次运行已经拿到的响应；没打补丁的运行时不带 rc，报错一律确认不了。其他情况 Terminal 路径仍是 rc -1，agent 仍拿到 `EXECUTION_UNCONFIRMED_NO_RETRY`；报错文字里提到 cancel、timeout 或 stall 的也不确认。macOS 构建 `b82203d`（11-05）：agent 交的 `display nosuchvar` 返回 `STATA_ERROR_CONFIRMED`、`stataRc` 111，下一条命令 rc 0；人输入同一条报错命令，运行以 rc 111 结束，下一条命令 rc 0；会话一直可用。这个构建不是现在的 `main`。离线跨模块测试里的 `task_done` 结果是手工构造的，界面部分是桩，所以它不是 MCP 传输测试，也不是端到端测试。还没有采到 Windows 的日志，Windows 的实机验收还没做。
 - **通用的日志解析器只认普通写法 `r(n);`**，不认 mcp-stata 1.26.1 写的 SMCL 写法 `{search r(111), local:r(111);}`，只有新的报错检查两种都认。报错没被确认时，release 时推断的 rc、Run File 的收尾和 watchdog 的报错检查在这类日志里仍然看不到 rc。
 - **重开的会话可能换端口。** 刚 `close` 完，旧端口可能还处于 TIME_WAIT，启动器就换下一个空闲端口。工具按会话名找会话。
 - **Windows 派发开销。** 在 Windows 上，每次 agent 提交比 Stata 本身的工作多花约 15 s（派发前检查和回执核验）；一条短命令从头到尾要 17.4 s。20 轮 8 s 命令里，每次提交的固定开销是 12–18 s。
@@ -370,7 +373,7 @@ Windows 还没有在合并后的 `main` 上复测。
 | bridge 返回 HTTP 401 或 403 | 请求要带会话 token、`Host: 127.0.0.1:<端口>`，并且不能带 `Origin`。用 agent 工具，它会从注册表读 token |
 | 状态栏 **Stata: STALE**，运行返回 HTTP 423 | 点 **Stata: KILL** 并确认。它会强制重置本会话的后端，并自己跑恢复 smoke；Stata 内存里的数据会丢 |
 | Windows：开窗后第一条命令返回 HTTP 504（`EXEC_PRELOG_STALL` 或 `EXEC_OUTCOME_UNKNOWN`），会话被锁 | 点 **Stata: KILL** 解锁；它只结束本窗口的后端。命令可能已经执行过，重交之前先看回执。如果配置目录把 `loadStataOnStartup` 设成 `false`，下次 `open` 之前把这一项删掉。见[已知限制](#已知限制) |
-| Windows：点了 **Stata: KILL** 之后会话仍未就绪，`/recovery-smoke` 返回 HTTP 423 `unresolved-cleanup` | KILL 确认不了有些进程属于本窗口、或已经结束，所以没去结束它们。提示里列出每个 pid 的启动时间和核对用的 PowerShell 命令。启动时间未知的 pid 不要为了解锁去结束它，它可能属于别的程序。关掉这个 VS Code 窗口、另开一个；这样做不能证明列出的进程已经结束 |
+| Windows：点了 **Stata: KILL** 之后会话仍未就绪，`/recovery-smoke` 返回 HTTP 423 `unresolved-cleanup` | KILL 没能确认清理结果：有些进程认不准是不是本窗口的（这些没有作为结束对象），或者已请求的结束、残留检查没有得到确认。提示里列出每个 pid 的启动时间和核对用的 PowerShell 命令。启动时间未知的 pid 不要为了解锁去结束它，它可能属于别的程序。关掉这个 VS Code 窗口、另开一个；这样做不能证明列出的进程已经结束 |
 | Terminal 显示「Waiting for Stata to finish loading…」 | Stata 还在启动。等它，或者用 `POST /soft-stop` 取消（等待期间 Terminal 的 Stop 按钮是禁用的）；这时什么都还没发出。<!-- PENDING T3/W2: V3-T3 正在修（D1），合并后更新。 -->等满 300 s 命令会以 `PRE_RUN_BACKEND_WARMUP_TIMEOUT` 被拒绝，没有发出 |
 | agent 客户端返回 `REFUSED_NOT_DISPATCHED` | 扩展在发出之前拒绝了这次运行。看 `reasonCode`。`retryable` 为 true 时，等 `retryAfterMs` 之后再交；因 Stop 而拒绝的为 false |
 | agent 客户端返回 `STATA_ERROR_CONFIRMED` | Stata 执行了这条命令，并以 `stataRc` 报错拒绝。报错文字在回执里。改代码；报错之前的命令可能已经改了数据 |
