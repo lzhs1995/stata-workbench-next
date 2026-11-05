@@ -3472,5 +3472,8 @@ text = require("./apply_stata_error_outcome_patch").patchBundle(text, { finalize
 // F v3: Windows KILL, /panic-kill and a busy force reset end only this window's
 // backend process tree instead of every mcp-stata process and Stata GUI.
 text = require("./apply_windows_kill_scope_patch").patchBundle(text, { finalize: false });
+// rc.7.87: the "Running <name> [Cancel]" progress toast of a person's Run File /
+// Run Selection covers the Terminal Stop button; its Cancel now goes through Terminal Stop.
+text = require("./apply_progress_cancel_stop_patch").patchBundle(text, { finalize: false });
 fs.writeFileSync(target, text, "utf8");
 console.log(baseAlreadyApplied ? "RC7_SHARED_EXECUTION_UPDATED" : "RC7_SHARED_EXECUTION_APPLIED", target);
