@@ -362,9 +362,13 @@ class Sessions:
             try:
                 lp = subprocess.run(["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"], capture_output=True, text=True,
                                     timeout=left)
-                cwd = next((line[1:] for line in (lp.stdout or "").splitlines() if line.startswith("n")), None)
-                if cwd is None:
-                    cwd_why = "lsof:exit" if lp.returncode not in (0, 1) else "lsof:empty"
+                # V3-W5：只有退出码 0 的 n 行才算读到 cwd；其余退出码即使带了 n 行也是没读完
+                if lp.returncode != 0:
+                    cwd_why = "lsof:exit"
+                else:
+                    cwd = next((line[1:] for line in (lp.stdout or "").splitlines() if line.startswith("n")), None)
+                    if cwd is None:
+                        cwd_why = "lsof:empty"
             except subprocess.TimeoutExpired:
                 cwd_why = "lsof:timeout"
             except (OSError, subprocess.SubprocessError):

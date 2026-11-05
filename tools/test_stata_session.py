@@ -12,7 +12,7 @@ import tempfile
 import threading
 import time
 import unittest
-from contextlib import redirect_stdout
+from contextlib import contextmanager, redirect_stdout
 from unittest.mock import Mock, patch
 
 import stata_session as ss
@@ -85,7 +85,7 @@ class Base(unittest.TestCase):
                     environ={"SystemRoot": "C:\\Windows"}, launch_wait=0, leftovers=lambda dirs: [],
                     identity=lambda pid: None, signal=Mock())
         args.update(kw)
-        return ss.Sessions(**args)
+        return getattr(self, "mod", ss).Sessions(**args)
 
 
 class OpenTests(Base):
@@ -830,6 +830,280 @@ class ListCloseTests(Base):
         s.clock = lambda: next(clock)
         with redirect_stdout(io.StringIO()):
             self.assertEqual(ss.main(["close", "p1", "--wait", "1"], sessions=s), 2)
+
+
+SPAWN_CMD = "/py/python3.11 -B -s -c from multiprocessing.spawn import spawn_main; spawn_main(tracker_fd=8)"
+LSTART = "Thu Nov  5 02:52:08 2026"
+
+
+class RealAdapterCloseTests(Base):
+    """V3-W5（复审 B1/B2）：走真实的 _real_leftovers / _real_identity，只替换 subprocess.run、os.kill 和时钟。
+    mod 可换成变异过的模块（MutantTests 用），所以这里一律写 self.mod，不写 ss。"""
+    mod = ss
+
+    def world(self, name, procs, cost=None, override=None, on_quit=None):
+        """procs: pid -> {ppid, cwd, command}；假 lsof/ps 照这张表回答。
+        cost(kind, timeout, phase) = 这次调用耗的模拟秒数（默认 0）；耗时 >= timeout 时抛 TimeoutExpired（像真的超时）。
+        override: kind -> CompletedProcess 字段 dict 或异常，kind 为 dir / ps / cwd。
+        返回 (Sessions, calls, t, patched)；calls 里是 (kind, 开始时刻, timeout, phase)，patched() 套住要替换的调用。"""
+        t, calls, state = [0.0], [], {"phase": "capture"}
+        override = {} if override is None else override
+        def kind_of(argv):
+            return "ps" if argv[0] == "ps" else ("dir" if "+d" in argv else "cwd")
+        def answer(kind, argv):
+            if kind == "dir":
+                d = argv[argv.index("+d") + 1]
+                rows = [p for p in sorted(procs) if procs[p].get("cwd") and self.mod.is_inside(d, procs[p]["cwd"])]
+                out = "".join(f"p{p}\ncpython3.11\n" for p in rows)
+                return (0 if rows else 1), out
+            pid = int(argv[argv.index("-p") + 1])
+            if pid not in procs:
+                return 1, ""
+            if kind == "ps":
+                return 0, f"{pid:>6} {procs[pid]['ppid']:>6} {LSTART} {procs[pid]['command']}\n"
+            return 0, f"p{pid}\nfcwd\nn{procs[pid]['cwd']}\n"
+        def run(argv, **kw):
+            kind, timeout = kind_of(argv), kw.get("timeout")
+            calls.append((kind, t[0], timeout, state["phase"]))
+            spent = (cost or (lambda k, to, ph: 0.0))(kind, timeout, state["phase"])
+            if timeout is not None and spent >= timeout:
+                t[0] += timeout
+                raise subprocess.TimeoutExpired(argv, timeout)
+            t[0] += spent
+            o = override.get(kind)
+            if isinstance(o, BaseException):
+                raise o
+            rc, out = answer(kind, argv)
+            res = {"returncode": rc, "stdout": out, "stderr": ""}
+            res.update(o or {})
+            return subprocess.CompletedProcess(argv, res["returncode"], res["stdout"], res["stderr"])
+        def kill(pid, sig):
+            if pid not in procs:
+                raise ProcessLookupError(pid)
+        s = self.sessions(leftovers=None, identity=None, clock=lambda: t[0], sleep=lambda sec: t.__setitem__(0, t[0] + sec))
+        s.open(name, runtime_source=self.source, launch=False)
+        (self.root / "ws" / name).mkdir(parents=True, exist_ok=True)
+        self.running[name] = [501]
+        def quit_(pid):
+            self.running.pop(name)
+            state["phase"] = "report"
+            calls.append(("quit", t[0], None, "report"))
+            for row in procs.values():   # 服务端被关、没带走 worker：worker 被 launchd 收养
+                row["ppid"] = 1
+            if on_quit:
+                on_quit(procs, override)
+        s.kill = quit_
+        patched = lambda: _patched(run, kill, self.mod)
+        return s, calls, t, patched
+
+    def worker(self, name):
+        return {999: {"ppid": 24709, "cwd": str(self.root / "ws" / name), "command": SPAWN_CMD}}
+
+    def test_real_close_keeps_a_live_worker_with_unreadable_cwd_unresolved(self):
+        # Codex 复审 B1 的复现：pid 999 是 worker、cwd 读不到（lsof 超时/退出码/空/异常）。以前 clean=true
+        cases = (("timeout", None, "lsof:timeout"),
+                 ("exit 2", {"returncode": 2, "stdout": ""}, "lsof:exit"),
+                 ("exit 1 with a stale n line", {"returncode": 1}, "lsof:exit"),
+                 ("exit 0 without n", {"stdout": "p999\nfcwd\n"}, "lsof:empty"),
+                 ("raised", OSError("lsof missing"), "lsof"))
+        for i, (label, o, why) in enumerate(cases):
+            name = f"c{i}"
+            procs = self.worker(name)
+            cost = (lambda k, to, ph: to if (k == "cwd" and ph == "capture") else 0.0) if o is None else None
+            s, calls, t, patched = self.world(name, procs, cost=cost, override={} if o is None else {"cwd": o})
+            with patched():
+                r = s.close(name)
+            self.assertEqual(r["verdict"], "CLOSED", label)
+            self.assertEqual(r["orphanWorkers"], [{"pid": 999, "startedAt": "Thu Nov 5 02:52:08 2026", "ended": False,
+                                                   "unresolved": True, "reason": "cwd-unreadable:" + why}], label)
+            self.assertEqual(r["orphanCleanup"], {"mode": "report-only", "signalled": [], "clean": False, "unresolved": 1,
+                                                  "holders": "present:1"}, label)
+            self.assertEqual([p["pid"] for p in r["leftoverProcesses"]], [999], label)
+
+    def test_real_close_discovery_failure_is_unknown_not_clean(self):
+        # 复审 B1：lsof 退出码 2、空输出曾被当成「没人占用」
+        cases = (("exit 2 empty", {"returncode": 2, "stdout": ""}), ("stderr warning", {"stderr": "lsof: WARNING: can't stat()\n"}),
+                 ("exit 1 with output", {"returncode": 1}), ("raised", OSError("no lsof")))
+        for i, (label, o) in enumerate(cases):
+            name = f"d{i}"
+            s, calls, t, patched = self.world(name, self.worker(name), override={"dir": o})
+            with patched():
+                r = s.close(name)
+            self.assertEqual(r["orphanWorkers"], [{"pid": None, "startedAt": None, "ended": False, "unresolved": True,
+                                                   "reason": "identity-unreadable"}], label)
+            self.assertIsNone(r["leftoverProcesses"], label)
+            self.assertEqual((r["orphanCleanup"]["clean"], r["orphanCleanup"]["holders"]), (False, "unknown"), label)
+            self.assertFalse([c for c in calls if c[0] in ("ps", "cwd")], "nothing is read about candidates nobody listed")
+
+    def test_real_leftovers_is_three_state(self):
+        name = "l1"
+        procs = self.worker(name)
+        ws = self.root / "ws" / name
+        cases = (("held", {}, [{"pid": 999, "command": "python3.11"}]),
+                 ("nobody", {"returncode": 1, "stdout": ""}, []),
+                 ("exit 1 with output", {"returncode": 1}, None),
+                 ("exit 2", {"returncode": 2, "stdout": ""}, None),
+                 ("stderr only", {"stderr": "lsof: WARNING\n"}, None),
+                 ("raised", OSError("x"), None))
+        override = {}
+        s, calls, t, patched = self.world(name, procs, override=override)
+        with patched():
+            for label, o, want in cases:
+                override["dir"] = o
+                self.assertEqual(s._real_leftovers([ws]), want, label)
+            override.clear()
+            calls.clear()
+            self.assertEqual(s._real_leftovers([self.root / "ws" / "missing"]), [], "a missing directory is not a lookup")
+            self.assertIsNone(s._real_leftovers([ws], deadline=t[0]), "no budget left: nothing starts, result unknown")
+            self.assertEqual(calls, [], "neither call started lsof")
+
+    def test_real_close_clean_needs_a_successful_final_scan(self):
+        gone = lambda procs, ov: procs.pop(999)
+        name = "f0"
+        s, calls, t, patched = self.world(name, self.worker(name), on_quit=gone)
+        with patched():
+            r = s.close(name)
+        self.assertEqual((r["orphanWorkers"], r["leftoverProcesses"]), ([], []), "positive control")
+        self.assertEqual(r["orphanCleanup"], {"mode": "report-only", "signalled": [], "clean": True, "unresolved": 0, "holders": "none"})
+        cases = (("final scan exit 2", lambda procs, ov: (gone(procs, ov), ov.__setitem__("dir", {"returncode": 2, "stdout": ""})), None),
+                 ("final scan timed out", gone, lambda k, to, ph: to if (k == "dir" and ph == "report") else 0.0))
+        for i, (label, on_quit, cost) in enumerate(cases):
+            name = f"f{i + 1}"
+            s, calls, t, patched = self.world(name, self.worker(name), cost=cost, on_quit=on_quit)
+            with patched():
+                r = s.close(name)
+            self.assertEqual((r["orphanWorkers"], r["leftoverProcesses"]), ([], None), label)
+            self.assertEqual((r["orphanCleanup"]["clean"], r["orphanCleanup"]["holders"]), (False, "unknown"), label)
+            quit_at = next(c[1] for c in calls if c[0] == "quit")
+            self.assertLessEqual(t[0] - quit_at, self.mod.ORPHAN_CLOSE_BUDGET + 1e-9, label + ": final scan inside the report budget")
+
+    def test_real_discovery_stays_inside_its_deadline(self):
+        # Codex 复现：worker_identities('s1', deadline=8) 以前跑满 lsof 固定的 30 s
+        name = "w1"
+        s, calls, t, patched = self.world(name, self.worker(name), cost=lambda k, to, ph: to)
+        with patched():
+            start = t[0]
+            self.assertEqual(s.worker_identities(name, start + 8), (None, []))
+            self.assertLessEqual(t[0] - start, 8 + 1e-9)
+            self.assertEqual([(c[0], c[2]) for c in calls], [("dir", 8.0)])
+            calls.clear()
+            self.assertEqual(s.worker_identities(name, t[0]), (None, [{"pid": None, "startedAt": None, "ended": False,
+                                                                       "unresolved": True, "reason": "close-timeout:discovery"}]))
+            self.assertEqual(calls, [], "past the deadline nothing starts")
+
+    def test_real_identity_splits_one_budget_between_ps_and_lsof(self):
+        # Codex 复现：_real_identity(999, timeout=4) 以前给 ps 和 lsof 各 4 s，共 8 s
+        name = "i1"
+        plan = {}
+        s, calls, t, patched = self.world(name, self.worker(name), cost=lambda k, to, ph: plan.get(k, lambda x: 0.0)(to))
+        with patched():
+            plan.update(ps=lambda to: to)
+            start = t[0]
+            r = s._real_identity(999, timeout=4)
+            self.assertEqual((r["state"], r["why"]), ("UNKNOWN", "ps"))
+            self.assertEqual([(c[0], c[2]) for c in calls], [("ps", 4.0)])
+            self.assertLessEqual(t[0] - start, 4 + 1e-9)
+            calls.clear()
+            plan.update(ps=lambda to: 1.5, cwd=lambda to: to)
+            start = t[0]
+            r = s._real_identity(999, timeout=4)
+            self.assertEqual((r["state"], r["cwd"], r["cwdWhy"]), ("PRESENT", None, "lsof:timeout"))
+            self.assertEqual([(c[0], c[2]) for c in calls], [("ps", 4.0), ("cwd", 2.5)], "lsof gets only what ps left")
+            self.assertLessEqual(t[0] - start, 4 + 1e-9)
+
+    def test_real_close_path_stays_inside_both_budgets(self):
+        # 40 个 worker；关窗前读取便宜，关窗后每次读取都用满给它的时间：两段各自不超过 ORPHAN_CLOSE_BUDGET
+        name = "b1"
+        ws = str(self.root / "ws" / name)
+        procs = {p: {"ppid": 24709, "cwd": ws, "command": SPAWN_CMD} for p in range(25000, 25040)}
+        cost = lambda k, to, ph: 0.01 if ph == "capture" else to
+        s, calls, t, patched = self.world(name, procs, cost=cost)
+        with patched():
+            start = t[0]
+            r = s.close(name, wait=1)
+        budget = self.mod.ORPHAN_CLOSE_BUDGET
+        quit_at = next(c[1] for c in calls if c[0] == "quit")
+        for kind, at, timeout, phase in calls:
+            if kind == "quit":
+                continue
+            end = start + budget if phase == "capture" else quit_at + budget
+            self.assertLess(at, end, (kind, at, phase, "nothing starts at or past its phase deadline"))
+            self.assertLessEqual(at + timeout, end + 1e-9, (kind, at, timeout, phase))
+        self.assertLessEqual(quit_at - start, budget + 1e-9)
+        self.assertLessEqual(t[0] - quit_at, budget + 1e-9)
+        reasons = sorted({w["reason"] for w in r["orphanWorkers"]})
+        self.assertEqual(reasons, ["close-timeout", "identity-unknown:ps", "too-many-candidates:40"], reasons)
+        self.assertEqual((r["orphanCleanup"]["clean"], r["orphanCleanup"]["holders"]), (False, "unknown"))
+
+    def test_real_identity_ps_failures_are_unknown(self):
+        name = "p1"
+        override = {}
+        s, calls, t, patched = self.world(name, self.worker(name), override=override)
+        cases = (("exit 2", {"returncode": 2, "stdout": ""}, "ps:exit"), ("garbage", {"stdout": "999 what\n"}, "ps:parse"),
+                 ("raised", OSError("no ps"), "ps"), ("not listed, still alive", {"returncode": 1, "stdout": ""}, "ps:missing"))
+        with patched():
+            for label, o, why in cases:
+                override["ps"] = o
+                r = s._real_identity(999, timeout=4)
+                self.assertEqual((r["state"], r.get("why")), ("UNKNOWN", why), label)
+            override.clear()
+            self.assertEqual(s._real_identity(4242, timeout=4), {"state": "ABSENT"})
+            with patch.object(self.mod.os, "kill", side_effect=OSError(errno.EINVAL, "bad")):
+                self.assertEqual(s._real_identity(999, timeout=4), {"state": "UNKNOWN", "why": "probe"})
+
+
+@contextmanager
+def _patched(run, kill, mod):
+    with patch.object(mod.subprocess, "run", side_effect=run), patch.object(mod.os, "kill", side_effect=kill):
+        yield
+
+
+def load_variant(source, name):
+    """把改过的 stata_session 源码装成一个独立模块（不动已导入的 ss）。"""
+    import types
+    module = types.ModuleType(name)
+    module.__file__ = ss.__file__
+    exec(compile(source, ss.__file__, "exec"), module.__dict__)
+    return module
+
+# V3-W5：每个新守卫都要有一个测试在它被拿掉时失败（旧, 新）。源码里旧串必须恰好出现一次。
+CLOSE_GUARD_MUTANTS = (
+    ("leftovers: rc/stderr ignored",
+     'if proc.returncode not in (0, 1) or (proc.stderr or "").strip() or (proc.returncode == 1 and out.strip()):',
+     "if False:"),
+    ("leftovers: stderr ignored", 'or (proc.stderr or "").strip() or (proc.returncode == 1', "or (proc.returncode == 1"),
+    ("leftovers: exit 1 with output accepted", " or (proc.returncode == 1 and out.strip()):", ":"),
+    ("leftovers: fixed 30 s timeout", "timeout = 30.0 if deadline is None else min(30.0, deadline - self.clock())",
+     "timeout = 30.0"),
+    ("leftovers: starts with no budget left", "            if timeout <= 0:\n                return None\n", ""),
+    ("capture: live worker without cwd dropped", "if not ident.get(\"cwd\"):   # V3-W4", "if not ident.get(\"cwd\"):\n                    continue  # V3-W4"),
+    ("capture: unreadable discovery read as empty", "        if rows is None:   # 查不了", "        if rows is None:\n            rows = []\n        if False:   # 查不了"),
+    ("capture: no early deadline check", "        if deadline - self.clock() <= 0:\n            return None, [", "        if False:\n            return None, ["),
+    ("close: clean ignores the final scan", 'not workers and holders == "none"', "not workers"),
+    ("close: final scan outside the report budget", "self.leftovers(name, report_end) if", "self.leftovers(name) if"),
+    ("identity: lsof gets the whole budget", "timeout=left)", "timeout=float(timeout))"),
+    ("identity: cwd accepted on any exit code", "if lp.returncode != 0:", "if lp.returncode not in (0, 1):"),
+    ("identity: ps exit code ignored without output", "if proc.returncode not in (0, 1) or (line and not m):", "if line and not m:"),
+)
+
+
+class CloseGuardMutantTests(unittest.TestCase):
+    def test_every_close_guard_is_needed(self):
+        source = Path(ss.__file__).read_text(encoding="utf-8")
+        names = sorted(n for n in dir(RealAdapterCloseTests) if n.startswith("test_"))
+        def failures(mod):
+            Variant = type("Variant", (RealAdapterCloseTests,), {"mod": mod})
+            suite = unittest.TestSuite(Variant(n) for n in names)
+            result = unittest.TestResult()
+            suite.run(result)
+            return len(result.failures) + len(result.errors)
+        self.assertEqual(failures(load_variant(source, "stata_session_unmutated")), 0, "the unmutated copy passes")
+        survived = []
+        for label, old, new in CLOSE_GUARD_MUTANTS:
+            self.assertEqual(source.count(old), 1, label)
+            if failures(load_variant(source.replace(old, new), "stata_session_mutant")) == 0:
+                survived.append(label)
+        self.assertEqual(survived, [], "every mutant is caught")
 
 
 class HelperTests(unittest.TestCase):
