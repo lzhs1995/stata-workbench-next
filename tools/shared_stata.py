@@ -242,6 +242,34 @@ def stata_error_checks(http, body, before, after, marker):
     }
 
 
+def stop_checks(http, body, before, after):
+    """rc.7.87：扩展说这次失败是被 Stop 结束的（stoppedBy）时，核对：Stop 是人在 VS Code 里发起的
+    （面板 Stop、进度提示 Cancel、命令面板取消，扩展都记为 person；api/watchdog 不算）、属于本次请求的 run、
+    在这次提交之后发生、同一次 Stop 真的恢复了运行前快照（restored 为真，generation 一致），且会话已可用。
+    全部为真才判 STOPPED_NO_RETRY；否则照旧 UNCONFIRMED（来源另记在 stopReportedBy）。"""
+    body = body if isinstance(body, dict) else {}
+    s = after.get("status") or {}
+    completed = s.get("lastCompletedRun") or {}
+    stop = body.get("stoppedBy") if isinstance(body.get("stoppedBy"), dict) else {}
+    last = s.get("lastSoftStop") if isinstance(s.get("lastSoftStop"), dict) else {}
+    gen_before, gen_after = (before.get("status") or {}).get("resetGeneration"), s.get("resetGeneration")
+    request_id = body.get("runId")
+    return {
+        "http500": type(http) is int and http == 500,
+        "notStataError": body.get("outcome") != "STATA_ERROR",
+        "stopByPerson": stop.get("by") == "person",
+        "requestBound": isinstance(request_id, str) and bool(request_id) and completed.get("requestId") == request_id
+            and request_id != (before["status"].get("lastCompletedRun") or {}).get("requestId"),
+        "stoppedRunBound": isinstance(stop.get("runId"), str) and bool(stop["runId"])
+            and completed.get("runId") == stop["runId"] and completed.get("phase") == "failed",
+        "stopAfterSubmit": type(gen_before) is int and type(stop.get("generation")) is int and stop["generation"] > gen_before
+            and gen_after == stop["generation"] and s.get("resetGenerationKind") == "soft-stop",
+        "restoredAfter": last.get("runId") == stop.get("runId") and last.get("ok") is True and last.get("restored") is True
+            and type(last.get("generation")) is int and last.get("generation") == stop.get("generation"),
+        "readyAfter": ready(after),
+    }
+
+
 def execute_once(d, request, receipt, timeout=3600, observe=entry.observe, sleep=time.sleep, source_path=None):
     receipt = Path(receipt)
     receipt.mkdir(mode=0o700, parents=True, exist_ok=False)
@@ -294,8 +322,9 @@ def execute_once(d, request, receipt, timeout=3600, observe=entry.observe, sleep
         after = look()
         # Only observe completion settlement. Never repeat the POST.
         stata_error = isinstance(body, dict) and body.get("outcome") == "STATA_ERROR"
+        stopped = isinstance(body, dict) and isinstance(body.get("stoppedBy"), dict)  # rc.7.87：等 Stop 的恢复做完再看
         for _ in range(30):
-            if ready(after) or (http != 200 and not stata_error) or after.get("windowObservation", {}).get("ok") is not True:
+            if ready(after) or (http != 200 and not stata_error and not stopped) or after.get("windowObservation", {}).get("ok") is not True:
                 break
             sleep(1)
             after = look()
@@ -330,6 +359,16 @@ def execute_once(d, request, receipt, timeout=3600, observe=entry.observe, sleep
                 result["verdict"] = "STATA_ERROR_CONFIRMED"
                 result["stataRc"] = body["stataRc"]
                 result["note"] = "Stata ran the code and stopped with this return code; nothing is retried."
+        elif stopped:
+            checks = stop_checks(http, body, before, after)
+            result["stopChecks"] = checks
+            result["stopReportedBy"] = body["stoppedBy"].get("by")
+            if all(checks.values()):
+                result["verdict"] = "STOPPED_NO_RETRY"
+                result["stoppedBy"] = body["stoppedBy"]["by"]
+                result["note"] = ("A person's Stop in VS Code ended this run; the same Stop restored the pre-run "
+                                  "snapshot and the session is ready. Part of the code may have run before the Stop; "
+                                  "nothing is retried.")
     except Exception as exc:
         result["error"] = repr(exc)
         result["windowObservation"] = getattr(exc, "observation", None)
@@ -433,6 +472,8 @@ def main():
                       "error": result["error"], "failedChecks": result.get("failedChecks"),
                       "coldBackend": result.get("coldBackend"), "refusal": result.get("refusal"),
                       "stataRc": result.get("stataRc"), "stataErrorChecks": result.get("stataErrorChecks"),
+                      "stoppedBy": result.get("stoppedBy"), "stopReportedBy": result.get("stopReportedBy"),
+                      "stopChecks": result.get("stopChecks"),
                       "windowObservation": result.get("windowObservation")}, ensure_ascii=False))
     return 0 if result["verdict"] == "PASS_VISIBLE_SHARED_RUN" else 2
 

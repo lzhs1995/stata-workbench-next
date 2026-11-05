@@ -1527,6 +1527,11 @@ const REQUIRED_MARKERS = [
     marker: "codex patch rc.7.85: confirmed Stata errors report their return code",
   },
   {
+    key: "progressCancelStop",
+    label: "the progress toast's Cancel stops this visible run like Terminal Stop",
+    marker: "codex patch rc.7.87: the progress toast's Cancel stops this visible run like Terminal Stop",
+  },
+  {
     key: "watchdogCpuStatus",
     label: "/status shows the watchdog's worker CPU counters",
     marker: "codex patch rc.7.88: /status shows the watchdog's worker CPU counters",

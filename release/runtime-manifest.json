@@ -27,8 +27,8 @@
       "bytes": 17618
     },
     "scripts/patch_manager.js": {
-      "sha256": "4940e1f3639c64a4b04ef5420fc8a2154e6025ed772200647cf96e57db7d1587",
-      "bytes": 98294
+      "sha256": "32d17a42354772af4bbe1b8951978b1efe5638910f152d8ed9dd22630b90ceba",
+      "bytes": 98529
     },
     "scripts/mcp_stata_runtime_patch.js": {
       "sha256": "81a6985043039bad22f7be8f9b94dbf271cf0476f79bef64077ec43f61785c5f",
@@ -111,8 +111,8 @@
       "bytes": 5178
     },
     "scripts/apply_rc7_shared_execution_patch.js": {
-      "sha256": "042b2d7393ba332a576c2f5bbdec77983571f9083d00998c36734691e233d167",
-      "bytes": 341827
+      "sha256": "b481b001c5d286ac8b448c1276c96b8a5f8559c7754955479325426ad908a5c0",
+      "bytes": 342095
     },
     "scripts/apply_rc64_routes_patch.js": {
       "sha256": "b01e1225f5844b632e24d616957fb9e565541345a10d6f4fbc640a4b034070b2",
@@ -139,8 +139,8 @@
       "bytes": 11107
     },
     "dist/extension.js": {
-      "sha256": "ab543ae0554b108b7135e1b39ee892decff9ba1f200212772295c7004984901f",
-      "bytes": 5677289
+      "sha256": "f98ea079402aece979174334252b2e7b93466f540f2ad02d1a9e5282df478c8c",
+      "bytes": 5679432
     },
     "scripts/mac/png_compat_transform.js": {
       "sha256": "cdea12886a1d5bb5b4c2b3e38829de1c7e68ed70e7777e8d6e2eb02bb0ce3514",
@@ -335,15 +335,15 @@
       "bytes": 3225
     },
     "tools/shared_stata.py": {
-      "sha256": "45a1cc03f2ea85d38df6d2bbf2f41ef343a424b1b938d1a0a2f10035958383e2",
-      "bytes": 23489
+      "sha256": "f453c797dd2c67b3282057481cdc72221a711760a077563b2ff773e80f60900c",
+      "bytes": 26524
     },
     "tools/workbench_doctor.py": {
       "sha256": "547acffd98bcc6c6371c9a4c6767303760ed56832a646c5f959acc9ccc7e46fe",
       "bytes": 4729
     },
     "tools/verified_workbench.py": {
-      "sha256": "bdda4e720d29aa7cd7cb612f5150b61575f7a1598fd75275c3e97a24a5c181ec",
+      "sha256": "ede4b4528ff957c611a19f274ccbc0991811b26f0eee8d4e9213530b24327861",
       "bytes": 21973
     },
     "tools/workbench_platform.py": {
@@ -453,6 +453,14 @@
     "scripts/orphan_worker_core.js": {
       "sha256": "d9e6a50c544dfbae93e59dd38ea1255320cfbc45080cdc0cc6f44c630474bdf4",
       "bytes": 22544
+    },
+    "scripts/apply_progress_cancel_stop_patch.js": {
+      "sha256": "31ef1ed0b15f2c80d1c702bef82432a30d3478f0f6213453c0fa788309935482",
+      "bytes": 7540
+    },
+    "scripts/test_progress_cancel_stop_patch.js": {
+      "sha256": "e3889e4ad8adf6dfd152860fe9746f562191ef4c4f029b5b4575e91c7c4f5816",
+      "bytes": 11740
     }
   },
   "acceptanceStatus": "PENDING_LICENSED_MAC_FULL_ACCEPTANCE",

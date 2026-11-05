@@ -3472,6 +3472,9 @@ text = require("./apply_stata_error_outcome_patch").patchBundle(text, { finalize
 // F v3: Windows KILL, /panic-kill and a busy force reset end only this window's
 // backend process tree instead of every mcp-stata process and Stata GUI.
 text = require("./apply_windows_kill_scope_patch").patchBundle(text, { finalize: false });
+// rc.7.87: the "Running <name> [Cancel]" progress toast of a person's Run File /
+// Run Selection covers the Terminal Stop button; its Cancel now goes through Terminal Stop.
+text = require("./apply_progress_cancel_stop_patch").patchBundle(text, { finalize: false });
 // V3-W2 D5: /status shows the watchdog's worker CPU counters (read only).
 text = require("./apply_watchdog_cpu_status_patch").patchBundle(text, { finalize: false });
 // V3-W2: a macOS/Linux force reset ends this session's orphaned Stata worker (exact identity only).
