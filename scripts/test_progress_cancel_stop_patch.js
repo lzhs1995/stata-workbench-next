@@ -22,51 +22,75 @@ function harness(helper = patch.HELPER) {
 }
 const flush = () => new Promise((r) => setImmediate(r));
 
+// A fake bridge shaped like rc.7 acquire: busy/source/startedAt plus the
+// execution lifecycle object that beginRun creates for every acquire.
+const life = (requestId, extra = {}) => ({ requestId, runId: requestId, phase: "acquired", releasedAt: null, ...extra });
+const bridge = (source, lifecycle, extra = {}) => ({ busy: true, source, startedAt: 1000, runId: lifecycle ? lifecycle.runId : null, lifecycle, ...extra });
+
 async function behaviour(helper) {
   const out = {};
+  let ctx, token, t;
+  const arm = (b, src) => { ({ ctx, token } = harness(helper)); ctx.__codexBridgeState = b; t = token(); return ctx.__codexProgressCancelStop(t, src); };
+  const fire = async () => { if (t.fire) t.fire(); await flush(); return { stops: ctx.stops, acted: ctx.__codexLastProgressCancel ? ctx.__codexLastProgressCancel.acted : null }; };
   // 1. same run still active -> Terminal Stop once, logged as acted
-  let { ctx, token } = harness(helper);
-  ctx.__codexBridgeState = { busy: true, source: "human-file", startedAt: 1000, runId: "r1" };
-  let t = token();
-  ctx.__codexProgressCancelStop(t, "human-file");
-  t.fire(); await flush();
-  out.sameRun = { stops: ctx.stops, acted: ctx.__codexLastProgressCancel && ctx.__codexLastProgressCancel.acted };
-  // 2. the run ended and another run of the same source started -> ignored
-  ({ ctx, token } = harness(helper));
-  ctx.__codexBridgeState = { busy: true, source: "human-file", startedAt: 1000 };
-  t = token(); ctx.__codexProgressCancelStop(t, "human-file");
-  ctx.__codexBridgeState = { busy: true, source: "human-file", startedAt: 2000 };
-  t.fire(); await flush();
-  out.newerRun = { stops: ctx.stops, acted: ctx.__codexLastProgressCancel.acted };
-  // 3. an agent run took over -> ignored
-  ({ ctx, token } = harness(helper));
-  ctx.__codexBridgeState = { busy: true, source: "human-selection", startedAt: 1000 };
-  t = token(); ctx.__codexProgressCancelStop(t, "human-selection");
-  ctx.__codexBridgeState = { busy: true, source: "agent", startedAt: 1000 };
-  t.fire(); await flush();
-  out.agentRun = ctx.stops;
-  // 4. bridge idle -> ignored
-  ({ ctx, token } = harness(helper));
-  ctx.__codexBridgeState = { busy: true, source: "human-file", startedAt: 1000 };
-  t = token(); ctx.__codexProgressCancelStop(t, "human-file");
-  ctx.__codexBridgeState = { busy: false, source: "human-file", startedAt: 1000 };
-  t.fire(); await flush();
-  out.idle = ctx.stops;
-  // 5. not registered when the bridge does not hold this source; bad token is harmless
-  ({ ctx, token } = harness(helper));
-  ctx.__codexBridgeState = { busy: true, source: "agent", startedAt: 1000 };
-  t = token(); out.wrongSourceReturn = ctx.__codexProgressCancelStop(t, "human-file"); out.wrongSourceFire = t.fire;
-  out.badToken = ctx.__codexProgressCancelStop({}, "human-file");
+  arm(bridge("human-file", life("r1")), "human-file");
+  out.sameRun = await fire();
+  // 2. same run after runId adoption (panel runId replaces the request id on the same lifecycle object) -> still stops
+  arm(bridge("human-file", life("r1")), "human-file");
+  ctx.__codexBridgeState.lifecycle.runId = "panel-run"; ctx.__codexBridgeState.runId = "panel-run";
+  out.adopted = await fire();
+  // 3. next acquire of the same source with the SAME startedAt and the same requestId text -> new lifecycle object, ignored
+  arm(bridge("human-file", life("r1")), "human-file");
+  ctx.__codexBridgeState = bridge("human-file", life("r1"));
+  out.nextSameStamp = await fire();
+  // 4. next acquire reuses the bridge object (Object.assign + beginRun): new lifecycle, other requestId, same startedAt -> ignored
+  arm(bridge("human-file", life("r1")), "human-file");
+  ctx.__codexBridgeState.lifecycle = life("r2");
+  out.nextOnSameBridge = await fire();
+  // 5. same lifecycle object but its requestId was changed -> ignored
+  arm(bridge("human-file", life("r1")), "human-file");
+  ctx.__codexBridgeState.lifecycle.requestId = "r9";
+  out.requestChanged = await fire();
+  // 6. the run was released (finished) but the bridge still looks busy -> ignored
+  arm(bridge("human-file", life("r1")), "human-file");
+  ctx.__codexBridgeState.lifecycle.releasedAt = "t-end";
+  out.released = await fire();
+  // 7. an agent run took over (new lifecycle, source agent, same startedAt) -> ignored
+  arm(bridge("human-selection", life("r1")), "human-selection");
+  ctx.__codexBridgeState = bridge("agent", life("a1"));
+  out.agentRun = await fire();
+  // 7b. defence in depth: same lifecycle object but the bridge now reports another source -> ignored
+  arm(bridge("human-file", life("r1")), "human-file");
+  ctx.__codexBridgeState.source = "agent";
+  out.sourceChanged = await fire();
+  // 8. bridge idle -> ignored
+  arm(bridge("human-file", life("r1")), "human-file");
+  ctx.__codexBridgeState.busy = false;
+  out.idle = await fire();
+  // 9. not registered: wrong source, no lifecycle, empty requestId, already released, bad token
+  out.wrongSourceReturn = arm(bridge("agent", life("a1")), "human-file"); out.wrongSourceFire = t.fire;
+  out.noLifecycle = arm(bridge("human-file", null), "human-file");
+  out.emptyRequest = arm(bridge("human-file", life("")), "human-file");
+  out.releasedAtArm = arm(bridge("human-file", life("r1", { releasedAt: "t0" })), "human-file");
+  out.badToken = (arm(bridge("human-file", life("r1")), "human-file"), ctx.__codexProgressCancelStop({}, "human-file"));
   return out;
 }
 
 function expectGood(out) {
   assert.deepEqual(out.sameRun, { stops: 1, acted: true }, "same run: toast Cancel -> one Terminal Stop");
-  assert.deepEqual(out.newerRun, { stops: 0, acted: false }, "a newer run of the same source is not stopped");
-  assert.equal(out.agentRun, 0, "an agent run that took over is not stopped");
-  assert.equal(out.idle, 0, "idle bridge: nothing to stop");
+  assert.deepEqual(out.adopted, { stops: 1, acted: true }, "runId adoption keeps the same run cancellable");
+  assert.deepEqual(out.nextSameStamp, { stops: 0, acted: false }, "next acquire with the same startedAt and request text is not stopped");
+  assert.deepEqual(out.nextOnSameBridge, { stops: 0, acted: false }, "next acquire on the reused bridge object is not stopped");
+  assert.deepEqual(out.requestChanged, { stops: 0, acted: false }, "a changed requestId is not this run");
+  assert.deepEqual(out.released, { stops: 0, acted: false }, "a released run is not stopped");
+  assert.deepEqual(out.agentRun, { stops: 0, acted: false }, "an agent run that took over is not stopped");
+  assert.deepEqual(out.idle, { stops: 0, acted: false }, "idle bridge: nothing to stop");
+  assert.deepEqual(out.sourceChanged, { stops: 0, acted: false }, "bridge source changed: not this run");
   assert.equal(out.wrongSourceReturn, null, "not registered when the bridge does not hold this source");
   assert.equal(out.wrongSourceFire, null, "no listener registered");
+  assert.equal(out.noLifecycle, null, "not registered without a lifecycle identity");
+  assert.equal(out.emptyRequest, null, "not registered with an empty requestId");
+  assert.equal(out.releasedAtArm, null, "not registered for a released lifecycle");
   assert.equal(out.badToken, null, "a token without onCancellationRequested is ignored");
 }
 
@@ -76,16 +100,21 @@ function expectGood(out) {
 
   // Mutants: each must break at least one assertion.
   const mutants = {
-    noStartedAtCheck: ["&&__n.startedAt===__at", ""],
-    noSourceCheck: ["&&__n.source===__src&&__n.startedAt", "&&__n.startedAt"],
-    noBusyCheck: ["let __n=globalThis.__codexBridgeState||{},__same=__n.busy===true&&", "let __n=globalThis.__codexBridgeState||{},__same="],
+    noLifecycleIdentity: ["&&__l===__life&&", "&&"],
+    noRequestIdCheck: ["&&__l.requestId===__req&&", "&&"],
+    noReleasedCheckAtCancel: ["&&!__l.releasedAt;", ";"],
+    noReleasedCheckAtArm: ["||!__req||__life.releasedAt)return null", "||!__req)return null"],
+    noRequiredRequestId: ["||!__req||", "||"],
+    noSourceCheck: ["__same=__n.busy===true&&__n.source===__src&&", "__same=__n.busy===true&&"],
+    noBusyCheck: ["__same=__n.busy===true&&", "__same="],
     alwaysAct: ["if(__same)Promise", "if(true)Promise"],
-    registerAnySource: ["||__b.source!==__src)return null", ")return null"],
+    registerAnySource: ["||__b.source!==__src||", "||"],
+    startedAtAsIdentity: ["&&__l===__life&&__l.requestId===__req&&", "&&__n.startedAt===__b.startedAt&&"],
   };
   for (const [name, [from, to]] of Object.entries(mutants)) {
     assert.equal(patch.HELPER.split(from).length - 1, 1, `mutant anchor ${name}`);
     let killed = false;
-    try { expectGood(await behaviour(patch.HELPER.replace(from, to))); } catch (e) { killed = e instanceof assert.AssertionError; }
+    try { expectGood(await behaviour(patch.HELPER.replace(from, to))); } catch (e) { killed = e instanceof assert.AssertionError || e instanceof TypeError; }
     assert.ok(killed, `mutant survived: ${name}`);
   }
   console.log("PROGRESS_CANCEL_MUTANTS_KILLED " + Object.keys(mutants).length);

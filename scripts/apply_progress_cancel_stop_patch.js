@@ -9,19 +9,25 @@
 // token. The run then went on until the exec guard's 375 s IDLE cancel.
 // Now the toast's Cancel goes through the panel's own Stop handler
 // (TerminalPanel._handleCancelRun -> soft Stop), only while the same visible run
-// is still the active one (bridge busy, same source and startedAt as when the
-// toast opened). Otherwise it is logged and ignored. Other IP() users
-// (connection test) are unchanged. Offline bundle edit.
+// is still the active one. "Same run" is the bridge's execution lifecycle object
+// that this acquire created (beginRun makes a new object per acquire; runId
+// adoption only edits a field of it), checked by object identity plus its
+// requestId, with the bridge busy for the same source and the lifecycle not
+// released. startedAt (a millisecond clock value) is not used as identity.
+// Otherwise the Cancel is logged and ignored. Other IP() users (connection
+// test) are unchanged. Offline bundle edit.
 const fs = require("node:fs");
 const path = require("node:path");
 const fingerprint = require("./finalize_bundle_identity");
 const MARKER = "codex patch rc.7.87: the progress toast's Cancel stops this visible run like Terminal Stop";
 
 const HELPER = "/* codex patch rc.7.87: the progress toast's Cancel stops this visible run like Terminal Stop */"
-  + "globalThis.__codexProgressCancelStop=(__tok,__src)=>{try{let __b=globalThis.__codexBridgeState||{},__at=__b.startedAt||null;"
-  + "if(!__tok||typeof __tok.onCancellationRequested!==\"function\"||__b.busy!==true||__b.source!==__src)return null;"
-  + "return __tok.onCancellationRequested(()=>{let __n=globalThis.__codexBridgeState||{},__same=__n.busy===true&&__n.source===__src&&__n.startedAt===__at;"
-  + "globalThis.__codexLastProgressCancel={at:new Date().toISOString(),source:__src,runId:__n.runId||null,acted:__same};"
+  + "globalThis.__codexProgressCancelStop=(__tok,__src)=>{try{let __b=globalThis.__codexBridgeState||{},__life=__b.lifecycle,"
+  + "__req=__life&&typeof __life===\"object\"&&typeof __life.requestId===\"string\"&&__life.requestId?__life.requestId:null;"
+  + "if(!__tok||typeof __tok.onCancellationRequested!==\"function\"||__b.busy!==true||__b.source!==__src||!__req||__life.releasedAt)return null;"
+  + "return __tok.onCancellationRequested(()=>{let __n=globalThis.__codexBridgeState||{},__l=__n.lifecycle,"
+  + "__same=__n.busy===true&&__n.source===__src&&__l===__life&&__l.requestId===__req&&!__l.releasedAt;"
+  + "globalThis.__codexLastProgressCancel={at:new Date().toISOString(),source:__src,requestId:__req,runId:(__l&&__l.runId)||__n.runId||null,acted:__same};"
   + "try{RI(\"[Codex progress-cancel] \"+(__same?\"toast Cancel -> Terminal Stop for \":\"toast Cancel ignored, run changed: \")+__src)}catch{}"
   + "if(__same)Promise.resolve(Gg._handleCancelRun()).catch(__e=>{try{RI(\"[Codex progress-cancel] Stop failed: \"+(__e?.message||__e))}catch{}})})}"
   + "catch(__e){try{RI(\"[Codex progress-cancel] hook failed: \"+(__e?.message||__e))}catch{}return null}};";
@@ -29,8 +35,12 @@ const HELPER = "/* codex patch rc.7.87: the progress toast's Cancel stops this v
 // D2: when a Stop ended an agent run, /run-command answered a bare 500
 // "Request cancelled" and the client could only say EXECUTION_UNCONFIRMED.
 // The failure now carries stoppedBy, read from this run's own soft-stop
-// supersede record (who: person = Terminal Stop / toast Cancel, api =
-// POST /soft-stop, watchdog = exec guard cancel). No record for this run -> null.
+// supersede record (who: person = a Stop a person made in VS Code: the panel
+// Stop, the progress toast's Cancel or the command-palette cancel, all of which
+// reach the soft Stop as "terminal Stop button"; api = POST /soft-stop;
+// watchdog = exec guard cancel). No record for this run -> null. The client
+// (tools/shared_stata.py) gives STOPPED_NO_RETRY only for person and only when
+// the same Stop restored the pre-run snapshot; api/watchdog stay UNCONFIRMED.
 const STOPPED_HELPER = "/* codex patch rc.7.87b: an agent failure says which Stop ended the run */"
   + "globalThis.__codexStoppedBy=(__rid)=>{try{if(__rid==null)return null;let __h=globalThis.__codexSupersedeHistory||[];"
   + "for(let __i=__h.length-1;__i>=0;__i--){let __r=__h[__i];if(__r&&__r.kind===\"soft-stop\"&&String(__r.runId)===String(__rid)){let __why=String(__r.reason||\"\");"

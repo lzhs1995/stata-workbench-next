@@ -141,6 +141,34 @@ class SharedClientTests(unittest.TestCase):
             result = self._stopped_run(directory)
             self.assertEqual(result["verdict"], "STOPPED_NO_RETRY", result.get("stopChecks"))
             self.assertEqual(result["stoppedBy"], "person")
+            self.assertEqual(result["stopReportedBy"], "person")
+            self.assertIn("restored the pre-run snapshot", result["note"])
+
+    def test_api_or_watchdog_stop_keeps_its_source_but_stays_unconfirmed(self):
+        # rc.7.87 复审 R1：只有人在 VS Code 里的 Stop 才判 STOPPED_NO_RETRY；api/watchdog 照旧 UNCONFIRMED，来源另记
+        for who, reason in (("api", "http /soft-stop"), ("watchdog", "guard cancel: PROGRESS stall")):
+            with self.subTest(who), tempfile.TemporaryDirectory() as directory:
+                result = self._stopped_run(directory, mutate_body=lambda b: b["stoppedBy"].update(by=who, reason=reason))
+                self.assertEqual(result["verdict"], "EXECUTION_UNCONFIRMED_NO_RETRY", who)
+                self.assertNotIn("stoppedBy", result)
+                self.assertEqual(result["stopReportedBy"], who)
+                self.assertFalse(result["stopChecks"]["stopByPerson"])
+                self.assertEqual([k for k, v in result["stopChecks"].items() if v is not True], ["stopByPerson"])
+
+    def test_stop_without_a_real_restore_of_this_stop_stays_unconfirmed(self):
+        # rc.7.87 复审 N1：ok=True 也可能是「没有快照、跳过恢复」；还要 restored 为真且是同一次 Stop 的 generation
+        cases = {
+            "no pre-run snapshot (ok, not restored)": lambda a: a["status"]["lastSoftStop"].update(restored=False, skipped="no pre-run dataset snapshot"),
+            "restored missing": lambda a: a["status"]["lastSoftStop"].pop("restored"),
+            "restore record of an older Stop": lambda a: a["status"]["lastSoftStop"].update(generation=0),
+            "restore record without generation": lambda a: a["status"]["lastSoftStop"].pop("generation"),
+        }
+        for name, mutate in cases.items():
+            with self.subTest(name), tempfile.TemporaryDirectory() as directory:
+                result = self._stopped_run(directory, mutate_after=mutate)
+                self.assertEqual(result["verdict"], "EXECUTION_UNCONFIRMED_NO_RETRY", name)
+                self.assertNotIn("stoppedBy", result)
+                self.assertEqual([k for k, v in result["stopChecks"].items() if v is not True], ["restoredAfter"], name)
 
     def test_stop_record_that_does_not_check_out_stays_unconfirmed(self):
         cases = {
