@@ -363,8 +363,11 @@ class Sessions:
                 lp = subprocess.run(["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"], capture_output=True, text=True,
                                     timeout=left)
                 # V3-W5：只有退出码 0 的 n 行才算读到 cwd；其余退出码即使带了 n 行也是没读完
+                # V3-W6（复审 R1）：退出码 0 但 stderr 有内容（如 partial read 警告）也不采信 stdout
                 if lp.returncode != 0:
                     cwd_why = "lsof:exit"
+                elif (lp.stderr or "").strip():
+                    cwd_why = "lsof:stderr"
                 else:
                     cwd = next((line[1:] for line in (lp.stdout or "").splitlines() if line.startswith("n")), None)
                     if cwd is None:

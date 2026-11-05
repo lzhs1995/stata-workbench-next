@@ -905,6 +905,7 @@ class RealAdapterCloseTests(Base):
                  ("exit 2", {"returncode": 2, "stdout": ""}, "lsof:exit"),
                  ("exit 1 with a stale n line", {"returncode": 1}, "lsof:exit"),
                  ("exit 0 without n", {"stdout": "p999\nfcwd\n"}, "lsof:empty"),
+                 ("exit 0 with a stderr warning", {"stderr": "lsof: WARNING: partial read\n"}, "lsof:stderr"),
                  ("raised", OSError("lsof missing"), "lsof"))
         for i, (label, o, why) in enumerate(cases):
             name = f"c{i}"
@@ -919,6 +920,29 @@ class RealAdapterCloseTests(Base):
             self.assertEqual(r["orphanCleanup"], {"mode": "report-only", "signalled": [], "clean": False, "unresolved": 1,
                                                   "holders": "present:1"}, label)
             self.assertEqual([p["pid"] for p in r["leftoverProcesses"]], [999], label)
+
+    def test_real_close_partial_cwd_read_is_unresolved_even_when_the_worker_leaves_the_ws(self):
+        # Codex 第 4 轮 R1 的复现：cwd lsof 带回一行 n/outside/session，但 rc 0 带 stderr 警告或 rc 2，都是没读完。
+        # 关窗时 worker 把 cwd 挪出 ws，最后一次目录扫描为空；worker 仍在（999 in procs），所以不能报 clean
+        outside = str(self.root / "outside" / "session")
+        cases = (("exit 0 + stderr warning", {"returncode": 0, "stderr": "lsof: WARNING: partial read\n"}, "lsof:stderr"),
+                 ("exit 2 control", {"returncode": 2, "stderr": ""}, "lsof:exit"))
+        for i, (label, o, why) in enumerate(cases):
+            name = f"r{i}"
+            procs = self.worker(name)
+            def move_out(procs, ov):
+                procs[999]["cwd"] = outside
+            s, calls, t, patched = self.world(name, procs, override={"cwd": {**o, "stdout": f"p999\nfcwd\nn{outside}\n"}},
+                                              on_quit=move_out)
+            with patched():
+                r = s.close(name)
+            self.assertIn(999, procs, label + ": the worker is still alive")
+            self.assertEqual(r["verdict"], "CLOSED", label)
+            self.assertEqual(r["orphanWorkers"], [{"pid": 999, "startedAt": "Thu Nov 5 02:52:08 2026", "ended": False,
+                                                   "unresolved": True, "reason": "cwd-unreadable:" + why}], label)
+            self.assertEqual(r["leftoverProcesses"], [], label + ": the final scan is empty")
+            self.assertEqual(r["orphanCleanup"], {"mode": "report-only", "signalled": [], "clean": False, "unresolved": 1,
+                                                  "holders": "none"}, label)
 
     def test_real_close_discovery_failure_is_unknown_not_clean(self):
         # 复审 B1：lsof 退出码 2、空输出曾被当成「没人占用」
@@ -1083,6 +1107,7 @@ CLOSE_GUARD_MUTANTS = (
     ("close: final scan outside the report budget", "self.leftovers(name, report_end) if", "self.leftovers(name) if"),
     ("identity: lsof gets the whole budget", "timeout=left)", "timeout=float(timeout))"),
     ("identity: cwd accepted on any exit code", "if lp.returncode != 0:", "if lp.returncode not in (0, 1):"),
+    ("identity: cwd stderr ignored", '                elif (lp.stderr or "").strip():\n                    cwd_why = "lsof:stderr"\n', ""),
     ("identity: ps exit code ignored without output", "if proc.returncode not in (0, 1) or (line and not m):", "if line and not m:"),
 )
 
