@@ -15,18 +15,27 @@ const L = (n) => `Thu Nov  5 02:52:${String(n).padStart(2, "0")} 2026`;
 const REG = Date.parse(L(1).replace(/\s+/g, " "));
 const HOST = 5;
 const ROOT = { pid: 10, registeredAtMs: REG, hostPid: HOST };
-// table: pid -> {ppid, lstart, cwd}. f: failure switches. clock.t advances on sleep / slow reads.
+// table: pid -> {ppid, lstart, cwd, stopped?, ignoreTerm?}. f: failure switches. clock.t advances on sleep / slow reads.
+// Every row and the host are in the host's process group (as on a real Mac window). hup.n counts the
+// kernel's orphaned-group SIGHUP: a reparented (ppid 1) row exits while another row is stopped (D8).
 function world(table, f = {}) {
-  const sent = [], clock = { t: 1000000 };
+  const sent = [], clock = { t: 1000000 }, hup = { n: 0 };
+  const del = (pid) => { const r = table[pid]; delete table[pid]; if (r && r.ppid === 1 && Object.values(table).some((x) => x.stopped)) hup.n++; };
   const fail = (cb) => cb(Object.assign(new Error("boom"), f.timeout ? { killed: true } : { code: 2 }), "");
   const execFile = (file, args, o, cb) => {
     if (f.slowMs) clock.t += f.slowMs;
-    if (f.down && f.down[file] && f.down[file]()) return fail(cb);
+    if (f.down && f.down[file] && f.down[file](args)) return fail(cb);
     if (file === "pgrep") {
       const parents = args[1].split(",").map(Number);
       const kids = Object.entries(table).filter(([, r]) => parents.includes(r.ppid)).map(([p]) => p);
       if (f.afterPgrep) f.afterPgrep(table);
       return kids.length ? cb(null, kids.join("\n") + "\n") : cb(Object.assign(new Error("none"), { code: 1 }), "");
+    }
+    if (file === "ps" && args[0] === "-axo") {
+      if (f.groupDown) return fail(cb);
+      const rows = (f.noHostRow ? [] : [`${HOST} ${HOST} Ss ${L(0)}`]).concat(
+        Object.entries(table).map(([p, r]) => `${p} ${HOST} ${r.stopped ? "T" : "S"} ${r.lstart}`));
+      return cb(null, rows.join("\n") + "\n");
     }
     if (file === "ps") {
       const want = args[args.length - 1].split(",").map(Number);
@@ -47,10 +56,14 @@ function world(table, f = {}) {
     }
     sent.push([pid, sig, clock.t]);
     if (!table[pid]) throw Object.assign(new Error("ESRCH"), { code: "ESRCH" });
-    if (sig === "SIGKILL" ? !f.ignoreKill : !f.ignoreTerm) delete table[pid];
+    const row = table[pid];
+    if (sig === "SIGCONT") { if (row.stopped) { row.stopped = false; if (row.pendingTerm) del(pid); } return; }
+    if (sig === "SIGKILL" ? !f.ignoreKill : !(f.ignoreTerm || row.ignoreTerm)) {
+      if (sig === "SIGTERM" && row.stopped) row.pendingTerm = true; else del(pid);
+    }
     if (f.afterSignal) f.afterSignal(table, pid, sig);
   };
-  return { execFile, kill, sent, clock, now: () => clock.t, sleep: async (ms) => { clock.t += ms; }, termGraceMs: 3000, killGraceMs: 1500 };
+  return { execFile, kill, sent, clock, hup, hostPid: HOST, now: () => clock.t, sleep: async (ms) => { clock.t += ms; }, termGraceMs: 3000, killGraceMs: 1500 };
 }
 // server 10 (child of host 5), worker 11 and tracker 12 in this session's ws
 const base = () => ({ 10: { ppid: HOST, lstart: L(1), cwd: WS }, 11: { ppid: 10, lstart: L(2), cwd: WS }, 12: { ppid: 10, lstart: L(2), cwd: WS } });
@@ -112,7 +125,7 @@ async function cases() {
   // R3 (review repro): TERM sent, process still alive, the re-read times out -> NOT ended
   t = base(); w = world(t); c = await capOf(t, w); delete t[10]; t[11].ppid = 1; delete t[12];
   let psCalls = 0;
-  w = world(t, { ignoreTerm: true, timeout: true, down: { ps: () => ++psCalls > 1 } });
+  w = world(t, { ignoreTerm: true, timeout: true, down: { ps: (a) => a[0] !== "-axo" && ++psCalls > 1 } });
   r = await reap(c, w);
   ok(r.length === 1 && !r[0].ended && r[0].unresolved && /orphaned-sigterm\+identity-unknown/.test(r[0].reason)
      && w.sent.map((s) => s[1]).join() === "SIGTERM", "R3: post-TERM read failure -> unresolved, no KILL, not ended");
@@ -166,7 +179,7 @@ async function cases() {
   t = base(); w = world(t, { ignoreTerm: true }); c = await capOf(t, w); delete t[10]; t[11].ppid = 1; delete t[12];
   const store = {};
   const res = await core.finishReap(Promise.resolve(c), DIRS, { generation: 3 },
-    { execFile: w.execFile, kill: w.kill, sleep: (ms) => new Promise((rr) => setTimeout(rr, 40)), raceMs: 10, store, isCurrent: () => true });
+    { execFile: w.execFile, kill: w.kill, hostPid: HOST, sleep: (ms) => new Promise((rr) => setTimeout(rr, 40)), raceMs: 10, store, isCurrent: () => true });
   await new Promise((rr) => setTimeout(rr, 150));
   ok(res.orphanWorkers.length === 2 && res.orphanWorkers.every((x) => x.unresolved && !x.ended) && res.orphanWorkers[1].reason === "reap-timeout"
      && !res.clean && res.unresolved === 2, "R4: timeout result keeps every identity not proven ended (incl. one never re-read)");
@@ -254,6 +267,25 @@ async function cases() {
   r = await core.reapOrphans(c, DIRS, { ctx: kctx });
   ok(sleeps === 0 && w.sent.length === 1 && r.find((x) => x.pid === 11).reason === "orphaned-sigterm+reap-cancelled"
      && r.find((x) => x.pid === 12).reason === "reap-cancelled", "R4: no sleep (and no re-read) after cancel");
+  // D8 (V3-D8L live, 4/4 on a Mac): worker stopped, tracker ignores TERM, both reparented to launchd in the
+  // host's group. Killing the tracker while the worker is stopped orphans the group: SIGHUP to the whole window.
+  t = base(); t[11].ignoreTerm = true; w = world(t); c = await capOf(t, w); delete t[10]; t[11].ppid = 1; t[12].ppid = 1; t[12].stopped = true;
+  r = await reap(c, w);
+  ok(w.hup.n === 0 && w.sent[0][0] === 12 && w.sent[0][1] === "SIGCONT" && w.sent.map((x) => x[1]).join() === "SIGCONT,SIGTERM,SIGKILL,SIGTERM"
+     && r.length === 2 && r.every((x) => x.ended), "D8: the stopped worker is resumed before any terminating signal; no orphaned-group SIGHUP");
+  // D8: a stopped member of the host's group that is not one of ours -> no signal at all, unresolved
+  t = base(); w = world(t); c = await capOf(t, w); delete t[10]; t[11].ppid = 1; delete t[12]; t[40] = { ppid: 1, lstart: L(9), stopped: true };
+  r = await reap(c, w);
+  ok(w.sent.length === 0 && w.hup.n === 0 && r.length === 1 && r[0].unresolved && r[0].reason === "host-group-stopped", "D8: foreign stopped member -> no signal");
+  // D8: the host's group cannot be read -> no signal
+  for (const [label, sw] of [["ps -axo fails", { groupDown: true }], ["host row missing", { noHostRow: true }]]) {
+    t = base(); w = world(t); c = await capOf(t, w); delete t[10]; t[11].ppid = 1; delete t[12];
+    const w3 = world(t, sw); r = await reap(c, w3);
+    ok(w3.sent.length === 0 && r.length === 1 && r[0].unresolved && r[0].reason === "host-group-unknown", "D8: " + label + " -> no signal");
+  }
+  ok(core.parseGroup(`5 5 Ss ${L(0)}\n11 5 T ${L(2)}\n99 77 S ${L(3)}\n`, 5).map((x) => x.pid).join() === "5,11"
+     && core.parseGroup(`5 5 Ss ${L(0)}\ngarbage\n`, 5) === null && core.parseGroup(`6 5 S ${L(0)}\n`, 5) === null,
+     "parseGroup: the host's group only; a partial read or a missing host row is null");
   // helpers
   const now = Date.now(), owned = new Map([[10, { pid: 10, startedAt: new Date(now - 9000).toISOString() }],
     [11, { pid: 11, startedAt: new Date(now - 1000).toISOString() }], [12, { pid: 12, startedAt: new Date(now).toISOString() }]]);
@@ -298,6 +330,11 @@ const MUTANTS = [
   ["run ignores cancel", "    if (halt) return resolve({ ok: false, kind: halt });\n", ""],
   ["readNow ignores cancel", "  if (halt) return { state: UNKNOWN, why: halt };\n", ""],
   ["sleep after cancel", '      if (halt) { rec.reason = label + "+" + halt; break; }\n', ""],
+  ["D8 no group guard", '      const g = stopReason(ctx) ? null : await groupGuard(ids, ctx);\n      if (g) { rec.reason = rec.reason === "pending" ? g : rec.reason + "+" + g; break; }\n', ""],
+  ["D8 stopped state not detected", "    const stopped = group.filter((r) => /^[Tt]/.test(r.stat));", "    const stopped = [];"],
+  ["D8 foreign stopped member resumed", '    if (pass === 1 || stopped.some((r) => ids.get(r.pid) !== r.lstart)) return "host-group-stopped";', '    if (pass === 1) return "host-group-stopped";'],
+  ["D8 unreadable group treated as safe", '    if (!group) return "host-group-unknown";', "    if (!group) return null;"],
+  ["D8 group read failure treated as safe", '    if (!ps.ok) return "host-group-unknown";', "    if (!ps.ok) return null;"],
 ];
 (async () => {
   await cases();
