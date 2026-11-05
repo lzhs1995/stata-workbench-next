@@ -67,8 +67,8 @@
       "bytes": 15512
     },
     "scripts/execution_guard.js": {
-      "sha256": "8212390b6ab0869fe8a42299f8f57190e0324dc42af5742ea233fbf8f444e0d5",
-      "bytes": 45318
+      "sha256": "ac65639ef32c2b24d205536a415d2037a74296a0f295bfd65f579022e3442a75",
+      "bytes": 45347
     },
     "scripts/escalation_ladder_gate.js": {
       "sha256": "0b4487f1c80bee598666ed21d87f71132d44b5fc336c22b1dfee10fb30131adc",
@@ -451,8 +451,8 @@
       "bytes": 4602
     },
     "scripts/orphan_worker_core.js": {
-      "sha256": "466326ba4323fb3c3c27793dbb0b12e150699148f1b6ff303dcc2720511d002e",
-      "bytes": 8810
+      "sha256": "14343afe279e61c5a148c47c8d9d8a1dfd7c7e1aa6e75da5cc95a17f8e97191c",
+      "bytes": 18097
     }
   },
   "acceptanceStatus": "PENDING_LICENSED_MAC_FULL_ACCEPTANCE",

@@ -33,6 +33,7 @@ ok(/globalThis\.__codexOrphanCaptureP=null;if\(process\.platform!=="win32"\)/.te
 ok(dist.includes("orphanWorkers:globalThis.__codexOrphanReap||null,"), "/status shows orphanWorkers");
 ok(dist.includes(".startCapture(globalThis.__codexOwnedBackendPids)") && dist.includes(".finishReap(__cp,__d,"), "bundle calls the core entry points");
 const core = require("./orphan_worker_core");
-ok(/r\(null\), 5000\)/.test(core.startCapture.toString()) && /"reap-timeout"[^]*12000/.test(core.finishReap.toString()), "capture bounded at 5 s, reap at 12 s (core)");
+ok(/CAPTURE_BUDGET_MS/.test(core.startCapture.toString()) && /REAP_RACE_MS/.test(core.finishReap.toString()) && /cancel\.stopped = true/.test(core.finishReap.toString())
+   && core.REAP_RACE_MS === 12000 && core.REAP_BUDGET_MS < core.REAP_RACE_MS, "capture bounded at 5 s, reap at 12 s and the race cancels the reap (core)");
 ok(fs.existsSync(path.join(__dirname, "orphan_worker_core.js")), "core module shipped next to the bundle");
 console.log("ORPHAN_WORKER_REAP_PATCH_OK checks=" + checks);

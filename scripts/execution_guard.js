@@ -734,7 +734,7 @@ async function guardProgress(work, opts) {
     } else {
       const now = clock(), logIdle = now - state.lastProgressAt;
       if (cpuProbe) {
-        // 卡住的采样超时作废（迟到结果按 seq 丢弃），基线重置
+        // 卡住的采样超时作废（迟到结果按 seq 丢弃）；rc.7.88 起只计错误、不重置基线
         if (cpu.inflight && now - cpu.inflight.at > cpuTimeoutMs) {
           cpu.inflight = null; cpuErr("guard-timeout");
         }
