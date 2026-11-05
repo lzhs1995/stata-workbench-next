@@ -451,8 +451,8 @@
       "bytes": 4602
     },
     "scripts/orphan_worker_core.js": {
-      "sha256": "14343afe279e61c5a148c47c8d9d8a1dfd7c7e1aa6e75da5cc95a17f8e97191c",
-      "bytes": 18097
+      "sha256": "d9e6a50c544dfbae93e59dd38ea1255320cfbc45080cdc0cc6f44c630474bdf4",
+      "bytes": 22544
     }
   },
   "acceptanceStatus": "PENDING_LICENSED_MAC_FULL_ACCEPTANCE",

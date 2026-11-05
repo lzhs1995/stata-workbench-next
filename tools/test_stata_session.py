@@ -581,7 +581,9 @@ class ListCloseTests(Base):
             if sig == 9 or not ignore_term:
                 table.pop(pid)
         clock = iter(range(0, 100000))
-        s = self.sessions(leftovers=lambda dirs: [{"pid": p, "command": "python"} for p in sorted(table)],
+        # lsof +d 的替身：只列 cwd 在这些目录里的进程（V3-W4：clean 也看最后一次占用扫描）
+        s = self.sessions(leftovers=lambda dirs: [{"pid": p, "command": "python"} for p in sorted(table)
+                                                  if any(ss.is_inside(str(d), table[p].get("cwd") or "/") for d in dirs)],
                           identity=lambda pid: ({"pid": pid, **table[pid]} if pid in table else None),
                           signal=signal_, clock=lambda: next(clock))
         s.open("p1", runtime_source=self.source, launch=False)
@@ -603,7 +605,8 @@ class ListCloseTests(Base):
         self.assertEqual(sent, [], "close never signals a worker (ownership is not provable from cwd/command)")
         self.assertEqual(r["orphanWorkers"], [{"pid": 25045, "startedAt": "Thu Nov 5 02:52:08 2026", "ended": False,
                                                "unresolved": True, "reason": "still-running:orphaned"}])
-        self.assertEqual(r["orphanCleanup"], {"mode": "report-only", "signalled": [], "clean": False, "unresolved": 1})
+        self.assertEqual(r["orphanCleanup"], {"mode": "report-only", "signalled": [], "clean": False, "unresolved": 1,
+                                              "holders": "present:1"})
 
     def test_close_never_signals_an_unrelated_python_worker_in_the_same_cwd_or_another_sessions_worker(self):
         ws = str(self.root / "ws" / "p1")
@@ -621,7 +624,7 @@ class ListCloseTests(Base):
         ws = str(self.root / "ws" / "p1")
         spawn = "/py/python3.11 -c from multiprocessing.spawn import spawn_main; spawn_main(...)"
         for label, after in (("exited", lambda t: t.pop(25045)),
-                             ("pid replaced", lambda t: t[25045].update(lstart="Thu Nov 5 06:00:00 2026"))):
+                             ("pid replaced", lambda t: t[25045].update(lstart="Thu Nov 5 06:00:00 2026", cwd="/elsewhere"))):
             table = {25045: {"ppid": 24709, "lstart": "Thu Nov 5 02:52:08 2026", "cwd": ws, "command": spawn}}
             s, sent = self.orphan_world(table)
             orig = s.kill

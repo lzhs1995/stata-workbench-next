@@ -186,7 +186,74 @@ async function cases() {
   const unk = await core.finishReap(Promise.resolve({ state: "unknown", why: "truncated" }), DIRS, { generation: 1 }, { store: {} });
   ok(unk.clean === false && unk.orphanWorkers[0].unresolved && /capture-unknown:truncated/.test(unk.orphanWorkers[0].reason), "finishReap: unknown capture -> not clean");
   const sc = await core.startCapture(new Map(), {});
-  ok(sc.state === "ok" && sc.items.length === 0, "startCapture: no registered backend -> nothing to do");
+  ok(sc.state === "ok" && sc.items.length === 0 && sc.unresolved.length === 1 && sc.unresolved[0].reason === "no-live-backend-at-capture",
+    "startCapture: no live backend -> nothing to reap, but not evidence of a clean tree");
+  // B3 (review repro): kill(pid, 0) on the registered root throws EINVAL -> unresolved, not "no-root" clean
+  const realKill = process.kill;
+  let b3res;
+  try {
+    process.kill = (pid, sig) => {
+      if (sig === 0 && pid === 123) throw Object.assign(new Error("EINVAL"), { code: "EINVAL" });
+      throw new Error("test: no real signal " + pid + " " + sig);
+    };
+    const cap = await core.startCapture(new Map([[123, { pid: 123, startedAt: new Date(REG).toISOString() }]]), { hostPid: HOST, raceMs: 500 });
+    b3res = await core.finishReap(Promise.resolve(cap), DIRS, { generation: 1 },
+      { store: {}, isCurrent: () => true, kill: () => { throw new Error("test: no signal"); } });
+  } finally { process.kill = realKill; }
+  ok(b3res.clean === false && b3res.unresolved >= 1 && b3res.orphanWorkers.some((x) => x.pid === 123 && x.unresolved && x.reason === "backend-presence-unknown"),
+    "B3: root presence unknown (EINVAL) -> unresolved through startCapture/finishReap");
+  // B3: newer registration unknown, older one alive -> the older is captured, the unknown stays unresolved
+  t = base(); w = world(t, { probeErr: (p) => p === 20 });
+  const own2 = new Map([[10, { pid: 10, startedAt: new Date(REG).toISOString() }], [20, { pid: 20, startedAt: new Date(REG + 60000).toISOString() }]]);
+  c = await core.startCapture(own2, { ...w, hostPid: HOST, raceMs: 500 });
+  ok(c.state === "ok" && c.root.pid === 10 && c.items.length === 2 && c.unresolved.length === 1 && c.unresolved[0].pid === 20, "B3: newer unknown + older alive -> capture older, keep unknown");
+  delete t[10]; t[11].ppid = 1; t[12].ppid = 1;
+  r = await reap(c, w);
+  ok(r.length === 3 && r.filter((x) => x.ended).length === 2 && r.some((x) => x.pid === 20 && x.unresolved), "B3: the unknown registration survives the reap as unresolved");
+  // B3: two live backends -> newest captured, the other reported unresolved
+  t = base(); t[30] = { ppid: HOST, lstart: L(1), cwd: WS }; w = world(t);
+  const own3 = new Map([[30, { pid: 30, startedAt: new Date(REG - 60000).toISOString() }], [10, { pid: 10, startedAt: new Date(REG).toISOString() }]]);
+  c = await core.startCapture(own3, { ...w, hostPid: HOST, raceMs: 500 });
+  ok(c.state === "ok" && c.root.pid === 10 && c.unresolved.length === 1 && c.unresolved[0].pid === 30 && c.unresolved[0].reason === "other-backend-not-captured",
+    "B3: a second live backend is not silently skipped");
+  // B3: registered backend already gone (rc64 exit deregistered it or not) -> unresolved, not clean
+  t = base(); delete t[10]; w = world(t);
+  c = await core.startCapture(new Map([[10, { pid: 10, startedAt: new Date(REG).toISOString() }]]), { ...w, hostPid: HOST, raceMs: 500 });
+  r = await reap(c, w);
+  ok(c.root === null && r.length === 1 && r[0].reason === "no-live-backend-at-capture" && w.sent.length === 0, "B3/SR2: dead server at capture -> unresolved");
+  const ne = await core.startCapture("not a map", {});
+  ok(ne.state === "unknown" && ne.why === "owned-unreadable", "B3: unreadable owned map -> unknown");
+  c = await core.startCapture(new Map([[0, { pid: 0, startedAt: "bad" }]]), { ...world(base()), hostPid: HOST, raceMs: 500 });
+  ok(c.unresolved.some((x) => x.reason === "backend-registration-unreadable"), "B3: unreadable registration -> unresolved");
+  // publish: bounded history keeps unresolved rows first and counts what it dropped
+  const many = Array.from({ length: 40 }, (_, i) => ({ pid: 100 + i, ended: false, unresolved: true, reason: "x" }));
+  const pub = core.publish({ generation: 9, orphanWorkers: [{ pid: 1, ended: true, unresolved: false }, ...many] }, {});
+  ok(pub.orphanWorkers.length === core.HISTORY_MAX && pub.orphanWorkers.every((x) => x.unresolved) && pub.droppedUnresolved === 8
+     && pub.unresolved === 40 && pub.clean === false, "publish: overflow is counted, never clean by truncation");
+  const carried = core.publish({ generation: 11, orphanWorkers: [], droppedUnresolved: 0 },
+    { __codexOrphanReap: { generation: 10, orphanWorkers: [], droppedUnresolved: 3, clean: false, unresolved: 3 } });
+  ok(carried.clean === false && carried.droppedUnresolved === 3 && carried.unresolved === 3, "publish: dropped count carries to the newer result");
+  const lateD = core.publish({ generation: 10, orphanWorkers: [], droppedUnresolved: 2 },
+    { __codexOrphanReap: { generation: 11, orphanWorkers: [], droppedUnresolved: 0, clean: true, unresolved: 0 } });
+  ok(lateD.generation === 11 && lateD.clean === false && lateD.droppedUnresolved === 2, "publish: late older result's dropped count is kept");
+  // R4: cancelled / superseded -> no new subprocess, probe or sleep
+  let calls = 0;
+  const cbErr = (f, a, o, cb) => { calls++; cb(Object.assign(new Error("ran"), { code: 2 }), ""); };
+  const cctx = core.makeCtx({ execFile: cbErr, cancel: { stopped: true, why: "x" } }, 5000);
+  const rr = await new Promise((res) => { core.readNow(11, { ...cctx, probe: () => { calls++; return core.PRESENT; } }).then(res); });
+  const rn = await core.captureDescendants(ROOT, { ctx: cctx });
+  ok(calls === 0 && rr.state === core.UNKNOWN && rr.why === "x" && rn.state === "unknown" && rn.why === "pgrep:x", "R4: after cancel no read starts");
+  const sctx = core.makeCtx({ execFile: cbErr, isCurrent: () => false }, 5000);
+  const rs = await core.captureDescendants(ROOT, { ctx: sctx });
+  ok(calls === 0 && rs.why === "pgrep:superseded", "R4: superseded -> no read starts");
+  t = base(); w = world(t); c = await capOf(t, w); delete t[10]; t[11].ppid = 1; delete t[12];
+  const cz = { stopped: false, why: null };
+  let sleeps = 0;
+  const kctx = core.makeCtx({ ...w, cancel: cz, kill: (pid, sig) => { const k = w.kill(pid, sig); if (sig !== 0) { cz.stopped = true; cz.why = "reap-cancelled"; } return k; },
+    sleep: async () => { sleeps++; } }, 11000);
+  r = await core.reapOrphans(c, DIRS, { ctx: kctx });
+  ok(sleeps === 0 && w.sent.length === 1 && r.find((x) => x.pid === 11).reason === "orphaned-sigterm+reap-cancelled"
+     && r.find((x) => x.pid === 12).reason === "reap-cancelled", "R4: no sleep (and no re-read) after cancel");
   // helpers
   const now = Date.now(), owned = new Map([[10, { pid: 10, startedAt: new Date(now - 9000).toISOString() }],
     [11, { pid: 11, startedAt: new Date(now - 1000).toISOString() }], [12, { pid: 12, startedAt: new Date(now).toISOString() }]]);
@@ -218,7 +285,19 @@ const MUTANTS = [
   ["timeout does not cancel", 'cancel.stopped = true; cancel.why = "reap-timeout"; r(null);', "r(null);"],
   ["late older result replaces newer", "  if (cur && Number.isFinite(cg) && Number.isFinite(g) && cg > g) {", "  if (false) {"],
   ["no KILL escalation", '["SIGKILL", "orphaned-sigkill", ctx.killGraceMs]', ""],
-  ["unknown capture reported clean", "    state.recs = [{ pid: null, startedAt: null, ended: false, unresolved: true,", "    state.recs = []; [{ pid: null, startedAt: null, ended: false, unresolved: true,"],
+  ["unknown capture reported clean", "    state.recs = [...extras, { pid: null, startedAt: null, ended: false, unresolved: true,", "    state.recs = []; [...extras, { pid: null, startedAt: null, ended: false, unresolved: true,"],
+  ["B3 unknown root treated as absent", '    else if (pres !== ABSENT) extras.push(extraRow(pid, "backend-presence-unknown"));', "    else if (false) extras.push(0);"],
+  ["B3 other live backend ignored", '  for (const other of live.slice(1)) extras.push(extraRow(other.pid, "other-backend-not-captured"));\n', ""],
+  ["B3 no live backend reads clean", '  if (!root && !extras.length) extras.push(extraRow(null, "no-live-backend-at-capture"));\n', ""],
+  ["B3 extras dropped when nothing to reap", "  if (!captured.items.length) { state.recs = extras; return state.recs; }", "  if (!captured.items.length) { state.recs = []; return state.recs; }"],
+  ["B3 extras dropped during reap", "  state.recs = [...extras, ...captured.items.map((b) => row(b, false, \"pending\"))];", "  state.recs = [...captured.items.map((b) => row(b, false, \"pending\"))]; extras.length = 0;"],
+  ["B3 extras not attached", "  const withExtras = (cap) => (sel.extras.length ? { ...cap, unresolved: sel.extras } : cap);", "  const withExtras = (cap) => cap;"],
+  ["B3 default probe boolean", "      : (pid) => probePresence(kill, pid));", "      : (pid) => { try { kill(pid, 0); return PRESENT; } catch { return ABSENT; } });"],
+  ["overflow not counted", "  const unresolved = list.filter((w) => w.unresolved).length + droppedUnresolved;", "  const unresolved = list.filter((w) => w.unresolved).length;"],
+  ["overflow drop not recorded", "  const dropped = rows.slice(HISTORY_MAX).filter((w) => w.unresolved).length + (Number(prevDropped) || 0);", "  const dropped = 0;"],
+  ["run ignores cancel", "    if (halt) return resolve({ ok: false, kind: halt });\n", ""],
+  ["readNow ignores cancel", "  if (halt) return { state: UNKNOWN, why: halt };\n", ""],
+  ["sleep after cancel", '      if (halt) { rec.reason = label + "+" + halt; break; }\n', ""],
 ];
 (async () => {
   await cases();
@@ -232,7 +311,9 @@ const MUTANTS = [
       core = require(f);
       let killed = false;
       const saved = checks;
-      try { await cases(); } catch { killed = true; }
+      let hang;
+      try { await Promise.race([cases(), new Promise((_, rej) => { hang = setTimeout(() => rej(new Error("hang")), 20000); })]); } catch { killed = true; }
+      clearTimeout(hang);
       checks = saved;
       results.push([name, killed]);
     }

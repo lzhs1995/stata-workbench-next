@@ -10,15 +10,23 @@
 // the same rules as the rc.7.84 CPU probe. cwd only narrows: it never grants a
 // signal. Anything missing, partial, truncated or unreadable is UNKNOWN and is
 // reported as unresolved; it is never signalled and never reported as clean.
-// Every read, sleep and signal checks one absolute deadline and the reset
-// generation; after a timeout or a newer reset no further signal is sent.
-// Limits: lstart has 1 s resolution and signals go to a bare pid, so a pid reused
-// within the same second, or between the last re-read and kill(), is narrowed,
-// not ruled out. Windows ends the whole tree in rc.7.82; not handled here.
+// Root selection is three-state too (rc.7.89-v3, Codex round 2 B3): a registered
+// backend whose presence cannot be read, a second live backend, or no live backend
+// at all (rc64 drops a backend from the owned map on its exit event, so its
+// orphaned children can no longer be found) is reported unresolved, never clean.
+// Cancellation, supersession and the deadline are checked before every subprocess
+// read, every presence probe, every sleep and every signal; a read already in
+// flight is bounded by its own timeout (<= 4 s) and nothing new starts after it.
+// Limits: the root rule is one-sided (start <= registration + 5 s, direct child of
+// this host): another child of this host that got the same pid inside that window
+// is not ruled out. lstart has 1 s resolution and signals go to a bare pid, so a
+// pid reused between the last re-read and kill() is narrowed, not ruled out.
+// Windows ends the whole tree in rc.7.82; not handled here.
 const childProcess = require("node:child_process");
 const path = require("node:path");
 
-const CORE_VERSION = "rc.7.89-v2";
+const CORE_VERSION = "rc.7.89-v3";
+const HISTORY_MAX = 32;
 const MAX_PIDS = 16;
 const MAX_DEPTH = 4;
 const STEP_TIMEOUT_MS = 4000;
@@ -38,6 +46,8 @@ const PS_ENV = () => Object.assign({}, process.env, { LC_ALL: "C", LANG: "C" });
 function run(ctx, file, args, okCodes) {
   const left = Math.min(STEP_TIMEOUT_MS, ctx.deadline - ctx.now());
   return new Promise((resolve) => {
+    const halt = haltReason(ctx);
+    if (halt) return resolve({ ok: false, kind: halt });
     if (!(left > 0)) return resolve({ ok: false, kind: "budget" });
     try {
       ctx.execFile(file, args, { timeout: left, maxBuffer: 1 << 20, env: PS_ENV() }, (err, stdout) => {
@@ -105,6 +115,11 @@ function makeCtx(opts = {}, budgetMs) {
   };
 }
 
+// Cancelled or superseded (the deadline is checked separately as "budget"), or null.
+function haltReason(ctx) {
+  if (ctx.cancel.stopped) return ctx.cancel.why || "reap-cancelled";
+  return ctx.isCurrent() ? null : "superseded";
+}
 // Why this run must stop now (deadline, cancelled, superseded), or null.
 function stopReason(ctx) {
   if (ctx.cancel.stopped) return ctx.cancel.why || "reap-cancelled";
@@ -115,6 +130,8 @@ function stopReason(ctx) {
 // Re-read one pid: {state: PRESENT, pid, ppid, lstart, startMs, cwd} | {state: ABSENT} |
 // {state: UNKNOWN, why}. A failed / timed-out / unparsable read is UNKNOWN, never ABSENT.
 async function readNow(pid, ctx) {
+  const halt = haltReason(ctx);
+  if (halt) return { state: UNKNOWN, why: halt };
   const pres = ctx.probe(pid);
   if (pres === ABSENT) return { state: ABSENT };
   if (pres !== PRESENT) return { state: UNKNOWN, why: "probe" };
@@ -127,19 +144,42 @@ async function readNow(pid, ctx) {
   return { state: PRESENT, ...rows.get(pid), cwd: lsof.ok ? (parseCwd(lsof.text).get(pid) || null) : null };
 }
 
-// Newest registered backend of this window that is still alive:
-// {pid, registeredAtMs, hostPid} or null. Same selection as latestOwnedRoot (rc.7.84).
-function latestRoot(owned, isAlive, hostPid) {
-  if (!(owned instanceof Map)) return null;
-  let best = null;
+function extraRow(pid, reason) {
+  return { pid: pid == null ? null : pid, startedAt: null, ended: false, unresolved: true, reason };
+}
+// Registered backends of this window, each probed three-state (B3). Returns
+// {state: "unknown", why} when the owned map itself is unreadable, else
+// {state: "ok", root, extras}: root = newest PRESENT backend ({pid, registeredAtMs,
+// hostPid}) or null; extras = unresolved rows that keep the result from being clean:
+// a backend whose presence is UNKNOWN, any other live backend (not captured), an
+// unreadable registration, or no live backend at all (rc64 deletes a backend from
+// the map on its exit event, so the children of one that died cannot be found).
+function selectRoot(owned, probe, hostPid) {
+  if (!(owned instanceof Map)) return { state: "unknown", why: "owned-unreadable" };
+  const live = [], extras = [];
   for (const [key, entry] of owned) {
     const pid = Number((entry && entry.pid) || key), at = Date.parse((entry && entry.startedAt) || "");
-    if (!(pid > 1) || !Number.isFinite(at) || (best && at <= best.registeredAtMs)) continue;
-    let alive = false;
-    try { alive = !!isAlive(pid); } catch { alive = false; }
-    if (alive) best = { pid, registeredAtMs: at, hostPid: Number(hostPid) > 1 ? Number(hostPid) : null };
+    if (!(pid > 1) || !Number.isFinite(at)) { extras.push(extraRow(pid > 1 ? pid : null, "backend-registration-unreadable")); continue; }
+    let pres;
+    try { pres = probe(pid); } catch { pres = UNKNOWN; }
+    if (pres === PRESENT) live.push({ pid, registeredAtMs: at });
+    else if (pres !== ABSENT) extras.push(extraRow(pid, "backend-presence-unknown"));
   }
-  return best;
+  live.sort((a, b) => b.registeredAtMs - a.registeredAtMs);
+  const top = live[0];
+  const root = top ? { pid: top.pid, registeredAtMs: top.registeredAtMs, hostPid: Number(hostPid) > 1 ? Number(hostPid) : null } : null;
+  for (const other of live.slice(1)) extras.push(extraRow(other.pid, "other-backend-not-captured"));
+  if (!root && !extras.length) extras.push(extraRow(null, "no-live-backend-at-capture"));
+  return { state: "ok", root, extras };
+}
+// Newest registered backend of this window that is PRESENT: {pid, registeredAtMs,
+// hostPid} or null. isAlive may return a boolean or PRESENT / CONFIRMED_ABSENT / UNKNOWN.
+function latestRoot(owned, isAlive, hostPid) {
+  const sel = selectRoot(owned, (pid) => {
+    const v = isAlive(pid);
+    return v === true ? PRESENT : v === false ? ABSENT : v;
+  }, hostPid);
+  return sel.state === "ok" ? sel.root : null;
 }
 
 // Descendants of the registered backend, verified in one ps snapshot:
@@ -218,20 +258,23 @@ function row(before, ended, reason) {
 // process) before any signal is omitted: a clean reset gives [].
 async function reapOrphans(captured, dirs, opts = {}, state = { recs: [] }) {
   const ctx = opts.ctx || makeCtx(opts, REAP_BUDGET_MS);
+  // Root-selection rows (B3) are kept whatever the capture gave.
+  const extras = (captured && Array.isArray(captured.unresolved) ? captured.unresolved : []).map((r) => ({ ...r }));
   if (!captured || captured.state !== "ok" || !Array.isArray(captured.items)) {
-    state.recs = [{ pid: null, startedAt: null, ended: false, unresolved: true,
+    state.recs = [...extras, { pid: null, startedAt: null, ended: false, unresolved: true,
       reason: "capture-unknown:" + String((captured && captured.why) || "none").slice(0, 40) }];
     return state.recs;
   }
-  if (!captured.items.length) { state.recs = []; return state.recs; }
-  if (!captured.root) { state.recs = [{ pid: null, startedAt: null, ended: false, unresolved: true, reason: "capture-unknown:no-root" }]; return state.recs; }
+  if (!captured.items.length) { state.recs = extras; return state.recs; }
+  if (!captured.root) { state.recs = [...extras, { pid: null, startedAt: null, ended: false, unresolved: true, reason: "capture-unknown:no-root" }]; return state.recs; }
   const ids = new Map([[captured.root.pid, captured.root.lstart], ...captured.items.map((i) => [i.pid, i.lstart])]);
-  state.recs = captured.items.map((b) => row(b, false, "pending"));
+  state.recs = [...extras, ...captured.items.map((b) => row(b, false, "pending"))];
+  const base = extras.length;
   const kill = (pid, sig) => {
     try { ctx.kill(pid, sig); return "sent"; } catch (e) { return e && e.code === "ESRCH" ? "gone" : "failed"; }
   };
   for (let i = 0; i < captured.items.length; i++) {
-    const before = captured.items[i], rec = state.recs[i];
+    const before = captured.items[i], rec = state.recs[base + i];
     let why = stopReason(ctx);
     if (why) { rec.reason = why; continue; }
     let v = await look(before, dirs, ids, ctx);
@@ -246,6 +289,8 @@ async function reapOrphans(captured, dirs, opts = {}, state = { recs: [] }) {
       if (k === "gone") { rec.ended = true; rec.unresolved = false; rec.reason = label; break; }
       if (k === "failed") { rec.reason = "signal-failed:" + sig; break; }
       rec.reason = label;
+      const halt = haltReason(ctx);
+      if (halt) { rec.reason = label + "+" + halt; break; }
       await ctx.sleep(Math.max(0, Math.min(grace, ctx.deadline - ctx.now())));
       v = await look(before, dirs, ids, ctx);
       if (v.act === "ended") { rec.ended = true; rec.unresolved = false; break; }
@@ -256,44 +301,62 @@ async function reapOrphans(captured, dirs, opts = {}, state = { recs: [] }) {
   state.recs = state.recs.filter((r) => !r.omit);
   return state.recs;
 }
-function aliveDefault(p) {
-  try { process.kill(p, 0); return true; } catch (e) { return !!(e && e.code === "EPERM"); }
-}
-
 // Bundle entry points (the bundle edit is unchanged). Never throw.
+// Presence of each registered backend: opts.probe (three-state), opts.isAlive
+// (boolean or three-state), else kill(pid, 0) via probePresence. EINVAL and other
+// probe errors are UNKNOWN, not "no backend" (B3).
 function startCapture(owned, opts = {}) {
   try {
-    const root = latestRoot(owned, opts.isAlive || aliveDefault, opts.hostPid == null ? process.pid : opts.hostPid);
-    if (!root) return Promise.resolve({ state: "ok", root: null, items: [], why: "no-root" });
+    const kill = opts.kill || ((pid, sig) => process.kill(pid, sig));
+    const probe = opts.probe || (opts.isAlive ? (pid) => { const v = opts.isAlive(pid); return v === true ? PRESENT : v === false ? ABSENT : v; }
+      : (pid) => probePresence(kill, pid));
+    const sel = selectRoot(owned, probe, opts.hostPid == null ? process.pid : opts.hostPid);
+    if (sel.state !== "ok") return Promise.resolve({ state: "unknown", why: sel.why });
+    const withExtras = (cap) => (sel.extras.length ? { ...cap, unresolved: sel.extras } : cap);
+    if (!sel.root) return Promise.resolve(withExtras({ state: "ok", root: null, items: [], why: "no-root" }));
     const ctx = makeCtx(opts, CAPTURE_BUDGET_MS);
     return Promise.race([
-      captureDescendants(root, { ctx }).catch(() => ({ state: "unknown", why: "capture-threw" })),
+      captureDescendants(sel.root, { ctx }).catch(() => ({ state: "unknown", why: "capture-threw" })),
       new Promise((r) => setTimeout(() => r({ state: "unknown", why: "capture-timeout" }), opts.raceMs || CAPTURE_BUDGET_MS + 250)),
-    ]);
+    ]).then(withExtras);
   } catch { return Promise.resolve({ state: "unknown", why: "capture-threw" }); }
 }
 
-function summarize(list) {
-  const unresolved = list.filter((w) => w.unresolved).length;
-  return { clean: unresolved === 0, unresolved };
+// droppedUnresolved: unresolved rows that no longer fit the bounded history; they
+// still count, so the result never turns clean by truncation.
+function summarize(list, droppedUnresolved = 0) {
+  const unresolved = list.filter((w) => w.unresolved).length + droppedUnresolved;
+  return { clean: unresolved === 0, unresolved, droppedUnresolved };
+}
+// Keep at most HISTORY_MAX rows, unresolved first; count the unresolved ones dropped.
+function bounded(list, prevDropped) {
+  const rows = [...list.filter((w) => w.unresolved), ...list.filter((w) => !w.unresolved)];
+  const kept = rows.slice(0, HISTORY_MAX);
+  const dropped = rows.slice(HISTORY_MAX).filter((w) => w.unresolved).length + (Number(prevDropped) || 0);
+  return { orphanWorkers: kept, droppedUnresolved: dropped };
 }
 
-// Older generations' unresolved rows are kept (bounded) when a newer reset publishes,
-// and an older reset that finishes late never replaces a newer one's result.
+// Older generations' unresolved rows are kept (bounded, with a dropped count) when a
+// newer reset publishes, and an older reset that finishes late never replaces a newer one's result.
 function publish(result, store = globalThis) {
   const cur = store.__codexOrphanReap;
   const g = Number(result.generation), cg = cur ? Number(cur.generation) : NaN;
   if (cur && Number.isFinite(cg) && Number.isFinite(g) && cg > g) {
     const carry = result.orphanWorkers.filter((w) => w.unresolved).map((w) => ({ ...w, generation: g }));
-    const merged = { ...cur, orphanWorkers: [...cur.orphanWorkers, ...carry].slice(0, 32) };
-    Object.assign(merged, summarize(merged.orphanWorkers));
+    const b = bounded([...(cur.orphanWorkers || []), ...carry], (Number(cur.droppedUnresolved) || 0) + (Number(result.droppedUnresolved) || 0));
+    const merged = { ...cur, orphanWorkers: b.orphanWorkers };
+    Object.assign(merged, summarize(merged.orphanWorkers, b.droppedUnresolved));
     return merged;
   }
+  let prev = Number(result.droppedUnresolved) || 0, list = result.orphanWorkers;
   if (cur && Number.isFinite(cg) && Number.isFinite(g) && cg < g) {
     const carry = (cur.orphanWorkers || []).filter((w) => w.unresolved).map((w) => ({ ...w, generation: w.generation == null ? cg : w.generation }));
-    result.orphanWorkers = [...result.orphanWorkers, ...carry].slice(0, 32);
-    Object.assign(result, summarize(result.orphanWorkers));
+    list = [...list, ...carry];
+    prev += Number(cur.droppedUnresolved) || 0;
   }
+  const b = bounded(list, prev);
+  result.orphanWorkers = b.orphanWorkers;
+  Object.assign(result, summarize(result.orphanWorkers, b.droppedUnresolved));
   return result;
 }
 
@@ -321,6 +384,6 @@ async function finishReap(capturePromise, dirs, meta = {}, opts = {}) {
   return publish(result, opts.store || globalThis);
 }
 
-module.exports = { CORE_VERSION, PRESENT, ABSENT, UNKNOWN, latestRoot, startCapture, finishReap, publish, parsePs, parseCwd,
+module.exports = { CORE_VERSION, PRESENT, ABSENT, UNKNOWN, latestRoot, selectRoot, startCapture, finishReap, publish, parsePs, parseCwd,
   inside, probePresence, makeCtx, stopReason, captureDescendants, readNow, judge, reapOrphans,
-  TERM_GRACE_MS, KILL_GRACE_MS, MAX_PIDS, REAP_BUDGET_MS, REAP_RACE_MS, ROOT_START_TOLERANCE_MS };
+  TERM_GRACE_MS, KILL_GRACE_MS, MAX_PIDS, REAP_BUDGET_MS, REAP_RACE_MS, ROOT_START_TOLERANCE_MS, HISTORY_MAX, haltReason };
