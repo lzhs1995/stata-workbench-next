@@ -731,7 +731,7 @@ class ListCloseTests(Base):
     def test_real_kill_is_a_normal_quit(self):
         with patch.object(ss.os, "kill") as k:
             self.sessions()._real_kill(321)
-        k.assert_called_once_with(321, ss.SIG_TERM)
+        k.assert_called_once_with(321, ss.signal.SIGTERM)
         with patch.object(ss.subprocess, "run") as run:
             self.sessions(platform="win32")._real_kill(321)
         self.assertEqual(run.call_args.args[0], ["taskkill", "/PID", "321"])
