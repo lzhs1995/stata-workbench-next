@@ -566,7 +566,7 @@ class ListCloseTests(Base):
         r = s.close("p1")
         self.assertEqual((r["verdict"], killed), ("CLOSED", [501]), "only the VS Code instance is signalled")
         self.assertEqual(r["leftoverProcesses"], [{"pid": 25045, "command": "python3.11"}])
-        self.assertIn("orphanWorkers with ended=true", r["note"])
+        self.assertIn("signals nothing beyond the VS Code instance", r["note"])
         self.assertEqual(seen, [[str(self.root / "ws" / "p1")],
                                 [str(self.root / "ws" / "p1"), str(self.root / "profiles" / "p1" / "mcp-temp")]])
         self.assertEqual(r["orphanWorkers"], [], "the leftover is not a recorded worker identity: never signalled")
@@ -593,44 +593,121 @@ class ListCloseTests(Base):
         s.kill = quit_
         return s, sent
 
-    # 这条路径只在 Unix 走；Windows 的 Python 没有 SIGKILL（SIG_KILL 回落成 SIGTERM），测试固定两个不同的值
-    @patch.object(ss, "SIG_TERM", 15)
-    @patch.object(ss, "SIG_KILL", 9)
-    def test_close_ends_an_exactly_matching_orphaned_worker_term_then_kill(self):
+    # V3-W3（复审 R1/R3/R5）：close 只报告、不发信号；三态读取；总时限
+    def test_close_reports_an_orphaned_worker_and_signals_nothing(self):
         ws = str(self.root / "ws" / "p1")
         spawn = "/py/python3.11 -B -s -c from multiprocessing.spawn import spawn_main; spawn_main(tracker_fd=8)"
         table = {25045: {"ppid": 24709, "lstart": "Thu Nov 5 02:52:08 2026", "cwd": ws, "command": spawn}}
         s, sent = self.orphan_world(table)
         r = s.close("p1")
-        self.assertEqual(r["orphanWorkers"], [{"pid": 25045, "startedAt": "Thu Nov 5 02:52:08 2026", "ended": True, "reason": "orphaned-sigterm"}])
-        self.assertEqual(sent, [(25045, 15)])
-        table = {25045: {"ppid": 24709, "lstart": "Thu Nov 5 02:52:08 2026", "cwd": ws, "command": spawn}}
-        s, sent = self.orphan_world(table, ignore_term=True)
-        r = s.close("p1")
-        self.assertEqual(sent, [(25045, 15), (25045, 9)])
-        self.assertEqual((r["orphanWorkers"][0]["ended"], r["orphanWorkers"][0]["reason"]), (True, "orphaned-sigkill"))
+        self.assertEqual(sent, [], "close never signals a worker (ownership is not provable from cwd/command)")
+        self.assertEqual(r["orphanWorkers"], [{"pid": 25045, "startedAt": "Thu Nov 5 02:52:08 2026", "ended": False,
+                                               "unresolved": True, "reason": "still-running:orphaned"}])
+        self.assertEqual(r["orphanCleanup"], {"mode": "report-only", "signalled": [], "clean": False, "unresolved": 1})
 
-    @patch.object(ss, "SIG_TERM", 15)
-    @patch.object(ss, "SIG_KILL", 9)
-    def test_close_never_signals_a_reused_pid_a_foreign_cwd_or_a_non_worker(self):
+    def test_close_never_signals_an_unrelated_python_worker_in_the_same_cwd_or_another_sessions_worker(self):
         ws = str(self.root / "ws" / "p1")
-        spawn = "/py/python3.11 -B -s -c from multiprocessing.spawn import spawn_main; spawn_main(tracker_fd=8)"
-        for label, mutate, reason in (
-                ("reused pid", lambda t: t[25045].update(lstart="Thu Nov 5 06:00:00 2026"), "pid-reused"),
-                ("cwd moved out", lambda t: t[25045].update(cwd="/Users/someone/elsewhere"), "cwd-changed"),
-                ("user shell", lambda t: t[25045].update(command="-zsh"), "not-a-worker")):
+        spawn = "/py/python3.11 -c from multiprocessing.spawn import spawn_main; spawn_main(...)"
+        # 用户自己的 Python spawn 进程、另一个会话的 worker，cwd 都在本会话 ws 下、ppid 1：都只报告
+        table = {999: {"ppid": 1, "lstart": "Thu Nov 5 01:00:00 2026", "cwd": ws, "command": spawn},
+                 31000: {"ppid": 1, "lstart": "Thu Nov 5 01:30:00 2026", "cwd": ws, "command": "/py/python3 -m mcp_stata"}}
+        s, sent = self.orphan_world(table)
+        r = s.close("p1")
+        self.assertEqual(sent, [])
+        self.assertEqual(sorted((w["pid"], w["ended"], w["unresolved"]) for w in r["orphanWorkers"]), [(999, False, True), (31000, False, True)])
+        self.assertFalse(r["orphanCleanup"]["clean"])
+
+    def test_close_reports_gone_or_replaced_workers_as_clean(self):
+        ws = str(self.root / "ws" / "p1")
+        spawn = "/py/python3.11 -c from multiprocessing.spawn import spawn_main; spawn_main(...)"
+        for label, after in (("exited", lambda t: t.pop(25045)),
+                             ("pid replaced", lambda t: t[25045].update(lstart="Thu Nov 5 06:00:00 2026"))):
             table = {25045: {"ppid": 24709, "lstart": "Thu Nov 5 02:52:08 2026", "cwd": ws, "command": spawn}}
             s, sent = self.orphan_world(table)
             orig = s.kill
-            s.kill = lambda pid, orig=orig, mutate=mutate, table=table: (orig(pid), mutate(table))
+            s.kill = lambda pid, orig=orig, after=after, table=table: (orig(pid), after(table))
             r = s.close("p1")
-            self.assertEqual(sent, [], label + ": never signalled")
-            self.assertEqual([(w["pid"], w["ended"], w["reason"]) for w in r["orphanWorkers"]], [(25045, False, reason)], label)
-        # cwd outside the session from the start: not even recorded, so never signalled
-        table = {25045: {"ppid": 24709, "lstart": "Thu Nov 5 02:52:08 2026", "cwd": "/tmp/other", "command": spawn}}
+            self.assertEqual((sent, r["orphanWorkers"], r["orphanCleanup"]["clean"]), ([], [], True), label)
+
+    def test_close_read_failures_are_unresolved_not_clean(self):
+        ws = str(self.root / "ws" / "p1")
+        spawn = "/py/python3.11 -c from multiprocessing.spawn import spawn_main; spawn_main(...)"
+        base = {"ppid": 24709, "lstart": "Thu Nov 5 02:52:08 2026", "cwd": ws, "command": spawn}
+        # 关窗前能读、关窗后读失败（超时/退出码/异常）：unresolved，不能当已退出
+        for label, failing in (("timeout", {"state": "UNKNOWN", "why": "ps:timeout"}), ("nonzero exit", {"state": "UNKNOWN", "why": "ps:exit"}),
+                               ("raised", RuntimeError("ps vanished"))):
+            table = {25045: dict(base)}
+            calls = []
+            def ident(pid, timeout, table=table, failing=failing, calls=calls):
+                calls.append(pid)
+                if len(calls) > 1:
+                    if isinstance(failing, Exception):
+                        raise failing
+                    return failing
+                return {"state": "PRESENT", "pid": pid, **table[pid]}
+            s, sent = self.orphan_world(table)
+            s._identity, s._identity_takes_timeout = ident, True
+            r = s.close("p1")
+            self.assertEqual(sent, [], label)
+            self.assertEqual(len(r["orphanWorkers"]), 1, label)
+            w = r["orphanWorkers"][0]
+            self.assertTrue(w["unresolved"] and not w["ended"] and w["reason"].startswith("identity-unknown"), (label, w))
+            self.assertFalse(r["orphanCleanup"]["clean"], label)
+        # 关窗前就读不到：capture 记 unresolved 行
+        table = {25045: dict(base)}
         s, sent = self.orphan_world(table)
+        s._identity, s._identity_takes_timeout = (lambda pid, timeout: {"state": "UNKNOWN", "why": "probe"}), True
         r = s.close("p1")
-        self.assertEqual((sent, r["orphanWorkers"]), ([], []))
+        self.assertEqual([(w["pid"], w["unresolved"], w["reason"]) for w in r["orphanWorkers"]], [(25045, True, "identity-unknown:probe")])
+
+    def test_close_orphan_check_has_an_overall_time_limit(self):
+        ws = str(self.root / "ws" / "p1")
+        spawn = "/py/python3.11 -c from multiprocessing.spawn import spawn_main; spawn_main(...)"
+        table = {p: {"ppid": 24709, "lstart": "Thu Nov 5 02:52:08 2026", "cwd": ws, "command": spawn} for p in range(25000, 25040)}
+        t = [0.0]
+        s, sent = self.orphan_world(table)
+        s.clock = lambda: t[0]
+        s.sleep = lambda sec: t.__setitem__(0, t[0] + sec)
+        budgets = []
+        def slow(pid, timeout):
+            budgets.append(timeout)
+            t[0] += min(timeout, 20.0)   # 每次读取都用满给它的预算（最多 20 s）
+            return {"state": "PRESENT", "pid": pid, **table[pid]} if pid in table else {"state": "ABSENT"}
+        s._identity, s._identity_takes_timeout = slow, True
+        start = t[0]
+        r = s.close("p1", wait=1)
+        self.assertEqual(sent, [])
+        self.assertTrue(all(b <= ss.ORPHAN_STEP_TIMEOUT for b in budgets), "each read gets at most the step budget")
+        self.assertLessEqual(t[0] - start, 2 * ss.ORPHAN_CLOSE_BUDGET + 1 + 1, "capture + report each bounded; close wait 1 s")
+        reasons = [w["reason"] for w in r["orphanWorkers"]]
+        self.assertTrue(any(x == "close-timeout" for x in reasons) and any(x.startswith("too-many-candidates") for x in reasons), reasons)
+        self.assertFalse(r["orphanCleanup"]["clean"])
+        self.assertLessEqual(len(set(p for p in budgets)), ss.ORPHAN_MAX_CANDIDATES + 1)
+
+    def test_report_orphans_is_bounded_by_its_deadline(self):
+        t = [0.0]
+        s = self.sessions(clock=lambda: t[0], sleep=lambda sec: t.__setitem__(0, t[0] + sec))
+        reads = []
+        def slow(pid, timeout):
+            reads.append(pid)
+            t[0] += timeout
+            return {"state": "PRESENT", "pid": pid, "ppid": 1, "lstart": "L"}
+        s._identity, s._identity_takes_timeout = slow, True
+        captured = [{"pid": p, "lstart": "L"} for p in range(30)]
+        out = s.report_orphans(captured, t[0] + 8.0, settle=6.0)
+        self.assertLessEqual(t[0], 8.0 + 1e-9, "settle + report never pass the deadline")
+        self.assertLess(len(reads), 30)
+        self.assertEqual(len(out), 30)
+        self.assertTrue(all(w["unresolved"] and not w["ended"] for w in out))
+
+    def test_capture_reads_at_most_the_candidate_cap(self):
+        t = [0.0]
+        s = self.sessions(clock=lambda: t[0], leftovers=lambda dirs: [{"pid": p, "command": "python"} for p in range(100)])
+        reads = []
+        s._identity, s._identity_takes_timeout = (lambda pid, timeout: reads.append(pid) or {"state": "ABSENT"}), True
+        ids, unread = s.worker_identities("p1", 1e9)
+        self.assertEqual(len(reads), ss.ORPHAN_MAX_CANDIDATES)
+        self.assertTrue(any(w["reason"].startswith("too-many-candidates") for w in unread))
 
     def test_orphan_reason_rules(self):
         ws = "/h/ws/p1"
@@ -650,7 +727,8 @@ class ListCloseTests(Base):
         s.kill = lambda pid: self.running.pop("p1")
         r = s.close("p1")
         self.assertEqual((r["verdict"], r["leftoverProcesses"]), ("CLOSED", None))
-        self.assertEqual(r["orphanWorkers"], [{"pid": None, "startedAt": None, "ended": False, "reason": "identity-unreadable"}])
+        self.assertEqual(r["orphanWorkers"], [{"pid": None, "startedAt": None, "ended": False, "unresolved": True, "reason": "identity-unreadable"}])
+        self.assertFalse(r["orphanCleanup"]["clean"])
         self.assertNotIn("note", r)
 
     def test_close_clean_reports_an_empty_leftover_list(self):
