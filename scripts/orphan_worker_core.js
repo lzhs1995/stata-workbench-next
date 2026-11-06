@@ -170,10 +170,14 @@ function parseGroup(text, hostPid) {
 // D8: before a terminating signal no member of the host's process group may be stopped.
 // Stopped members that are recorded identities (same pid and lstart) get SIGCONT; then the
 // group is read again. Returns null when it is safe to signal, else the unresolved reason.
+// SIGCONT is a signal too: a deadline, cancel or newer reset that comes during the group read,
+// or between two resumes, stops it; that stop reason is returned (Codex PR #33 round 1, P1).
 async function groupGuard(ids, ctx) {
   if (!(Number(ctx.hostPid) > 1)) return "host-group-unknown";
   for (let pass = 0; pass < 2; pass++) {
     const ps = await run(ctx, "ps", ["-axo", "pid=,pgid=,stat=,lstart="], [1]);
+    const afterRead = stopReason(ctx); // fence: authority may have ended during the read
+    if (afterRead) return afterRead;
     if (!ps.ok) return "host-group-unknown";
     const group = parseGroup(ps.text, ctx.hostPid);
     if (!group) return "host-group-unknown";
@@ -181,6 +185,8 @@ async function groupGuard(ids, ctx) {
     if (!stopped.length) return null;
     if (pass === 1 || stopped.some((r) => ids.get(r.pid) !== r.lstart)) return "host-group-stopped";
     for (const r of stopped) {
+      const beforeResume = stopReason(ctx); // fence: checked synchronously right before each SIGCONT
+      if (beforeResume) return beforeResume;
       try { ctx.kill(r.pid, "SIGCONT"); } catch (e) { if (!(e && e.code === "ESRCH")) return "host-group-stopped"; }
     }
   }

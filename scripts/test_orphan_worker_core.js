@@ -32,6 +32,7 @@ function world(table, f = {}) {
       return kids.length ? cb(null, kids.join("\n") + "\n") : cb(Object.assign(new Error("none"), { code: 1 }), "");
     }
     if (file === "ps" && args[0] === "-axo") {
+      if (f.onGroupRead) f.onGroupRead(table);
       if (f.groupDown) return fail(cb);
       const rows = (f.noHostRow ? [] : [`${HOST} ${HOST} Ss ${L(0)}`]).concat(
         Object.entries(table).map(([p, r]) => `${p} ${HOST} ${r.stopped ? "T" : "S"} ${r.lstart}`));
@@ -283,6 +284,53 @@ async function cases() {
     const w3 = world(t, sw); r = await reap(c, w3);
     ok(w3.sent.length === 0 && r.length === 1 && r[0].unresolved && r[0].reason === "host-group-unknown", "D8: " + label + " -> no signal");
   }
+  // D8 fence (Codex PR #33 round 1, P1): deadline / cancel / newer reset during the group read or between
+  // two resumes -> no SIGCONT after it, and the stop reason (not host-group-unknown) is reported.
+  const WHY = { deadline: "reap-timeout", cancel: "reap-cancelled", supersede: "superseded" };
+  const invalidator = (w4, mode, cz, cur) => () => {
+    if (mode === "deadline") w4.clock.t += 20000;
+    if (mode === "cancel") { cz.stopped = true; cz.why = "reap-cancelled"; }
+    if (mode === "supersede") cur.v = false;
+  };
+  for (const mode of Object.keys(WHY)) {
+    // the review's repro: groupGuard alone, the group read itself ends authority
+    const Lr = L(2).replace(/\s+/g, " ");
+    let tt = 0, cur = { v: true };
+    const cz = { stopped: false, why: null }, sent = [];
+    const gctx = core.makeCtx({ hostPid: HOST, now: () => tt, cancel: cz, isCurrent: () => cur.v, kill: (p, s) => { sent.push([p, s]); },
+      execFile: (file, args, o, cb) => {
+        if (mode === "deadline") tt = 200;
+        if (mode === "cancel") { cz.stopped = true; cz.why = "reap-cancelled"; }
+        if (mode === "supersede") cur.v = false;
+        cb(null, `${HOST} ${HOST} S ${L(0)}\n11 ${HOST} T ${L(2)}\n`);
+      } }, 100);
+    const gr = await core.groupGuard(new Map([[11, Lr]]), gctx);
+    ok(gr === WHY[mode] && sent.length === 0, "D8 fence: " + mode + " during the group read -> no SIGCONT, " + WHY[mode]);
+    // the same through reapOrphans (worker stopped, tracker ignores TERM): no signal of any kind
+    t = base(); t[11].ignoreTerm = true; w = world(t); c = await capOf(t, w); delete t[10]; t[11].ppid = 1; t[12].ppid = 1; t[12].stopped = true;
+    let cz2 = { stopped: false, why: null }, cur2 = { v: true };
+    const w4 = world(t, { onGroupRead: () => inv() });
+    const inv = invalidator(w4, mode, cz2, cur2);
+    r = await core.reapOrphans(c, DIRS, { ctx: core.makeCtx({ ...w4, cancel: cz2, isCurrent: () => cur2.v }, 11000) });
+    ok(w4.sent.length === 0 && w4.hup.n === 0 && r.length === 2 && r.every((x) => x.unresolved && x.reason === WHY[mode]),
+      "D8 fence: " + mode + " during the reap's group read -> no SIGCONT/TERM/KILL, rows " + WHY[mode]);
+    // the group read fails because authority ended: report the stop reason, not host-group-unknown
+    t = base(); w = world(t); c = await capOf(t, w); delete t[10]; t[11].ppid = 1; delete t[12];
+    cz2 = { stopped: false, why: null }; cur2 = { v: true };
+    const w5 = world(t, { groupDown: true, onGroupRead: () => inv5() });
+    const inv5 = invalidator(w5, mode, cz2, cur2);
+    r = await core.reapOrphans(c, DIRS, { ctx: core.makeCtx({ ...w5, cancel: cz2, isCurrent: () => cur2.v }, 11000) });
+    ok(w5.sent.length === 0 && r.length === 2 && r.every((x) => x.unresolved && x.reason === WHY[mode]), "D8 fence: " + mode + " + failed group read -> " + WHY[mode] + ", not host-group-unknown");
+    // two stopped recorded members; authority ends right after the first SIGCONT -> the second is not resumed
+    t = base(); w = world(t); c = await capOf(t, w); delete t[10]; t[11].ppid = 1; t[12].ppid = 1; t[11].stopped = true; t[12].stopped = true;
+    cz2 = { stopped: false, why: null }; cur2 = { v: true };
+    const w6 = world(t);
+    const inv6 = invalidator(w6, mode, cz2, cur2);
+    const kill6 = (pid, sig) => { const k = w6.kill(pid, sig); if (sig === "SIGCONT") inv6(); return k; };
+    r = await core.reapOrphans(c, DIRS, { ctx: core.makeCtx({ ...w6, kill: kill6, cancel: cz2, isCurrent: () => cur2.v }, 11000) });
+    ok(w6.sent.length === 1 && w6.sent[0][1] === "SIGCONT" && r.length === 2 && r.every((x) => x.unresolved && x.reason === WHY[mode]),
+      "D8 fence: " + mode + " between two resumes -> one SIGCONT, nothing after it");
+  }
   ok(core.parseGroup(`5 5 Ss ${L(0)}\n11 5 T ${L(2)}\n99 77 S ${L(3)}\n`, 5).map((x) => x.pid).join() === "5,11"
      && core.parseGroup(`5 5 Ss ${L(0)}\ngarbage\n`, 5) === null && core.parseGroup(`6 5 S ${L(0)}\n`, 5) === null,
      "parseGroup: the host's group only; a partial read or a missing host row is null");
@@ -335,6 +383,8 @@ const MUTANTS = [
   ["D8 foreign stopped member resumed", '    if (pass === 1 || stopped.some((r) => ids.get(r.pid) !== r.lstart)) return "host-group-stopped";', '    if (pass === 1) return "host-group-stopped";'],
   ["D8 unreadable group treated as safe", '    if (!group) return "host-group-unknown";', "    if (!group) return null;"],
   ["D8 group read failure treated as safe", '    if (!ps.ok) return "host-group-unknown";', "    if (!ps.ok) return null;"],
+  ["D8 no fence after the group read", "    const afterRead = stopReason(ctx); // fence: authority may have ended during the read\n    if (afterRead) return afterRead;\n", ""],
+  ["D8 no fence before SIGCONT", "      const beforeResume = stopReason(ctx); // fence: checked synchronously right before each SIGCONT\n      if (beforeResume) return beforeResume;\n", ""],
 ];
 (async () => {
   await cases();
