@@ -22,10 +22,19 @@
 // is not ruled out. lstart has 1 s resolution and signals go to a bare pid, so a
 // pid reused between the last re-read and kill() is narrowed, not ruled out.
 // Windows ends the whole tree in rc.7.82; not handled here.
+// rc.7.89-v4 (V3-D8L, D8): every process of a VS Code window, the mcp-stata server and
+// its worker/tracker included, is in VS Code main's process group. After the server
+// exits, the worker and tracker are reparented to launchd but stay in that group. If
+// one of them exits while another member of the group is stopped (SIGSTOP, debugger),
+// the kernel treats the group as orphaned and sends SIGHUP + SIGCONT to all of it,
+// which ends the extension host and the window's helpers. So before every terminating
+// signal the host's group is read: stopped members that are recorded identities of
+// this tree are resumed first (SIGCONT); a stopped member that is not ours, or a group
+// that cannot be read, means no signal (the row stays unresolved).
 const childProcess = require("node:child_process");
 const path = require("node:path");
 
-const CORE_VERSION = "rc.7.89-v3";
+const CORE_VERSION = "rc.7.89-v4";
 const HISTORY_MAX = 32;
 const MAX_PIDS = 16;
 const MAX_DEPTH = 4;
@@ -107,6 +116,7 @@ function makeCtx(opts = {}, budgetMs) {
     execFile: opts.execFile || childProcess.execFile, kill, now,
     sleep: opts.sleep || ((ms) => new Promise((r) => setTimeout(r, ms))),
     probe: opts.probe || ((pid) => probePresence(kill, pid)),
+    hostPid: opts.hostPid == null ? process.pid : opts.hostPid,
     deadline: now() + (opts.budgetMs == null ? budgetMs : opts.budgetMs),
     cancel: opts.cancel || { stopped: false, why: null },
     isCurrent: opts.isCurrent || (() => true),
@@ -142,6 +152,45 @@ async function readNow(pid, ctx) {
   if (!rows.has(pid)) return ctx.probe(pid) === ABSENT ? { state: ABSENT } : { state: UNKNOWN, why: "ps:missing" };
   const lsof = await run(ctx, "lsof", ["-a", "-p", String(pid), "-d", "cwd", "-Fpn"], [1]);
   return { state: PRESENT, ...rows.get(pid), cwd: lsof.ok ? (parseCwd(lsof.text).get(pid) || null) : null };
+}
+
+// `ps -axo pid=,pgid=,stat=,lstart=` -> rows of the host's process group, or null when
+// the host row is missing or any line does not parse (an unreadable group is not a read).
+function parseGroup(text, hostPid) {
+  const rows = [];
+  for (const line of String(text || "").split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    const m = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(\w{3}\s+\w{3}\s+\d+\s+\d\d:\d\d:\d\d\s+\d{4})\s*$/.exec(line);
+    if (!m) return null;
+    rows.push({ pid: Number(m[1]), pgid: Number(m[2]), stat: m[3], lstart: m[4].replace(/\s+/g, " ") });
+  }
+  const host = rows.find((r) => r.pid === Number(hostPid));
+  return host ? rows.filter((r) => r.pgid === host.pgid) : null;
+}
+// D8: before a terminating signal no member of the host's process group may be stopped.
+// Stopped members that are recorded identities (same pid and lstart) get SIGCONT; then the
+// group is read again. Returns null when it is safe to signal, else the unresolved reason.
+// SIGCONT is a signal too: a deadline, cancel or newer reset that comes during the group read,
+// or between two resumes, stops it; that stop reason is returned (Codex PR #33 round 1, P1).
+async function groupGuard(ids, ctx) {
+  if (!(Number(ctx.hostPid) > 1)) return "host-group-unknown";
+  for (let pass = 0; pass < 2; pass++) {
+    const ps = await run(ctx, "ps", ["-axo", "pid=,pgid=,stat=,lstart="], [1]);
+    const afterRead = stopReason(ctx); // fence: authority may have ended during the read
+    if (afterRead) return afterRead;
+    if (!ps.ok) return "host-group-unknown";
+    const group = parseGroup(ps.text, ctx.hostPid);
+    if (!group) return "host-group-unknown";
+    const stopped = group.filter((r) => /^[Tt]/.test(r.stat));
+    if (!stopped.length) return null;
+    if (pass === 1 || stopped.some((r) => ids.get(r.pid) !== r.lstart)) return "host-group-stopped";
+    for (const r of stopped) {
+      const beforeResume = stopReason(ctx); // fence: checked synchronously right before each SIGCONT
+      if (beforeResume) return beforeResume;
+      try { ctx.kill(r.pid, "SIGCONT"); } catch (e) { if (!(e && e.code === "ESRCH")) return "host-group-stopped"; }
+    }
+  }
+  return "host-group-stopped";
 }
 
 function extraRow(pid, reason) {
@@ -282,6 +331,9 @@ async function reapOrphans(captured, dirs, opts = {}, state = { recs: [] }) {
     if (v.act !== "signal") { rec.reason = v.reason; continue; }
     let steps = [["SIGTERM", "orphaned-sigterm", ctx.termGraceMs], ["SIGKILL", "orphaned-sigkill", ctx.killGraceMs]];
     for (const [sig, label, grace] of steps) {
+      // D8: no member of the host's process group may be left stopped when this one exits.
+      const g = stopReason(ctx) ? null : await groupGuard(ids, ctx);
+      if (g) { rec.reason = rec.reason === "pending" ? g : rec.reason + "+" + g; break; }
       // Checked synchronously right before kill(): after a deadline / newer reset, no signal.
       why = stopReason(ctx);
       if (why) { rec.reason = rec.reason === "pending" ? why : rec.reason + "+" + why; break; }
@@ -385,5 +437,5 @@ async function finishReap(capturePromise, dirs, meta = {}, opts = {}) {
 }
 
 module.exports = { CORE_VERSION, PRESENT, ABSENT, UNKNOWN, latestRoot, selectRoot, startCapture, finishReap, publish, parsePs, parseCwd,
-  inside, probePresence, makeCtx, stopReason, captureDescendants, readNow, judge, reapOrphans,
+  inside, probePresence, makeCtx, stopReason, captureDescendants, readNow, judge, reapOrphans, parseGroup, groupGuard,
   TERM_GRACE_MS, KILL_GRACE_MS, MAX_PIDS, REAP_BUDGET_MS, REAP_RACE_MS, ROOT_START_TOLERANCE_MS, HISTORY_MAX, haltReason };
