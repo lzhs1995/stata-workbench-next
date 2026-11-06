@@ -15,7 +15,7 @@ On 11-06 the merged runtime was retested live: macOS on `d5b03df` (PR #31's merg
 <!-- /FMAC-RESULT -->
 
 <!-- KW-RESULT -->
-The fix for the Windows KILL recovery defect is not merged yet. On `main` `d020b036`, a successful **Stata: KILL** on Windows ends only this window's backend, but the window then keeps refusing runs: the recovery smoke runs on the connection to the backend that KILL has just ended, fails with `transport-failed`, and the next command gets HTTP 423 `panic-kill-command-needs-smoke`. Closing the window and opening a new one gets past it. Other windows are not affected. macOS resets the connection before its smoke and is not affected.
+The fix for the Windows KILL recovery defect is in PR #34, under review and not merged yet. On `main` `d020b036`, a successful **Stata: KILL** on Windows ends only this window's backend, but the window then keeps refusing runs: the recovery smoke runs on the connection to the backend that KILL has just ended, fails with `transport-failed`, and the next command gets HTTP 423 `panic-kill-command-needs-smoke`. Closing the window and opening a new one gets past it. Other windows are not affected. macOS resets the connection before its smoke and is not affected.
 <!-- /KW-RESULT -->
 
 - **Packaging no longer depends on the maintainer's machine (PR #19).** `npm run package` now runs the full check and builds the VSIX in one step.
