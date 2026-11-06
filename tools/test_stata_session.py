@@ -946,8 +946,11 @@ class RealAdapterCloseTests(Base):
 
     def test_real_close_discovery_failure_is_unknown_not_clean(self):
         # 复审 B1：lsof 退出码 2、空输出曾被当成「没人占用」
+        # V3-W7：「退出 1 带行」是真实工作区的正常结果（见 test_real_close_on_a_real_workspace_lists_the_live_worker），
+        # 改成 V3-W7 实测里真正的失败形态：退出 1 + stderr（目录读不了）
         cases = (("exit 2 empty", {"returncode": 2, "stdout": ""}), ("stderr warning", {"stderr": "lsof: WARNING: can't stat()\n"}),
-                 ("exit 1 with output", {"returncode": 1}), ("raised", OSError("no lsof")))
+                 ("exit 1 + can't opendir", {"returncode": 1, "stderr": "lsof: WARNING: can't opendir(ws): Permission denied\n"}),
+                 ("raised", OSError("no lsof")))
         for i, (label, o) in enumerate(cases):
             name = f"d{i}"
             s, calls, t, patched = self.world(name, self.worker(name), override={"dir": o})
@@ -959,13 +962,42 @@ class RealAdapterCloseTests(Base):
             self.assertEqual((r["orphanCleanup"]["clean"], r["orphanCleanup"]["holders"]), (False, "unknown"), label)
             self.assertFalse([c for c in calls if c[0] in ("ps", "cwd")], "nothing is read about candidates nobody listed")
 
+    def test_real_close_on_a_real_workspace_lists_the_live_worker(self):
+        # V3-FMAC 7-C 实机（11-06 01:32）：真实 ws 里总有没人打开的文件，每次 lsof +d 都是 rc 1 + 有效行 + 空 stderr。
+        # 旧规则把它当「查不了」，close 永远报 identity-unreadable / holders unknown，列不出还活着的 worker
+        name = "rw0"
+        procs = self.worker(name)
+        s, calls, t, patched = self.world(name, procs, override={"dir": {"returncode": 1}})
+        with patched():
+            r = s.close(name)
+        self.assertIn(999, procs, "the worker is still alive")
+        self.assertEqual(r["verdict"], "CLOSED")
+        self.assertEqual(r["orphanWorkers"], [{"pid": 999, "startedAt": "Thu Nov 5 02:52:08 2026", "ended": False,
+                                               "unresolved": True, "reason": "still-running:orphaned"}])
+        self.assertEqual([p["pid"] for p in r["leftoverProcesses"]], [999])
+        self.assertEqual(r["orphanCleanup"], {"mode": "report-only", "signalled": [], "clean": False, "unresolved": 1,
+                                              "holders": "present:1"})
+        # 对照：同样 rc 1 的真实 ws，worker 随服务端退出了（最后一次扫描 rc 1 无行）-> clean 可以成立
+        name = "rw1"
+        s, calls, t, patched = self.world(name, self.worker(name), override={"dir": {"returncode": 1}},
+                                          on_quit=lambda procs, ov: procs.pop(999))
+        with patched():
+            r = s.close(name)
+        self.assertEqual((r["orphanWorkers"], r["leftoverProcesses"]), ([], []))
+        self.assertEqual(r["orphanCleanup"], {"mode": "report-only", "signalled": [], "clean": True, "unresolved": 0,
+                                              "holders": "none"})
+
     def test_real_leftovers_is_three_state(self):
         name = "l1"
         procs = self.worker(name)
         ws = self.root / "ws" / name
-        cases = (("held", {}, [{"pid": 999, "command": "python3.11"}]),
+        # V3-W7：输出形态照 V3-W7 在本机的实测（空目录有人占用 rc 0；目录里有没人打开的文件时有人占用也是 rc 1 带行）
+        cases = (("held, empty dir", {}, [{"pid": 999, "command": "python3.11"}]),
+                 ("held, dir with an unopened file", {"returncode": 1}, [{"pid": 999, "command": "python3.11"}]),
                  ("nobody", {"returncode": 1, "stdout": ""}, []),
-                 ("exit 1 with output", {"returncode": 1}, None),
+                 ("exit 1 + rows + stderr", {"returncode": 1, "stderr": "lsof: WARNING: can't opendir(ws)\n"}, None),
+                 ("exit 0 + rows + stderr", {"stderr": "lsof: WARNING: can't opendir(ws)\n"}, None),
+                 ("exit 1 + stderr, no rows", {"returncode": 1, "stdout": "", "stderr": "lsof: WARNING: can't stat()\n"}, None),
                  ("exit 2", {"returncode": 2, "stdout": ""}, None),
                  ("stderr only", {"stderr": "lsof: WARNING\n"}, None),
                  ("raised", OSError("x"), None))
@@ -1093,10 +1125,13 @@ def load_variant(source, name):
 # V3-W5：每个新守卫都要有一个测试在它被拿掉时失败（旧, 新）。源码里旧串必须恰好出现一次。
 CLOSE_GUARD_MUTANTS = (
     ("leftovers: rc/stderr ignored",
-     'if proc.returncode not in (0, 1) or (proc.stderr or "").strip() or (proc.returncode == 1 and out.strip()):',
-     "if False:"),
-    ("leftovers: stderr ignored", 'or (proc.stderr or "").strip() or (proc.returncode == 1', "or (proc.returncode == 1"),
-    ("leftovers: exit 1 with output accepted", " or (proc.returncode == 1 and out.strip()):", ":"),
+     'if proc.returncode not in (0, 1) or (proc.stderr or "").strip():   # V3-W7', "if False:   # V3-W7"),
+    ("leftovers: stderr ignored", ' or (proc.stderr or "").strip():   # V3-W7', ":   # V3-W7"),
+    ("leftovers: any exit code accepted", 'if proc.returncode not in (0, 1) or (proc.stderr or "").strip():   # V3-W7',
+     'if (proc.stderr or "").strip():   # V3-W7'),
+    # V3-W7：恢复 V3-W4 的旧规则（rc 1 带行 = 查不了），真实工作区上 close 就再也列不出 worker
+    ("leftovers: exit 1 with rows read as unknown (old V3-W4 rule)", 'or (proc.stderr or "").strip():   # V3-W7',
+     'or (proc.stderr or "").strip() or (proc.returncode == 1 and out.strip()):   # V3-W7'),
     ("leftovers: fixed 30 s timeout", "timeout = 30.0 if deadline is None else min(30.0, deadline - self.clock())",
      "timeout = 30.0"),
     ("leftovers: starts with no budget left", "            if timeout <= 0:\n                return None\n", ""),
