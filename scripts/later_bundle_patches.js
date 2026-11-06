@@ -36,6 +36,7 @@ const LATER = [
   "./apply_progress_cancel_stop_patch",
   "./apply_watchdog_cpu_status_patch",
   "./apply_orphan_worker_reap_patch",
+  "./apply_windows_kill_reset_patch",
 ];
 
 function revertLaterPatches(source) {
