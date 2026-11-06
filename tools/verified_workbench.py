@@ -18,13 +18,13 @@ import urllib.error
 
 WORK = Path(__file__).resolve().parents[1]
 PROFILE = Path(os.environ.get("STATA_WORKBENCH_PROFILE", str(Path.home() / ".stata-workbench-next" / "profiles" / "default"))).expanduser().resolve()
-EXTENSION = PROFILE / "extensions/lzhs1995.stata-workbench-next-0.2.0-next.5"
+EXTENSION = PROFILE / "extensions/lzhs1995.stata-workbench-next-0.2.0-next.6"
 try:
     PORT = int(os.environ.get("STATA_WORKBENCH_PORT", "17601"))
 except ValueError:
     PORT = 0  # Doctor can report the bad setting before any connection or launch.
 CODE_CLI = host.default_code()
-VERSION = "0.2.0-next.5"
+VERSION = "0.2.0-next.6"
 BUNDLE_SHA256 = "2dfc270d6ba25075d8f533222360948d2502c34ea42fd97539ef44e6cbdc08cb"
 PINS = {
     WORK / "dist/extension.js": BUNDLE_SHA256,

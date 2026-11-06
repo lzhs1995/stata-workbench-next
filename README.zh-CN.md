@@ -49,8 +49,7 @@ Next 和稳定版可以装在同一台机器上并行使用，两者不共用任
 
 Next 启动器从不选用 `17485`、`17416`、`17497`、`17507` 这几个端口，所以 Next 会话不会占用稳定版工具在用的端口。
 
-当前版本：`0.2.0-next.5`（见 `package.json`）；`main` 上已有[更新日志](CHANGELOG.md)里 `0.2.0-next.6`
-一节列出的改动，尚未发布。只通过 GitHub Releases 分发，Next 的构建在那里以预发布版
+当前版本：`0.2.0-next.6`（见 `package.json`），改动见[更新日志](CHANGELOG.md)。只通过 GitHub Releases 分发，Next 的构建在那里以预发布版
 （pre-release）发布；不发布到 Open VSX 或 Visual Studio Marketplace。
 
 ## 环境要求
@@ -70,8 +69,8 @@ Next 启动器从不选用 `17485`、`17416`、`17497`、`17507` 这几个端口
 扩展、Stata 服务运行时和 agent 工具是三样东西，每台机器各装一次。
 
 1. **下载 VSIX 并核对，再取同一 tag 的工具。** 从预发布版
-   [`v0.2.0-next.5`](https://github.com/lzhs1995/stata-workbench-next/releases/tag/v0.2.0-next.5)
-   下载 `stata-workbench-next-0.2.0-next.5.vsix`，把它的 SHA-256
+   [`v0.2.0-next.6`](https://github.com/lzhs1995/stata-workbench-next/releases/tag/v0.2.0-next.6)
+   下载 `stata-workbench-next-0.2.0-next.6.vsix`，把它的 SHA-256
    和发布说明里的值对一下：macOS 用 `shasum -a 256 <文件>`，Windows 用
    `(Get-FileHash <文件> -Algorithm SHA256).Hash.ToLower()`。然后克隆本仓库，切到同一个 tag。
    工具钉了 bundle 的 SHA-256，遇到别的构建一律拒绝；`python3 -B tools/verify_release.py --vsix <文件>`
@@ -86,12 +85,12 @@ Next 启动器从不选用 `17485`、`17416`、`17497`、`17507` 这几个端口
 ```sh
 git clone https://github.com/lzhs1995/stata-workbench-next.git
 cd stata-workbench-next
-git checkout v0.2.0-next.5   # 你的 VSIX 对应的 tag
+git checkout v0.2.0-next.6   # 你的 VSIX 对应的 tag
 
 CODE="/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"
 "$CODE" --user-data-dir ~/.stata-workbench-next/install-user-data \
   --extensions-dir ~/.stata-workbench-next/extensions-shared \
-  --install-extension ./stata-workbench-next-0.2.0-next.5.vsix
+  --install-extension ./stata-workbench-next-0.2.0-next.6.vsix
 
 RT=~/.local/share/stata-workbench/mcp-stata-1.26.1
 uv venv --python 3.11 "$RT"
@@ -106,7 +105,7 @@ uv pip install --python "$RT/bin/python3" \
 ```powershell
 code --user-data-dir "$HOME\.stata-workbench-next\install-user-data" `
   --extensions-dir "$HOME\.stata-workbench-next\extensions-shared" `
-  --install-extension .\stata-workbench-next-0.2.0-next.5.vsix
+  --install-extension .\stata-workbench-next-0.2.0-next.6.vsix
 
 $rt = Join-Path $env:LOCALAPPDATA 'stata-workbench\mcp-stata-1.26.1'
 uv venv --python 3.11 $rt
@@ -264,7 +263,7 @@ PR #30 在它的最终 head `8739778` 上做了实机检查，这个 head 的文
 <!-- /FMAC-RESULT -->
 
 <!-- KW-RESULT -->
-Windows KILL 恢复缺陷的修复在 PR #34 里，正在复审，还没合并。在 `main` `d020b036` 上，Windows 的 **Stata: KILL** 成功后只结束本窗口的后端，但这个窗口之后一直拒绝运行：恢复 smoke 跑在 KILL 刚结束掉的那个后端的连接上，以 `transport-failed` 失败，下一条命令得到 HTTP 423 `panic-kill-command-needs-smoke`。关掉这个窗口、开一个新窗口可以绕过。其他窗口不受影响。macOS 在 smoke 之前会先重置连接，不受影响。
+这几轮发现的 Windows KILL 恢复缺陷已由 PR #34（rc.7.90）修复。11-07 在 `main` `80e01c8`（#34 的合并提交）上对 Windows 做了实机复测：两个活会话中对一个点 **Stata: KILL**，只结束了这个窗口的后端进程树，这个窗口自己恢复（恢复 smoke 通过，下一条命令 rc 0），另一个窗口的进程不变，下一条命令 rc 0。
 <!-- /KW-RESULT -->
 
 ### macOS（Apple Silicon，macOS 26.5，StataNow，VS Code 1.139.1）
@@ -340,6 +339,8 @@ Windows KILL 恢复缺陷的修复在 PR #34 里，正在复审，还没合并�
 | Stata 还在加载时交的命令（worker 被挂起）：按 Stop、超时、重启 | `40abcbea`，11-04 | 通过。等待中按 Stop：以 `PRE_RUN_BACKEND_WARMUP_CANCELLED` 被拒，Stata 日志里什么都没有。超时：300.1 s 后 HTTP 504 `PRE_RUN_BACKEND_WARMUP_TIMEOUT`，什么都没发出。恢复后下一条命令 46.1 s 返回 rc 0；它的 worker 在启动中失败过，被重启一次、43 s 加载完，命令只执行了一次。没有出现用户可见的 `PRE_RUN_BACKEND_WARMUP_FAILED`（`stataPath` 写错时 Stata 照样加载了）。等待提示出现在 Output 日志里；测试用的输入方式不画 Terminal 面板，所以 Windows 上面板里的文字还没核实 |
 | 两个活会话时的 `/panic-kill?dryRun=1` | `d020b036`，11-06 | 通过，2/2。每个窗口只选中自己的 4 个进程，两组不相交 |
 | 两个活会话中对一个点 **Stata: KILL** | `d020b036`，11-06 | 范围通过，恢复失败。只有被 KILL 的窗口的进程树结束；另一个窗口的 pid 不变，下一条命令 rc 0。被 KILL 的窗口恢复 smoke 失败（`transport-failed`），下一条命令得到 HTTP 423 `panic-kill-command-needs-smoke`；见本节开头的说明 |
+| PR #34 之后，两个活会话中对一个点 **Stata: KILL** | `80e01c8`，11-07 | 通过。只有被 KILL 的窗口的进程树结束（「ended 3 of 4 … already exited 1」）；点击后 77 s，被 KILL 的窗口显示「the verified recovery smoke passed; the session is READY」，换了新后端（`resetGeneration` 1），没关窗口，下一条命令 rc 0。另一个窗口的 pid 不变，下一条命令 rc 0 |
+| KILL 恢复之后：Stata 报错，再由人按 Terminal Stop | `80e01c8`，11-07 | 通过。恢复后的窗口上 `display nosuchvar` 得到 `STATA_ERROR_CONFIRMED`，`stataRc` 111，下一条命令 rc 0。另一个窗口上人按 Terminal Stop 停 agent 的运行，得到 `STOPPED_NO_RETRY`，下一条命令 rc 0；两个窗口都以 `CLOSED` 关闭 |
 | agent 交的报错命令（`display nosuchvar`） | `d020b036`，11-06 | 通过。`STATA_ERROR_CONFIRMED`、`stataRc` 111，12 项报错检查都为真，下一条命令 rc 0。Stata 日志里有 `r(111);`；扩展日志里没有报错文字 |
 | 不输出的长命令（`bootstrap … reps(400) nodots`，没有日志输出） | `d020b036`，11-06 | 通过。跑了 192.8 s，rc 0，没有被取消；15 次采样里 14 次有 CPU 进展，0 次出错；`/status.watchdogCpu` 存在 |
 | 后端被冻住时交的命令：失败、按 Stop | `d020b036`，11-06 | 通过。失败：51 s 后面板显示 `PRE_RUN_BACKEND_WARMUP_FAILED`，什么都没发出，下一条命令 rc 0。身份探针期间按 Stop：HTTP 409 `PRE_RUN_BACKEND_WARMUP_CANCELLED`，什么都没发出；`/soft-stop` 调用本身用了 58 s，会话一直锁着（见已知限制） |
@@ -354,7 +355,7 @@ PR #15（Stop/KILL 提示与实际结果一致、Windows 进程存活判定、�
 已在 Windows 上用它的 head `3765d82a`（bundle 与 `e9b22430` 相同；表中标 `3765d82a` 的各行）实机复测。三项修复都成立，但 Stata 刚加载完就发的 Terminal 命令卡过一次。PR #18（`1bf02d02`：Terminal 命令派发前先等 Stata warm-up）
 已在 Windows 上用它的 head `e5d2cda7`（源码树相同；表中 11-04 各行）实机复测，见[已知限制](#已知限制)。macOS 在 11-04 用 `v0.2.0-next.5` 发布版（`aba81779`）做了实机复测，
 11-04 至 11-05 又在 `main` `b0bc49d`（PR #19–#21、#23–#26 之后，#27、#28、#22 之前）上复测了一次，发现的问题列在[已知限制](#已知限制)。
-11-06 macOS 在 `d5b03df` 上、Windows 在 `main` `d020b036` 上复测（表中 11-06 各行）。
+11-06 macOS 在 `d5b03df` 上、Windows 在 `main` `d020b036` 上复测（表中 11-06 各行）；11-07 在 PR #34 之后的 `main` `80e01c8` 上复测了 Windows（表中 11-07 各行）。
 
 ## 已知限制
 
@@ -381,12 +382,13 @@ PR #15（Stop/KILL 提示与实际结果一致、Windows 进程存活判定、�
 - **macOS：命令运行中点 KILL 或强制重置，旧的 Stata worker 曾经会以父进程 pid 1 继续运行**，而 `/status` 和 `close` 都报告会话是干净的（`b82203d`，11-05）。KILL 和强制重置只结束 `mcp-stata` 服务进程，worker 只有在服务进程正常退出时才会跟着退出。现在强制重置先对后端进程树拍一次 `ps` 快照：根进程必须是登记的 pid，是本扩展宿主的直接子进程，启动不晚于登记后 5 s。结束服务进程之后，只对记下的、仍满足以下条件的后代先发 SIGTERM 再发 SIGKILL：启动时刻不变，工作目录在本会话的 workspace 或 `mcp-temp` 里，父进程是 pid 1 或记下的父进程。读不到或确认不了的情况，例如登记读不出、存活检查出错、有第二个活后端或一个活后端都没有，都在 `/status.orphanWorkers` 里列为 unresolved，不发信号，也不报干净（PR #31，rc.7.89）。`close` 只报告，除了 VS Code 窗口之外不发任何信号。结果里有 `leftoverProcesses`、`orphanWorkers` 和 `orphanCleanup`（`mode: "report-only"`、`signalled: []`、`clean`、`unresolved`、`holders`）。进程读取失败、超时、往 stderr 输出或只返回部分结果时，都算「不明」，不算「空」。只有没有 unresolved、而且对会话文件的最后一次扫描读成功并且没有占用者时，`clean` 才为 true。在最后一轮复审返工之前的 PR head `4a1ac2e` 上实机（macOS，11-05）：一条不输出的命令跑到 20 s 时点 KILL，旧 worker 和它的 resource tracker 被结束；同一工作目录里一个命令行含 `spawn_main` 的测试进程没有收到信号，一次 `close` 把它列为 unresolved。之后那轮返工（堵上可能被读成干净的几种情况）有离线测试和变异测试。合并后的代码在 `d5b03df` 上复测（11-06）：不输出的命令运行中点 KILL，旧 worker 和它的 resource tracker 再次被结束，测试进程没被动。那次复测发现了下面两条里的缺陷。
 - **macOS：`close` 在真实 workspace 上列不出活着的 worker 或占用者**（11-06 复测）。只要文件夹里有一个没有进程打开的文件，`lsof +d <workspace>` 就以退出码 1 结束，同时照样输出它找到的进程。#31 把这种情况算作「不明」，所以在任何真实 workspace 上 `close` 都报 `identity-unreadable` 和 `holders: unknown`。现在目录扫描在退出码为 0 或 1 且 stderr 为空时读取这些行；其他退出码、有 stderr 输出（比如打不开的文件夹）或超时仍算「不明」（PR #32）。只在 macOS lsof 4.91 上实机核过：一个占着 workspace 的测试进程被列为 unresolved（`holders: present:1`、`clean: false`、什么信号都没发）。`close` 仍然只报告、尽力而为，见下面的限制。
 - **macOS：有后端进程被停住时，强制重置会带走 VS Code 的扩展宿主**（11-06 复测，4 次都出现）。本窗口的 Stata worker 被 SIGSTOP 停住时，看门狗取消升级为强制重置；服务进程结束约 1 s 后，扩展宿主退出（code 0），只剩 VS Code 主进程。原因有实测强力支持，但没有直接观测到（没有抓到 SIGHUP）。在所测的启动方式下（macOS，由 `tools/stata_session.py` 用隔离配置目录启动的窗口），窗口的所有进程，包括 mcp-stata 服务进程、它的 resource tracker 和 worker，都在 VS Code 主进程的进程组里。服务进程退出后，tracker 和 worker 被过继给 launchd，仍留在这个组里。这样的成员退出时如果组里还有别的成员被停住，内核就把这个组当作孤儿进程组，向整个组发 SIGHUP 和 SIGCONT：扩展宿主和各个辅助进程结束，VS Code 主进程活下来。rc.7.89 的清理在 worker 被停住时结束了已过继的 tracker，触发了这一点。现在清理在每次发 SIGTERM 或 SIGKILL 之前先读宿主的进程组。被停住、且与记下的身份（pid 和启动时刻）一致的成员先收到 SIGCONT，然后再读一遍进程组。有不是我们的成员被停住（`host-group-stopped`）或读不到进程组（`host-group-unknown`）时不发信号，这一行保持 unresolved。每次读完进程组之后、每次发 SIGCONT 之前都检查截止时间、取消和更新的重置（PR #33，rc.7.89-v4）。在 PR #33 的第一个 head `3c8e4f3` 上实机 2/2：宿主活了下来，**Stata: KILL** 解锁了会话，下一条命令 rc 0，`close` 返回 `CLOSED`；其中一次有一行 `host-group-unknown`，原因没查到。新加的停止检查只有离线测试和变异测试。
+- **Windows：KILL 成功之后，窗口一直拒绝运行**（11-06 复测）。命令在它刚结束掉的那个后端的连接上跑恢复 smoke，smoke 以 `transport-failed` 失败，下一条命令得到 HTTP 423 `panic-kill-command-needs-smoke`，直到关掉窗口。现在范围内的 KILL 成功后会先做一次强制重置：沿用这次 KILL 记下的结果，打开新连接，会话保持「需要 smoke」；smoke 随后在新连接上跑（PR #34，rc.7.90）。fail-closed 路径和部分结束的情况不变。在 `main` `80e01c8` 上实机（11-07）跑过一次，两个会话：被 KILL 的窗口自己恢复，下一条命令 rc 0；另一个窗口不受影响。
 
 当前 `main` 上还没解决的问题：
 
 - **Stata 还在加载时交的命令。** `trueReady` 不等后台加载。Terminal 命令和 agent 的提交都会先等 Stata worker 进入 running；等过 2 s，Terminal 显示「Waiting for Stata to finish loading…」，点 Terminal 的 Stop 按钮或用 `POST /soft-stop` 都可以取消等待。等满 300 s 或 warm-up 失败时，命令在发出之前就被拒绝（`PRE_RUN_BACKEND_WARMUP_TIMEOUT` 或 `PRE_RUN_BACKEND_WARMUP_FAILED`，`payloadDispatched=false`）。只有不提供 `list_sessions` 的旧版 mcp-stata 才不经这项检查直接放行（这是兼容做法，不能证明 Stata 已就绪）。有 `list_sessions` 但连续失败或超时时，warm-up 以 `FAILED` 结束，命令被拒绝；warm-up 刚结束时 worker 变了或确认不了，命令会再等一次，仍不行就拒绝。11-04 在 macOS 上实机确认了等待提示、等待中 Stop（经 `/soft-stop`）、超时和失败拒绝；Windows 上确认了除失败拒绝以外的几项，等待提示只在 Output 日志里核过；11-06 在 Windows（`d020b036`）上，失败拒绝和真实 Terminal 面板里的等待提示也都看到了。11-05 在 macOS（`b0bc49d`）上往 Terminal 面板里输入命令，等待期间 Stop 按钮是可用的；点它之后命令以 `PRE_RUN_BACKEND_WARMUP_CANCELLED` 被拒绝，什么都没发出，下一条命令 rc 0。之前说「等待期间 Stop 按钮被禁用」，来自一个测试端点（`/debug-terminal-input`）：它发命令时不经过面板的 Run 处理，面板就一直没显示命令在运行。这不是产品缺陷。
-- **Windows：KILL 成功之后，窗口一直拒绝运行**（见[平台实测结果](#平台实测结果)开头的说明）。在 `d020b036` 上用两个会话实机跑过一次，确认了范围：对窗口 A 点 KILL 只结束了 A 的后端进程树，窗口 B 的 pid 不变，下一条命令 rc 0。一次运行不构成统计上限。根进程按登记时刻（1 s 以内）认定，不是按记下的创建时间；身份比到毫秒；进程列表不是原子快照；结束之后只再扫一遍直接子进程。日志里的「ended 2 of 4」只数 KILL 自己结束的进程；另外两个在它们的启动进程结束后已经自己退出了。清理失败或读不到进程身份时，会话保持未就绪，`/recovery-smoke` 返回 HTTP 423 `unresolved-cleanup`。
-- **Windows：后端完全冻住时按 Stop 会锁住会话。** 一个会话的后端进程全部被挂起时，`/soft-stop` 用了 58 s，返回 500（`RECOVERY_FAILED`：静默探针 5 s 超时），并强制重置了本会话自己的进程树。之后会话一直以 HTTP 423（`soft-stop-needs-smoke`）拒绝命令，直到关掉窗口。日志给出的办法是 **Stata: KILL** 或 `POST /force-reset`；两者都没试，而且因为 KILL 恢复缺陷，Windows 上的 KILL 不一定能解开。慢但还活着的后端没测。
+- **Windows KILL 的范围只有两次实机运行支持。** 在 `d020b036` 和 `80e01c8` 上各用两个会话跑过一次：对窗口 A 点 KILL 只结束了 A 的后端进程树，窗口 B 的 pid 不变，下一条命令 rc 0。两次运行不构成统计上限。根进程按登记时刻（1 s 以内）认定，不是按记下的创建时间；身份比到毫秒；进程列表不是原子快照；结束之后只再扫一遍直接子进程。清理失败或读不到进程身份时，会话保持未就绪，`/recovery-smoke` 返回 HTTP 423 `unresolved-cleanup`。
+- **Windows：后端完全冻住时按 Stop 会锁住会话。** 一个会话的后端进程全部被挂起时，`/soft-stop` 用了 58 s，返回 500（`RECOVERY_FAILED`：静默探针 5 s 超时），并强制重置了本会话自己的进程树。之后会话一直以 HTTP 423（`soft-stop-needs-smoke`）拒绝命令，直到关掉窗口。日志给出的办法是 **Stata: KILL** 或 `POST /force-reset`；在冻住的会话上两者都没试。PR #34 之后，KILL 成功时会在 smoke 之前重置连接，但这种 Stop 之后再 KILL 还没有实机试过。慢但还活着的后端没测。
 - **Windows：在面板里输入、warm-up 期间被拒的命令，`/status.lastTerminalGuardFailure` 为空。** 拒绝只显示在面板和日志里。
 - **macOS 的 KILL 和强制重置只按 pid 认后端**（PR #22 只改了 Windows）。 清理时，登记的 pid 的命令行里含 `mcp-stata` 就结束它，不核对进程启动时刻和父进程。如果这个 pid 正好被别的会话的 `mcp-stata` 复用，有可能被误结束。
 - **macOS 孤儿 worker 清理的限制。** 信号发给裸 pid：一个进程在最后一次核对之后退出、它的 pid 在发信号前被复用，这种情况排除不了；启动时刻也只精确到 1 s。根进程规则是单边的：本扩展宿主的另一个子进程如果在登记后 5 s 内拿到登记的 pid，排除不了。`close` 的收集和报告两段各有 8 s 时限，管的是清理的进程读取，不是整个调用：高负载下 `close` 仍可能在列实例时因 `ps` 超时抛错，而不是返回结论。收集时间用完的行一直记为 unresolved，即使那个进程之后正常退出了。`close` 已实机列出过一个占着 workspace 的测试进程（11-06），还没有列出过比窗口活得更久的真实 Stata worker：11-05 的测试里 worker 总是随 VS Code 退出而结束；11-06 一个用 SIGSTOP 停住的 worker 有一次比窗口活得更久，但当时那个构建的 `close` 列不出它（PR #32 已修），其余几次它都在退出过程中结束了。`close` 只报告、尽力而为：它只扫 workspace 文件夹和直接放在里面的文件（`lsof +d` 不递归），进程读取不是原子的，而且只在 macOS lsof 4.91 上核过，所以 `holders: none` 和 `clean: true` 的意思是在这个范围里没看到。自己动手结束进程之前，先用 `ps -o pid,ppid,lstart,command -p <pid>` 核对 unresolved 的那一行。Windows 不变（那里 PR #22 结束本窗口整棵后端进程树），这种情况没在 Windows 上测过。

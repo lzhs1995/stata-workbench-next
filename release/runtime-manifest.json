@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "version": "0.2.0-next.5",
+  "version": "0.2.0-next.6",
   "files": {
     "scripts/wire_rc713b_remaining.js": {
       "sha256": "ebd9ff993b435ac55c5fe625fbf514938fe28b8f8d995c723044ae42898cbfaa",
@@ -343,7 +343,7 @@
       "bytes": 4729
     },
     "tools/verified_workbench.py": {
-      "sha256": "7119df2c500fa070bc70168f447ede7b64479d40c45a963b783356aab69c8dbe",
+      "sha256": "cefdab303711d12523df19431baed807375c135e868a21e1a65cc94699271af2",
       "bytes": 21973
     },
     "tools/workbench_platform.py": {
