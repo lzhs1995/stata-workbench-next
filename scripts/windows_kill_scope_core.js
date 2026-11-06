@@ -256,7 +256,10 @@ function createWindowsKillScope(deps) {
     result.unresolved = verdict.unresolved.concat(selection.unknownChildren || []);
     result.scanOk = verdict.scanOk;
     result.ok = selection.ok && verdict.complete && !(selection.unknownChildren || []).length;
-    try { deps.log && deps.log(`${source}: ended ${verdict.killed.length} of ${selection.targets.length} process(es) in this window's backend tree; pending ${verdict.pending.length}, failed ${verdict.failed.length}, unresolved ${verdict.unresolved.length}`); } catch {}
+    // V3-KW: children often exit on their own once the launcher is ended; they come
+    // back as "already exited" (skipped) and were counted nowhere in this line.
+    const goneCount = verdict.skipped.filter((x) => x.code === 1 || x.reason === "already exited").length;
+    try { deps.log && deps.log(`${source}: ended ${verdict.killed.length} of ${selection.targets.length} process(es) in this window's backend tree; already exited ${goneCount}, pid reused ${verdict.skipped.length - goneCount}, pending ${verdict.pending.length}, failed ${verdict.failed.length}, unresolved ${verdict.unresolved.length}`); } catch {}
     return result;
   }
   return { run, recheck, list };

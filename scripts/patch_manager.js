@@ -1541,6 +1541,11 @@ const REQUIRED_MARKERS = [
     label: "force reset ends this session's orphaned Stata worker",
     marker: "codex patch rc.7.89: force reset ends this session's orphaned Stata worker",
   },
+  {
+    key: "windowsKillReset",
+    label: "a successful Windows KILL resets the backend before the recovery smoke",
+    marker: "codex patch rc.7.90: a successful Windows KILL resets the backend before the recovery smoke",
+  },
 ];
 
 const AUXILIARY_MARKERS = [

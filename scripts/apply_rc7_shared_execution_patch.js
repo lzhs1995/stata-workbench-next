@@ -3479,5 +3479,7 @@ text = require("./apply_progress_cancel_stop_patch").patchBundle(text, { finaliz
 text = require("./apply_watchdog_cpu_status_patch").patchBundle(text, { finalize: false });
 // V3-W2: a macOS/Linux force reset ends this session's orphaned Stata worker (exact identity only).
 text = require("./apply_orphan_worker_reap_patch").patchBundle(text, { finalize: false });
+// V3-KW: a successful Windows KILL resets (dispose + reconnect) before its recovery smoke.
+text = require("./apply_windows_kill_reset_patch").patchBundle(text, { finalize: false });
 fs.writeFileSync(target, text, "utf8");
 console.log(baseAlreadyApplied ? "RC7_SHARED_EXECUTION_UPDATED" : "RC7_SHARED_EXECUTION_APPLIED", target);

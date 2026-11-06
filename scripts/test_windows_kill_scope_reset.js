@@ -45,7 +45,7 @@ function table(extra = []) {
   ].concat(extra);
 }
 
-async function runReset({ reason, busy = false, owned, processes, listFails = false, helperMissing = false, killReply = null, dispose = "ok", openGateThrows = false, noResult = false, ownedOverride = null }) {
+async function runReset({ reason, busy = false, owned, processes, listFails = false, helperMissing = false, killReply = null, dispose = "ok", openGateThrows = false, noResult = false, ownedOverride = null, lastKillScope = null }) {
   const calls = [];
   const execFileSync = (file, args) => {
     calls.push([file, ...args]);
@@ -99,6 +99,7 @@ async function runReset({ reason, busy = false, owned, processes, listFails = fa
   if (openGateThrows) ctx.__codexWindowsKillScopeRef = { ...ctx.__codexWindowsKillScopeRef, openGate: () => { throw new Error("openGate broke"); } };
   if (noResult) ctx.__codexWindowsKillScopeRun = () => undefined;
   if (ownedOverride) ctx.__codexOwnedBackendPids = ownedOverride;
+  if (lastKillScope) ctx.__codexLastKillScope = lastKillScope;
   vm.runInContext(FORCE_RESET, ctx);
   let state = null;
   await Promise.race([ctx.__codexForceReset(reason).then((s) => { state = s; }, () => {}), new Promise((r) => setTimeout(r, 1500))]);
@@ -245,6 +246,29 @@ async function t(name, fn) {
     assert.equal(r.state.cleanup.ok, false);
     assert.match(String(r.state.cleanup.error), /registry broke/);
     keepsPending(r, "cleanup threw");
+  });
+  // V3-KW (rc.7.90): after a successful scoped KILL the command resets with a
+  // "panic-kill" reason. The real force reset must reuse that scoped result:
+  // no second listing or kill, dispose before connect, and readiness held for
+  // the command's own recovery smoke.
+  const scopedOk = { ok: true, failClosed: false, dryRun: false, scope: "this-session", source: "panic-kill command",
+    targets: [{ pid: 110, createdMs: T0 + 5000 }, { pid: 111, createdMs: T0 + 9000 }], ended: [{ pid: 110 }, { pid: 111 }] };
+  await t("V3-KW KILL success reset reuses the scoped result: no second list or kill, dispose then connect", async () => {
+    const r = await runReset({ reason: "panic-kill-command windows scoped tree ended", owned: ours, processes: table(), lastKillScope: scopedOk });
+    assert.deepEqual(r.calls.filter((c) => !["dispose", "cancelAll", "connect"].includes(c[0])), [], "no process listing, no kill");
+    const disposeAt = r.calls.findIndex((c) => c[0] === "dispose"), connectAt = r.calls.findIndex((c) => c[0] === "connect");
+    assert.ok(disposeAt >= 0 && connectAt > disposeAt, "old transport disposed, then a new one connected");
+    assert.equal(r.state.cleanup.ok, true);
+    assert.equal(r.state.cleanup.mode, "scoped-tree");
+    assert.ok(!(r.ctx.__codexUnresolvedCleanup && r.ctx.__codexUnresolvedCleanup.open), "no cleanup gate");
+    // A panic-kill reset leaves readiness stale until the command's own smoke passes.
+    assert.ok(r.events.some((e) => e[0] === "graphMark" && e[1] === "stale" && /force-reset-needs-smoke/.test(e[2])), "readiness waits for the smoke");
+    assert.ok(!r.events.some((e) => e[0] === "graphMark" && e[1] === "ready"), "not READY before the smoke");
+    assert.equal(r.ctx.__codexResetGeneration, 1, "the reset generation advanced");
+  });
+  await t("V3-KW control: the same reset without 'panic-kill' in its reason would run the kill scope again", async () => {
+    const r = await runReset({ reason: "windows scoped tree ended", owned: ours, processes: table(), lastKillScope: scopedOk });
+    assert.ok(r.calls.some((c) => c.includes("-ListProcesses")), "a second scope run lists the processes");
   });
   // Review 3 R3: dispose evidence.
   for (const [mode, ok, settled] of [["ok", true, true], ["reject", false, true], ["hang", false, false]]) {
