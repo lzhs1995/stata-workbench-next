@@ -10,7 +10,7 @@ Stata error return codes and the orphaned worker after KILL on `b82203d` (#27 an
 `4a1ac2e`, before its last review rework.
 
 <!-- FMAC-RESULT -->
-On 11-06 the merged runtime was retested live: macOS on `d5b03df` (PR #31's merge candidate; the same extension bundle and cleanup core as `main` `d020b036`, only the Python `close` tool differs) and Windows on `main` `d020b036` (15 of 16 checks passed). These runs found the two macOS defects fixed by PR #32 and PR #33 and the Windows KILL recovery defect below. PR #33's last commit `32ff282` (the stop checks around its resume step) has offline tests only. A run of both platforms on the release commit is still to do.
+On 11-06 the merged runtime was retested live: macOS on `d5b03df` (PR #31's merge candidate; the same extension bundle and cleanup core as `main` `d020b036`, only the Python `close` tool differs) and Windows on `main` `d020b036` (15 of 16 checks passed). These runs found the two macOS defects fixed by PR #32 and PR #33 and the Windows KILL recovery defect below. PR #33's last commit `32ff282` (the stop checks around its resume step) has offline tests only. The checks run on the release commit itself are listed in its GitHub release notes.
 <!-- /FMAC-RESULT -->
 
 <!-- KW-RESULT -->
