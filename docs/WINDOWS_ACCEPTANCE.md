@@ -14,8 +14,8 @@ interactive Windows desktop. Budget about 45–60 minutes with the operator.
 ## Prepare the isolated installation
 
 Use a normal PowerShell window. Prerequisites: Git, GitHub CLI (`gh`), `uv`, VS
-Code and licensed Stata. For the documented user's machine the tools interpreter
-is `C:\Users\LZHS\AppData\Local\Programs\Python\Python314\python.exe`; do not use
+Code and licensed Stata. On the tested machine the tools interpreter was the per-user
+Python 3.14 install, `%LOCALAPPDATA%\Programs\Python\Python314\python.exe`; do not use
 the Microsoft Store alias. The Stata service gets its own Python 3.11 environment,
 matching the tested Mac service version. Nothing below edits the research profile.
 
@@ -31,7 +31,7 @@ existing run root instead of overwriting an earlier acceptance.
 
 ```powershell
 $ErrorActionPreference = 'Stop'
-$Py = 'C:\Users\LZHS\AppData\Local\Programs\Python\Python314\python.exe'
+$Py = Join-Path $env:LOCALAPPDATA 'Programs\Python\Python314\python.exe'
 $Stata = 'C:\Program Files\Stata18\StataMP-64.exe'
 $Code = Join-Path $env:LOCALAPPDATA 'Programs\Microsoft VS Code\Code.exe'
 if (!(Test-Path -LiteralPath $Code)) { $Code = 'C:\Program Files\Microsoft VS Code\Code.exe' }

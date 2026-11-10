@@ -1,9 +1,10 @@
 # Maintenance Workflow
 
-This project has two local roles:
+This project has two local roles. The paths below are generic examples; choose
+your own project roots:
 
-- `$env:USERPROFILE\Desktop\开题报告` is the live Stata Workbench development and pressure-test workspace.
-- `$env:USERPROFILE\Desktop\stata-workbench-shared-session` is the public source, packaging, release, and Open VSX repository.
+- `C:\work\stata-development` is the live Stata Workbench development and pressure-test workspace.
+- `C:\work\stata-workbench-shared-session` is the public source, packaging, release, and Open VSX repository.
 
 The normal flow is simple: develop and verify runtime patches in the live workspace, then export stable runtime scripts to this repository before packaging a release.
 
@@ -34,24 +35,29 @@ Docs, examples, and package metadata are repo-first. Runtime patch scripts are w
 
 ## Export Runtime Scripts
 
-Use `scripts/export_to_repo.ps1` from this repository.
+Use `scripts/export_to_repo.ps1` from this repository. Set the source root
+explicitly so the example does not depend on the script's historical default:
+
+```powershell
+$workspaceRoot = "C:\work\stata-development"  # Replace with your project root
+```
 
 Preview only:
 
 ```powershell
-.\scripts\export_to_repo.ps1
+.\scripts\export_to_repo.ps1 -WorkspaceRoot $workspaceRoot
 ```
 
 or explicitly:
 
 ```powershell
-.\scripts\export_to_repo.ps1 -Preview
+.\scripts\export_to_repo.ps1 -WorkspaceRoot $workspaceRoot -Preview
 ```
 
 Apply the whitelist copy:
 
 ```powershell
-.\scripts\export_to_repo.ps1 -Apply
+.\scripts\export_to_repo.ps1 -WorkspaceRoot $workspaceRoot -Apply
 ```
 
 The preview prints SHA256 hashes for the workspace source and repository target, with a status of `same`, `changed`, `missing-in-repo`, or `missing-source`.
@@ -84,13 +90,13 @@ The extension bundle is a special case and is not copied by the export script.
 
 Before release, compare:
 
-- workspace bundle: `$env:USERPROFILE\Desktop\开题报告\extension.patched-baseline.js`
+- workspace bundle: `<workspaceRoot>\extension.patched-baseline.js`
 - repo bundle: `dist\extension.js`
 
 Run these checks:
 
 ```powershell
-$workspaceRoot = Join-Path (Join-Path $env:USERPROFILE "Desktop") "开题报告"
+$workspaceRoot = "C:\work\stata-development"  # Replace with your project root
 $workspaceBundle = Join-Path $workspaceRoot "extension.patched-baseline.js"
 
 Get-FileHash -Algorithm SHA256 $workspaceBundle, ".\dist\extension.js"
@@ -102,7 +108,7 @@ Get-Item $workspaceBundle, ".\dist\extension.js" |
 Then run patch verification in the live workspace:
 
 ```powershell
-$workspaceRoot = Join-Path (Join-Path $env:USERPROFILE "Desktop") "开题报告"
+$workspaceRoot = "C:\work\stata-development"  # Replace with your project root
 & (Join-Path $workspaceRoot "stata_patch.ps1") verify
 ```
 
@@ -124,8 +130,8 @@ If the bundle hashes differ but marker count and critical markers match, continu
 
 1. Finish live patch testing in the workspace.
 2. Run `stata_patch.ps1 verify` and record marker count / critical marker summary.
-3. Run `scripts/export_to_repo.ps1 -Preview` and inspect hash differences.
-4. Run `scripts/export_to_repo.ps1 -Apply` if only whitelisted runtime scripts should change.
+3. Run `scripts/export_to_repo.ps1 -WorkspaceRoot $workspaceRoot -Preview` and inspect hash differences.
+4. Run `scripts/export_to_repo.ps1 -WorkspaceRoot $workspaceRoot -Apply` if only whitelisted runtime scripts should change.
 5. Check the extension bundle separately.
 6. Update `CHANGELOG.md` with patch provenance, marker summary, smoke tests, and VSIX hash.
 7. Bump `package.json` and `package-lock.json` when publishing a new package.

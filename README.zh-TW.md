@@ -179,7 +179,7 @@ mcp-stata 的回傳碼確認這個報錯時，verdict 是 `STATA_ERROR_CONFIRMED
 agent 路徑已在 macOS（`b82203d`、`d5b03df`）和 Windows（`d020b036`、`80e01c8`）上做過實機驗證，
 見[平台實測結果](#平台實測結果)和[已知限制](#已知限制)。
 
-人在 VS Code 裡用 Terminal 的 Stop 按鈕或 **Stata: Cancel Current Request** 停掉 agent 的執行環境，
+人在 VS Code 裡用 Terminal 的 Stop 按鈕或 **Stata: Cancel Current Request** 停掉 agent 的這次執行，
 如果同一次 Stop 恢復了這次執行的執行前檢查點、工作階段重新就緒，verdict 是 `STOPPED_NO_RETRY`（退出碼 2，
 不重試）。在 agent 的執行上，Terminal 的 Stop 按鈕已在 macOS 和 Windows 實機核過；
 **Stata: Cancel Current Request** 在這條路徑上仍未驗證，見[平台實測結果](#平台實測結果)。Stop 之前部分程式碼可能已經執行。經
