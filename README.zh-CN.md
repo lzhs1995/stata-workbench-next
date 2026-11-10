@@ -1,6 +1,8 @@
 # Stata Workbench 共享会话（Next）
 
-[English](README.md) | [中文](README.zh-CN.md)
+[English](README.md) | [简体中文](README.zh-CN.md) | [繁體中文](README.zh-TW.md)
+
+<img src="media/icon.png" alt="Stata Workbench Next 图标" width="96">
 
 > **开发线。** 本仓库（`stata-workbench-next`）用来开发和测试多会话、agent 身份、
 > bridge 鉴权和经审阅的 agent 改稿。它不替换稳定版
@@ -174,11 +176,13 @@ Stop）。输出里带 `reasonCode`、`retryable` 和 `retryAfterMs`；因 Stop 
 Stata 已经执行、但报了错的命令（比如 `r(111)`），退出码 2，不会重试。扩展能用本次运行自己的日志和
 mcp-stata 的返回码确认这个报错时，verdict 是 `STATA_ERROR_CONFIRMED`，带 `stataRc`；确认不了就仍是
 `EXECUTION_UNCONFIRMED_NO_RETRY`。两种情况下 Stata 的报错文字都在回执里，报错之前的命令可能已经改了数据。
-这条路径只在 macOS 的 `b82203d` 上做过实机验证，见[已知限制](#已知限制)。
+agent 路径已在 macOS（`b82203d`、`d5b03df`）和 Windows（`d020b036`、`80e01c8`）上做过实机验证，
+见[平台实测结果](#平台实测结果)和[已知限制](#已知限制)。
 
 人在 VS Code 里用 Terminal 的 Stop 按钮或 **Stata: Cancel Current Request** 停掉 agent 的运行时，
 如果同一次 Stop 恢复了这次运行的运行前检查点、会话重新就绪，verdict 是 `STOPPED_NO_RETRY`（退出码 2，
-不重试）。在 agent 的运行上只实机核过 Terminal 的 Stop 按钮（macOS）。Stop 之前部分代码可能已经执行。经
+不重试）。在 agent 的运行上，Terminal 的 Stop 按钮已在 macOS 和 Windows 实机核过；
+**Stata: Cancel Current Request** 在这条路径上仍未验证，见[平台实测结果](#平台实测结果)。Stop 之前部分代码可能已经执行。经
 `POST /soft-stop` 或看门狗的 Stop 仍是 `EXECUTION_UNCONFIRMED_NO_RETRY`，来源写在 `stopReportedBy` 里。
 Run File 或 Run Selection 通知里的 **Cancel** 只属于人自己的那次运行：它停不了接手会话的 agent 运行，
 人的那次运行也不给 agent 客户端任何 verdict。

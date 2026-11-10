@@ -1,6 +1,8 @@
 # Stata Workbench Shared Session (Next)
 
-[English](README.md) | [中文](README.zh-CN.md)
+[English](README.md) | [简体中文](README.zh-CN.md) | [繁體中文](README.zh-TW.md)
+
+<img src="media/icon.png" alt="Stata Workbench Next icon" width="96">
 
 > **Development line.** This repository (`stata-workbench-next`) is where multi-session
 > support, agent identity, bridge authentication and reviewed agent edits are built and
@@ -222,14 +224,17 @@ exits 2 and is not retried. When the extension can confirm the error from this
 run's own log and mcp-stata's return code, the verdict is
 `STATA_ERROR_CONFIRMED` with `stataRc`; otherwise it stays
 `EXECUTION_UNCONFIRMED_NO_RETRY`. Either way the receipt holds Stata's error
-text, and the commands before the error may have changed the data. This path was
-checked live on macOS on `b82203d` only; see [Known limitations](#known-limitations).
+text, and the commands before the error may have changed the data. The agent
+path was checked live on macOS (`b82203d`, `d5b03df`) and Windows (`d020b036`,
+`80e01c8`); see [Platform test results](#platform-test-results) and
+[Known limitations](#known-limitations).
 
 When a person stops the agent's run in VS Code with the Terminal Stop button or
 **Stata: Cancel Current Request**, the verdict is `STOPPED_NO_RETRY` (exit 2, not
 retried) if the same Stop restored this run's pre-run checkpoint and the session
-is ready again. On an agent run only the Terminal Stop button has been checked
-live (macOS).
+is ready again. On an agent run the Terminal Stop button has been checked live
+on macOS and Windows; **Stata: Cancel Current Request** remains unverified on
+that route. See [Platform test results](#platform-test-results).
 Part of the code may have run before the Stop. A Stop through
 `POST /soft-stop` or by the watchdog stays `EXECUTION_UNCONFIRMED_NO_RETRY`, with
 the source in `stopReportedBy`. The **Cancel** of a Run File or Run Selection
